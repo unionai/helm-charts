@@ -1292,7 +1292,7 @@ Appends "-rootless" to the tag when rootless mode is enabled, unless the tag alr
 {{- $repo := .Values.imageBuilder.buildkit.image.repository -}}
 {{- $tag := .Values.imageBuilder.buildkit.image.tag -}}
 {{- $nydus := .Values.imageBuilder.buildkit.nydus | default dict -}}
-{{- if $nydus.enabled -}}
+{{- if or $nydus.enabled .Values.imageBuilder.enableImageOptimization -}}
   {{- $repo = $nydus.image.repository -}}
   {{- $tag = $nydus.image.tag | default .Chart.AppVersion -}}
 {{- end -}}
@@ -1834,14 +1834,19 @@ uses it is gated off with it.
 {{- end -}}
 
 {{/*
-imageBuilder.enableImageOptimization exports Nydus layers, which needs the
-nydus-image binary in BuildKit. Refuse the in-release stock BuildKit image
-rather than let every optimized build fail at export time.
+imageBuilder.enableImageOptimization makes every image the dataplane builds a
+Nydus-only image, which a node without the Nydus snapshotter unpacks into a
+broken root filesystem. So it requires nodeBootstrap.enabled, named on its own
+rather than implied: node-bootstrap is a privileged DaemonSet that restarts
+containerd and kubelet, and two flags let a cluster roll the snapshotter out
+first and turn optimization on after. The in-chart builders (primary and ARM)
+switch to the Nydus BuildKit image by themselves (imagebuilder.buildkit.image);
+an external buildkitUri / buildkitUriArm must carry nydus-image already.
 */}}
 {{- define "imagebuilder.imageOptimization" -}}
 {{- if .Values.imageBuilder.enableImageOptimization -}}
-{{- if and .Values.imageBuilder.buildkit.enabled (not .Values.imageBuilder.buildkitUri) (not (.Values.imageBuilder.buildkit.nydus | default dict).enabled) -}}
-{{- fail "imageBuilder.enableImageOptimization needs imageBuilder.buildkit.nydus.enabled: the stock BuildKit image cannot export Nydus layers" -}}
+{{- if not .Values.nodeBootstrap.enabled -}}
+{{- fail "imageBuilder.enableImageOptimization needs nodeBootstrap.enabled: every image the dataplane builds becomes Nydus-only, and nodes without the Nydus snapshotter cannot run it" -}}
 {{- end -}}
 true
 {{- else -}}

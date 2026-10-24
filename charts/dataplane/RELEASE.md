@@ -4,19 +4,26 @@
 
 ### Nydus lazy image pulls (opt-in)
 
-Self-managed dataplanes can now pull user images lazily with Nydus, as the
-managed BYOC dataplanes already do. Three switches, all off by default:
+Self-managed dataplanes can now pull images lazily with Nydus, as the managed
+BYOC dataplanes already do. Two switches, both off by default, turned on in
+this order:
 
 - `nodeBootstrap.enabled` deploys the `union-node-bootstrap` DaemonSet, which
-  installs and starts the Nydus snapshotter on each node. It is privileged,
-  uses `hostPID`/`hostNetwork` and writes to the host's `/etc` and
-  `/home/kubernetes`. It needs an aws, gcp or azure node image with systemd and a
-  writable `/etc` (not Bottlerocket). Put `nodeBootstrap.startupTaintKey` on
-  worker nodepools as a startup taint.
-- `imageBuilder.buildkit.nydus.enabled` runs Union's BuildKit image, which
-  bundles `nydus-image`.
-- `imageBuilder.enableImageOptimization` exports images a user marks for
-  optimization in Nydus format. It refuses to render with the stock BuildKit image.
+  installs the Nydus snapshotter on each node and restarts containerd and
+  kubelet there. It is privileged, uses `hostPID`/`hostNetwork` and writes to
+  the host's `/etc` and `/home/kubernetes`. It needs an aws, gcp or azure node
+  image with systemd and a writable `/etc` (not Bottlerocket). Put
+  `nodeBootstrap.startupTaintKey` on worker nodepools as a startup taint. On
+  GKE it also needs the `union-node-bootstrap-critical` ResourceQuota the chart
+  now creates (`nodeBootstrap.priorityClassQuota`), and GKE image streaming off
+  on those nodepools.
+- `imageBuilder.enableImageOptimization` then builds **every** image the
+  dataplane builds in Nydus format, and switches the in-chart BuildKit (and its
+  ARM builder) to Union's image that bundles `nydus-image`. It refuses to render
+  without `nodeBootstrap.enabled`. Those images run only on nodes with the
+  snapshotter: keep every nodepool a task pod can land on inside
+  `nodeBootstrap.nodeSelector`, and expect them not to run where they are
+  pulled elsewhere (CI, a laptop, another cluster).
 
 Both images default to the appVersion tag, which releases publish from
 unionai/cloud#19504 onward; earlier releases have no such tag, so set

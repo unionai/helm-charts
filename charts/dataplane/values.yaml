@@ -1761,6 +1761,12 @@ nodeBootstrap:
     - operator: Exists
   affinity: {}
   priorityClassName: system-node-critical
+  # -- A ResourceQuota scoped to that priority class. GKE rejects
+  # system-*-critical pods outside kube-system without one; elsewhere the
+  # quota never binds. Turn off if the namespace already has one.
+  priorityClassQuota:
+    create: true
+    pods: "5000"
   podLabels: {}
   podAnnotations: {}
   resources: {}
@@ -2539,10 +2545,14 @@ imageBuilder:
   # -- Mutually exclusive with imageBuilder.buildkit.arm.enabled.
   buildkitUriArm: ""
 
-  # -- Export user images the user opted into optimizing (`optimize`) in Nydus
-  # format, for lazy pulls on nodes running nodeBootstrap. Every builder must
-  # carry the nydus-image binary: with the in-release BuildKit that means
-  # imageBuilder.buildkit.nydus.enabled; an external buildkitUri is on you.
+  # -- Build every image in Nydus format, for lazy pulls. Applies to EVERY image
+  # the dataplane builds, not only some: they become Nydus-only, so they run
+  # only on nodes with the snapshotter. Requires nodeBootstrap.enabled, and
+  # every node a task pod can land on must be covered by
+  # nodeBootstrap.nodeSelector. Images pulled anywhere else (CI, a laptop, a
+  # cluster without nodeBootstrap) will not run. Switches the in-chart BuildKit
+  # (and its ARM builder) to imageBuilder.buildkit.nydus.image; an external
+  # buildkitUri / buildkitUriArm must already bundle nydus-image.
   enableImageOptimization: false
 
   # -- The default container image repository for user-built images.
@@ -2639,7 +2649,8 @@ imageBuilder:
       tag: "buildx-stable-1"
 
     # -- Run Union's BuildKit image, which bundles nydus-image, instead of
-    # buildkit.image. Needed for imageBuilder.enableImageOptimization.
+    # buildkit.image. imageBuilder.enableImageOptimization turns this on by
+    # itself; set it alone to roll the builder image out first.
     nydus:
       enabled: false
       image:
