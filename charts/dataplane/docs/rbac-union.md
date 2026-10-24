@@ -436,6 +436,7 @@ account:
 | leaseworker | `leaseworker` |
 | pod webhook | `union-webhook-system` |
 | buildkit | `union-imagebuilder` |
+| flyteconnector | `flyteconnector` |
 | dataproxy | `dataproxy-system` (zero trust only) |
 | Knative controller / webhook / autoscaler / activator | `knative-controller`, `knative-webhook`, `knative-autoscaler`, `knative-activator` (app serving under zero trust only) |
 | Kourier controller | `net-kourier` (same) |
