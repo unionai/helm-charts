@@ -2006,14 +2006,14 @@ expect-resource-group "under singleNamespace the pod-metrics list is granted in 
 expect-resource-group "and with billing None, while collectUsages is on" \
   union-operator-comp-ns-read pods "metrics.k8s.io" \
   --set config.operator.billing.model=None
-# With the image builder off, the pod-metrics rule is the only thing the operator declares
-# into comp-ns-read at these values, so without it the role is not emitted at all.
-expect-manifest "and not with billing None and collectUsages off" \
-  absent "name: union-operator-comp-ns-read" \
+# With the image builder off, the cluster snapshot's workload reads are the only other thing
+# the operator declares into comp-ns-read at these values, so they are the whole list grant.
+expect-verb-resources "and not with billing None and collectUsages off" \
+  union-operator-comp-ns-read list "daemonsets,deployments,statefulsets" \
   --set config.operator.billing.model=None --set config.operator.collectUsages.enabled=false \
   --set imageBuilder.enabled=false
-expect-manifest "and not outside singleNamespace, where the cluster-wide grant covers it" \
-  absent "name: union-operator-comp-ns-read" \
+expect-verb-resources "and not outside singleNamespace, where the cluster-wide grant covers it" \
+  union-operator-comp-ns-read list "daemonsets,deployments,statefulsets" \
   --set singleNamespace=false --set imageBuilder.enabled=false
 
 # propeller's workflow garbage collector lists namespaces when limit-namespace is empty, "all"
@@ -2341,16 +2341,17 @@ expect-provisioner-matches-chart "the provisioner's binding still matches the ch
 expect-verb-resources "leaseworker's comp-ns-read is its Endpoints watch and nothing else" \
   union-leaseworker-comp-ns-read get "endpoints"
 # The operator's is the singleNamespace usage aggregators' pod-metrics list (list on pods, in
-# metrics.k8s.io) and the image builder's two release-namespace informers: its reference
-# ConfigMap, which it also Gets once at start, and image-pull Secrets. It declares no
-# PodTemplate read here any more; its only PodTemplate informer is the apps workers',
-# granted through the work-ns slots.
-expect-verb-resources "and the operator's is its pod-metrics list and the image builder's informers" \
-  union-operator-comp-ns-read list "configmaps,pods,secrets"
-expect-verb-resources "with get only on the image builder's reference ConfigMap" \
-  union-operator-comp-ns-read get "configmaps"
-expect-verb-resources "and no get at all with the image builder off" \
-  union-operator-comp-ns-read get "" --set imageBuilder.enabled=false
+# metrics.k8s.io), the image builder's two release-namespace informers (its reference
+# ConfigMap, which it also Gets once at start, and image-pull Secrets), and the cluster
+# snapshot's Deployment, DaemonSet and StatefulSet reads. It declares no PodTemplate read
+# here any more; its only PodTemplate informer is the apps workers', granted through the
+# work-ns slots.
+expect-verb-resources "and the operator's is its pod-metrics list, the image builder's informers and the snapshot's workload reads" \
+  union-operator-comp-ns-read list "configmaps,daemonsets,deployments,pods,secrets,statefulsets"
+expect-verb-resources "with get only on the image builder's reference ConfigMap and the snapshot's workloads" \
+  union-operator-comp-ns-read get "configmaps,daemonsets,deployments,statefulsets"
+expect-verb-resources "and get only on the snapshot's workloads with the image builder off" \
+  union-operator-comp-ns-read get "daemonsets,deployments,statefulsets" --set imageBuilder.enabled=false
 for v in create update patch delete deletecollection; do
   expect-verb-resources "leaseworker's comp-ns-read grants no ${v}" \
     union-leaseworker-comp-ns-read "${v}" ""
@@ -2773,6 +2774,14 @@ expect-rule "the Secret informer neither" absent \
   "${MULTI[@]}" --set imageBuilder.enabled=false
 expect-rule "the reference ConfigMap grant is there under singleNamespace too" present \
   union-operator-comp-ns-read "core configmaps get,list,watch union-operator"
+# The cluster health snapshot lists the release namespace's workloads, unconditionally. Outside
+# singleNamespace nothing else lets the operator list Deployments there.
+for r in deployments daemonsets statefulsets; do
+  expect-rule "operator: the cluster snapshot reads ${r} in the release namespace" present \
+    union-operator-comp-ns-read "apps ${r} get,list,watch -" "${MULTI[@]}"
+  expect-rule "and under singleNamespace, without leaning on work-ns" present \
+    union-operator-comp-ns-read "apps ${r} get,list,watch -"
+done
 
 expect-rule "operator, tunnel: the token Secret, pinned to operator.secretName" present \
   union-operator-comp-ns-write "core secrets get,update union-secret-auth" "${MULTI[@]}"
