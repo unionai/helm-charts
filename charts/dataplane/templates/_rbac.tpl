@@ -38,9 +38,10 @@ Also outside: third-party subchart RBAC this chart authors
 If you are auditing, do not enumerate by grepping for `kind: Role`. Some templates
 emit RBAC only through a helper and contain no such literal -- inspect the callers
 of openshift.sccRbac and of dataplane.rbac.emitSlot as well. Nor is rendering the
-test fixtures sufficient: the Kourier SCC Role appears in none of them, because it
-needs apps.enabled and kourierGatewayScc.enabled together. Both blind spots have
-produced a wrong inventory in this file before.
+test fixtures sufficient on its own: the Kourier SCC Role needs
+serving.openShift.kourierGatewayScc.enabled together with app serving or the
+zero-trust gateway, so only the OpenShift fixtures render it. Both blind spots
+have produced a wrong inventory in this file before.
 */}}
 {{- define "dataplane.rbac.components" -}}
 {{- $components := list -}}

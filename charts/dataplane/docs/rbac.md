@@ -93,10 +93,11 @@ cluster-wide, never write, and never touch secrets.
 
 The flag is not a whole-chart namespace boundary. It scopes Union-authored workload RBAC
 along with these two subcharts, and gates [app serving](#app-serving), namespace creation and
-priorityclasses — but a short list of cluster-scoped reads remains in single-namespace mode
-([below](#what-singlenamespace-still-reads-cluster-wide)), the Helm hook cleanup job creates
-a ClusterRole in either mode, and opencost and metrics-server are cluster-scoped when
-enabled. See the table below, and the README's RBAC section for what that means for your
+the leaseworker and flytepropeller priorityclasses — but a short list of cluster-scoped reads
+remains in single-namespace mode ([below](#what-singlenamespace-still-reads-cluster-wide)),
+the Helm hook cleanup job creates a ClusterRole in either mode, the uvol mount broker (on by
+default) creates a PriorityClass and a CSIDriver in either mode, and opencost and
+metrics-server are cluster-scoped when enabled. See the table below, and the README's RBAC section for what that means for your
 install identity.
 
 The flag decides RBAC by itself. It can't decide how much kube-state-metrics collects with
@@ -125,10 +126,14 @@ node names are not known at render time; it is off by default.
 
 Some things single-namespace mode still withholds, because they are not on the list: the
 operator's `/metrics` scrape of the API server, which feeds its FlyteWorkflow-count and
-etcd-size throttles (they stay off); prometheus' node and cadvisor discovery; and the
-leaseworker's Kubernetes event watcher, which watches `events.k8s.io` events in every
-namespace even when a limit namespace is set. Until the leaseworker scopes that informer,
-task status in this mode is not enriched with Kubernetes events.
+etcd-size throttles (they stay off), and prometheus' node and cadvisor discovery.
+
+The leaseworker's Kubernetes event watcher, its fast-task orphan pod lists and the fastray
+idle-cluster reaper need nothing from the list. Since
+[cloud#18782](https://github.com/unionai/cloud/pull/18782) they run in the limit namespace,
+which the release-namespace `work-ns` Role covers. A leaseworker image without that change
+still watches `events.k8s.io` events in every namespace, is refused, and leaves task status
+in this mode without Kubernetes events. `appVersion` `2026.10.0` predates the change.
 
 `taskPluginClusterReadRules` never adds to this list: its entries are emitted only at
 `singleNamespace: false`.

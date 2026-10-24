@@ -463,7 +463,8 @@ Two documents cover this in full:
 It does not switch features off to avoid cluster-scoped reads: usage collection and the
 operator's node informer run in both modes. The cost of the mode is the reduced
 functionality listed on the `singleNamespace` key in `values.yaml` — no Task-Level
-Monitoring, no node-level metrics, less accurate cost data, no chart-created PriorityClasses.
+Monitoring, no node-level metrics, less accurate cost data, and no chart-created leaseworker or
+flytepropeller PriorityClass. The uvol mount broker's PriorityClass is created in both modes.
 
 To trade that back, set `singleNamespace: false`. To also *collect* with that access, layer
 `examples/values.full-privilege.yaml`, which carries the kube-state-metrics settings Helm
