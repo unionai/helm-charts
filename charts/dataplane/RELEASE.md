@@ -1,5 +1,18 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+### Helm hook Jobs follow the global `scheduling` values
+
+The `pre-upgrade` hook Job (`<release>-pre-upgrade`) and the legacy
+`flyte-webhook-cleanup` hook Job now get `scheduling.nodeSelector`,
+`scheduling.tolerations` and `scheduling.affinity`, like every other dataplane
+pod. Before, they ignored them, so a cluster that only admits pods pinned to
+specific nodes (tainted node groups, or an admission policy that rejects
+unpinned pods) blocked every `helm upgrade` with
+`pre-upgrade hooks failed: timed out waiting for the condition`.
+No change for installs that leave `scheduling` empty.
+
 ## 2026.10.1
 
 `version` moves `2026.10.0` → `2026.10.1`. `appVersion` stays `2026.10.0`: this is
