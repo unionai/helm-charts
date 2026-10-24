@@ -2056,13 +2056,14 @@ expect-role-resource "but not with apps off, where the controller never starts" 
   --set config.operator.apps.controller.podDisruptionBudget.enabled=true
 # Under singleNamespace (app serving on the knative-operator path, gateway.enabled: false) the
 # apps cache is scoped to the release namespace, so the PDB read moves to the work-ns Role there.
+# That path needs zero trust off, since zero trust is the default and refuses it.
 expect-role-resource "under singleNamespace the PDB read and writes are in the release-namespace work-ns Role" \
   present union-work-ns poddisruptionbudgets \
-  --set apps.enabled=true --set gateway.enabled=false \
+  --set zero_trust.enabled=false --set apps.enabled=true --set gateway.enabled=false \
   --set config.operator.apps.controller.podDisruptionBudget.enabled=true
 expect-role-resource "and not while PDB management is off" \
   absent union-work-ns poddisruptionbudgets \
-  --set apps.enabled=true --set gateway.enabled=false
+  --set zero_trust.enabled=false --set apps.enabled=true --set gateway.enabled=false
 # Outside singleNamespace work-ns carries the writes, bound in each work namespace; the read stays in
 # work-ns-cluster-read above, since the cache it goes through is cluster-wide there.
 expect-role-resource "outside singleNamespace work-ns carries the PDB writes" \
@@ -2962,8 +2963,8 @@ max_features=(
 MAX_APPS="${WORK_DIR}/max-apps.yaml"
 MAX_ZT="${WORK_DIR}/max-zero-trust.yaml"
 scope_renders=()
-if render "${max_features[@]}" --set apps.enabled=true --set gateway.enabled=false \
-    --set knative-operator.enabled=true \
+if render "${max_features[@]}" --set zero_trust.enabled=false \
+    --set apps.enabled=true --set gateway.enabled=false --set knative-operator.enabled=true \
     --set config.operator.apps.controller.podDisruptionBudget.enabled=true >"${MAX_APPS}" 2>&1; then
   scope_renders+=(--render "every component, app serving on the knative-operator path=${MAX_APPS}")
 else

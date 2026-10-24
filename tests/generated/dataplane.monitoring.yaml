@@ -158,77 +158,6 @@ metadata:
     eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/flyte_project_role
 automountServiceAccountToken: true
 ---
-# Source: dataplane/templates/gateway/kourier-controller.yaml
-# Copyright 2020 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: net-kourier
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    networking.knative.dev/ingress-provider: kourier
-    app.kubernetes.io/component: net-kourier
----
-# Source: dataplane/templates/gateway/rbac.yaml
-# Copyright 2018 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: controller
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: controller
----
-# Source: dataplane/templates/gateway/rbac.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: activator
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: activator
----
 # Source: dataplane/charts/monitoring/charts/grafana/templates/secret.yaml
 apiVersion: v1
 kind: Secret
@@ -257,36 +186,6 @@ metadata:
 type: Opaque
 data:
   cluster_name: 
-
----
-# Source: dataplane/templates/gateway/webhook.yaml
-# Copyright 2020 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: v1
-kind: Secret
-metadata:
-  name: webhook-certs
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: webhook
-# The data is populated at install time.
 
 ---
 # Source: dataplane/templates/webhook/mutatingwebhookconfiguration.yaml
@@ -994,20 +893,6 @@ metadata:
     networking.knative.dev/ingress-provider: kourier
 data:
   envoy-bootstrap.yaml: |
-    dynamic_resources:
-      ads_config:
-        transport_api_version: V3
-        api_type: GRPC
-        rate_limit_settings: {}
-        grpc_services:
-        - envoy_grpc:
-            cluster_name: xds_cluster
-      cds_config:
-        resource_api_version: V3
-        ads: {}
-      lds_config:
-        resource_api_version: V3
-        ads: {}
     node:
       cluster: kourier-knative
       id: 3scale-kourier-gateway
@@ -1172,26 +1057,6 @@ data:
                       socket_address:
                         address: 127.0.0.1
                         port_value: 9901
-        - name: xds_cluster
-          connect_timeout: 1s
-          type: STRICT_DNS
-          load_assignment:
-            cluster_name: xds_cluster
-            endpoints:
-              lb_endpoints:
-                - endpoint:
-                    address:
-                      socket_address:
-                        address: net-kourier-controller
-                        port_value: 18000
-          typed_extension_protocol_options:
-            envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
-              "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
-              explicit_http_config:
-                http2_protocol_options:
-                  connection_keepalive:
-                    interval: 30s
-                    timeout: 5s
         - name: dataproxy
           connect_timeout: 0.25s
           type: STRICT_DNS
@@ -1242,1664 +1107,6 @@ data:
         socket_address:
           address: 127.0.0.1
           port_value: 9901
-
----
-# Source: dataplane/templates/gateway/configmap-autoscaler.yaml
-# Copyright 2018 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: config-autoscaler
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: autoscaler
-  annotations:
-    knative.dev/example-checksum: "47c2487f"
-data:
-  _example: |
-    ################################
-    #                              #
-    #    EXAMPLE CONFIGURATION     #
-    #                              #
-    ################################
-
-    # This block is not actually functional configuration,
-    # but serves to illustrate the available configuration
-    # options and document them in a way that is accessible
-    # to users that `kubectl edit` this config map.
-    #
-    # These sample configuration options may be copied out of
-    # this example block and unindented to be in the data block
-    # to actually change the configuration.
-
-    # The Revision ContainerConcurrency field specifies the maximum number
-    # of requests the Container can handle at once. Container concurrency
-    # target percentage is how much of that maximum to use in a stable
-    # state. E.g. if a Revision specifies ContainerConcurrency of 10, then
-    # the Autoscaler will try to maintain 7 concurrent connections per pod
-    # on average.
-    # Note: this limit will be applied to container concurrency set at every
-    # level (ConfigMap, Revision Spec or Annotation).
-    # For legacy and backwards compatibility reasons, this value also accepts
-    # fractional values in (0, 1] interval (i.e. 0.7 ⇒ 70%).
-    # Thus minimal percentage value must be greater than 1.0, or it will be
-    # treated as a fraction.
-    # NOTE: that this value does not affect actual number of concurrent requests
-    #       the user container may receive, but only the average number of requests
-    #       that the revision pods will receive.
-    container-concurrency-target-percentage: "70"
-
-    # The container concurrency target default is what the Autoscaler will
-    # try to maintain when concurrency is used as the scaling metric for the
-    # Revision and the Revision specifies unlimited concurrency.
-    # When revision explicitly specifies container concurrency, that value
-    # will be used as a scaling target for autoscaler.
-    # When specifying unlimited concurrency, the autoscaler will
-    # horizontally scale the application based on this target concurrency.
-    # This is what we call "soft limit" in the documentation, i.e. it only
-    # affects number of pods and does not affect the number of requests
-    # individual pod processes.
-    # The value must be a positive number such that the value multiplied
-    # by container-concurrency-target-percentage is greater than 0.01.
-    # NOTE: that this value will be adjusted by application of
-    #       container-concurrency-target-percentage, i.e. by default
-    #       the system will target on average 70 concurrent requests
-    #       per revision pod.
-    # NOTE: Only one metric can be used for autoscaling a Revision.
-    container-concurrency-target-default: "100"
-
-    # The requests per second (RPS) target default is what the Autoscaler will
-    # try to maintain when RPS is used as the scaling metric for a Revision and
-    # the Revision specifies unlimited RPS. Even when specifying unlimited RPS,
-    # the autoscaler will horizontally scale the application based on this
-    # target RPS.
-    # Must be greater than 1.0.
-    # NOTE: Only one metric can be used for autoscaling a Revision.
-    requests-per-second-target-default: "200"
-
-    # The target burst capacity specifies the size of burst in concurrent
-    # requests that the system operator expects the system will receive.
-    # Autoscaler will try to protect the system from queueing by introducing
-    # Activator in the request path if the current spare capacity of the
-    # service is less than this setting.
-    # If this setting is 0, then Activator will be in the request path only
-    # when the revision is scaled to 0.
-    # If this setting is > 0 and container-concurrency-target-percentage is
-    # 100% or 1.0, then activator will always be in the request path.
-    # -1 denotes unlimited target-burst-capacity and activator will always
-    # be in the request path.
-    # Other negative values are invalid.
-    target-burst-capacity: "211"
-
-    # When operating in a stable mode, the autoscaler operates on the
-    # average concurrency over the stable window.
-    # Stable window must be in whole seconds.
-    stable-window: "60s"
-
-    # When observed average concurrency during the panic window reaches
-    # panic-threshold-percentage the target concurrency, the autoscaler
-    # enters panic mode. When operating in panic mode, the autoscaler
-    # scales on the average concurrency over the panic window which is
-    # panic-window-percentage of the stable-window.
-    # Must be in the [1, 100] range.
-    # When computing the panic window it will be rounded to the closest
-    # whole second, at least 1s.
-    panic-window-percentage: "10.0"
-
-    # The percentage of the container concurrency target at which to
-    # enter panic mode when reached within the panic window.
-    panic-threshold-percentage: "200.0"
-
-    # Max scale up rate limits the rate at which the autoscaler will
-    # increase pod count. It is the maximum ratio of desired pods versus
-    # observed pods.
-    # Cannot be less or equal to 1.
-    # I.e with value of 2.0 the number of pods can at most go N to 2N
-    # over single Autoscaler period (2s), but at least N to
-    # N+1, if Autoscaler needs to scale up.
-    max-scale-up-rate: "1000.0"
-
-    # Max scale down rate limits the rate at which the autoscaler will
-    # decrease pod count. It is the maximum ratio of observed pods versus
-    # desired pods.
-    # Cannot be less or equal to 1.
-    # I.e. with value of 2.0 the number of pods can at most go N to N/2
-    # over single Autoscaler evaluation period (2s), but at
-    # least N to N-1, if Autoscaler needs to scale down.
-    max-scale-down-rate: "2.0"
-
-    # Scale to zero feature flag.
-    enable-scale-to-zero: "true"
-
-    # Scale to zero grace period is the time an inactive revision is left
-    # running before it is scaled to zero (must be positive, but recommended
-    # at least a few seconds if running with mesh networking).
-    # This is the upper limit and is provided not to enforce timeout after
-    # the revision stopped receiving requests for stable window, but to
-    # ensure network reprogramming to put activator in the path has completed.
-    # If the system determines that a shorter period is satisfactory,
-    # then the system will only wait that amount of time before scaling to 0.
-    # NOTE: this period might actually be 0, if activator has been
-    # in the request path sufficiently long.
-    # If there is necessity for the last pod to linger longer use
-    # scale-to-zero-pod-retention-period flag.
-    scale-to-zero-grace-period: "30s"
-
-    # Scale to zero pod retention period defines the minimum amount
-    # of time the last pod will remain after Autoscaler has decided to
-    # scale to zero.
-    # This flag is for the situations where the pod startup is very expensive
-    # and the traffic is bursty (requiring smaller windows for fast action),
-    # but patchy.
-    # The larger of this flag and `scale-to-zero-grace-period` will effectively
-    # determine how the last pod will hang around.
-    scale-to-zero-pod-retention-period: "0s"
-
-    # pod-autoscaler-class specifies the default pod autoscaler class
-    # that should be used if none is specified. If omitted,
-    # the Knative Pod Autoscaler (KPA) is used by default.
-    pod-autoscaler-class: "kpa.autoscaling.knative.dev"
-
-    # The capacity of a single activator task.
-    # The `unit` is one concurrent request proxied by the activator.
-    # activator-capacity must be at least 1.
-    # This value is used for computation of the Activator subset size.
-    # See the algorithm here: http://bit.ly/38XiCZ3.
-    # TODO(vagababov): tune after actual benchmarking.
-    activator-capacity: "100.0"
-
-    # initial-scale is the cluster-wide default value for the initial target
-    # scale of a revision after creation, unless overridden by the
-    # "autoscaling.knative.dev/initialScale" annotation.
-    # This value must be greater than 0 unless allow-zero-initial-scale is true.
-    initial-scale: "1"
-
-    # allow-zero-initial-scale controls whether either the cluster-wide initial-scale flag,
-    # or the "autoscaling.knative.dev/initialScale" annotation, can be set to 0.
-    allow-zero-initial-scale: "false"
-
-    # min-scale is the cluster-wide default value for the min scale of a revision,
-    # unless overridden by the "autoscaling.knative.dev/minScale" annotation.
-    min-scale: "0"
-
-    # max-scale is the cluster-wide default value for the max scale of a revision,
-    # unless overridden by the "autoscaling.knative.dev/maxScale" annotation.
-    # If set to 0, the revision has no maximum scale.
-    max-scale: "0"
-
-    # scale-down-delay is the amount of time that must pass at reduced
-    # concurrency before a scale down decision is applied. This can be useful,
-    # for example, to maintain replica count and avoid a cold start penalty if
-    # more requests come in within the scale down delay period.
-    # The default, 0s, imposes no delay at all.
-    scale-down-delay: "0s"
-
-    # max-scale-limit sets the maximum permitted value for the max scale of a revision.
-    # When this is set to a positive value, a revision with a maxScale above that value
-    # (including a maxScale of "0" = unlimited) is disallowed.
-    # A value of zero (the default) allows any limit, including unlimited.
-    max-scale-limit: "0"
-
----
-# Source: dataplane/templates/gateway/configmap-certmanager.yaml
-# Copyright 2020 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: config-certmanager
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: controller
-    networking.knative.dev/certificate-provider: cert-manager
-  annotations:
-    knative.dev/example-checksum: "b7a9a602"
-data:
-  _example: |
-    ################################
-    #                              #
-    #    EXAMPLE CONFIGURATION     #
-    #                              #
-    ################################
-
-    # This block is not actually functional configuration,
-    # but serves to illustrate the available configuration
-    # options and document them in a way that is accessible
-    # to users that `kubectl edit` this config map.
-    #
-    # These sample configuration options may be copied out of
-    # this block and unindented to actually change the configuration.
-
-    # issuerRef is a reference to the issuer for external-domain certificates used for ingress.
-    # IssuerRef should be either `ClusterIssuer` or `Issuer`.
-    # Please refer `IssuerRef` in https://cert-manager.io/docs/concepts/issuer/
-    # for more details about IssuerRef configuration.
-    # If the issuerRef is not specified, the self-signed `knative-selfsigned-issuer` ClusterIssuer is used.
-    issuerRef: |
-      kind: ClusterIssuer
-      name: letsencrypt-issuer
-
-    # clusterLocalIssuerRef is a reference to the issuer for cluster-local-domain certificates used for ingress.
-    # clusterLocalIssuerRef should be either `ClusterIssuer` or `Issuer`.
-    # Please refer `IssuerRef` in https://cert-manager.io/docs/concepts/issuer/
-    # for more details about ClusterInternalIssuerRef configuration.
-    # If the clusterLocalIssuerRef is not specified, the self-signed `knative-selfsigned-issuer` ClusterIssuer is used.
-    clusterLocalIssuerRef: |
-      kind: ClusterIssuer
-      name: your-company-issuer
-
-    # systemInternalIssuerRef is a reference to the issuer for certificates for system-internal-tls certificates used by Knative internal components.
-    # systemInternalIssuerRef should be either `ClusterIssuer` or `Issuer`.
-    # Please refer `IssuerRef` in https://cert-manager.io/docs/concepts/issuer/
-    # for more details about ClusterInternalIssuerRef configuration.
-    # If the systemInternalIssuerRef is not specified, the self-signed `knative-selfsigned-issuer` ClusterIssuer is used.
-    systemInternalIssuerRef: |
-      kind: ClusterIssuer
-      name: knative-selfsigned-issuer
-
----
-# Source: dataplane/templates/gateway/configmap-defaults.yaml
-# Copyright 2019 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: config-defaults
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: controller
-  annotations:
-    knative.dev/example-checksum: "5b64ff5c"
-data:
-  max-revision-timeout-seconds: "6000"
-  _example: |
-    ################################
-    #                              #
-    #    EXAMPLE CONFIGURATION     #
-    #                              #
-    ################################
-
-    # This block is not actually functional configuration,
-    # but serves to illustrate the available configuration
-    # options and document them in a way that is accessible
-    # to users that `kubectl edit` this config map.
-    #
-    # These sample configuration options may be copied out of
-    # this example block and unindented to be in the data block
-    # to actually change the configuration.
-
-    # revision-timeout-seconds contains the default number of
-    # seconds to use for the revision's per-request timeout, if
-    # none is specified.
-    revision-timeout-seconds: "300"  # 5 minutes
-
-    # max-revision-timeout-seconds contains the maximum number of
-    # seconds that can be used for revision-timeout-seconds.
-    # This value must be greater than or equal to revision-timeout-seconds.
-    # If omitted, the system default is used (600 seconds).
-    #
-    # If this value is increased, the activator's terminationGracePeriodSeconds
-    # should also be increased to prevent in-flight requests being disrupted.
-    max-revision-timeout-seconds: "600"  # 10 minutes
-
-    # revision-response-start-timeout-seconds contains the default number of
-    # seconds a request will be allowed to stay open while waiting to
-    # receive any bytes from the user's application, if none is specified.
-    #
-    # This defaults to 'revision-timeout-seconds'
-    revision-response-start-timeout-seconds: "300"
-
-    # revision-idle-timeout-seconds contains the default number of
-    # seconds a request will be allowed to stay open while not receiving any
-    # bytes from the user's application, if none is specified.
-    revision-idle-timeout-seconds: "0"  # infinite
-
-    # revision-cpu-request contains the cpu allocation to assign
-    # to revisions by default.  If omitted, no value is specified
-    # and the system default is used.
-    # Below is an example of setting revision-cpu-request.
-    # By default, it is not set by Knative.
-    revision-cpu-request: "400m"  # 0.4 of a CPU (aka 400 milli-CPU)
-
-    # revision-memory-request contains the memory allocation to assign
-    # to revisions by default.  If omitted, no value is specified
-    # and the system default is used.
-    # Below is an example of setting revision-memory-request.
-    # By default, it is not set by Knative.
-    revision-memory-request: "100M"  # 100 megabytes of memory
-
-    # revision-ephemeral-storage-request contains the ephemeral storage
-    # allocation to assign to revisions by default.  If omitted, no value is
-    # specified and the system default is used.
-    revision-ephemeral-storage-request: "500M"  # 500 megabytes of storage
-
-    # revision-cpu-limit contains the cpu allocation to limit
-    # revisions to by default.  If omitted, no value is specified
-    # and the system default is used.
-    # Below is an example of setting revision-cpu-limit.
-    # By default, it is not set by Knative.
-    revision-cpu-limit: "1000m"  # 1 CPU (aka 1000 milli-CPU)
-
-    # revision-memory-limit contains the memory allocation to limit
-    # revisions to by default.  If omitted, no value is specified
-    # and the system default is used.
-    # Below is an example of setting revision-memory-limit.
-    # By default, it is not set by Knative.
-    revision-memory-limit: "200M"  # 200 megabytes of memory
-
-    # revision-ephemeral-storage-limit contains the ephemeral storage
-    # allocation to limit revisions to by default.  If omitted, no value is
-    # specified and the system default is used.
-    revision-ephemeral-storage-limit: "750M"  # 750 megabytes of storage
-
-    # container-name-template contains a template for the default
-    # container name, if none is specified.  This field supports
-    # Go templating and is supplied with the ObjectMeta of the
-    # enclosing Service or Configuration, so values such as
-    # {{.Name}} are also valid.
-    container-name-template: "user-container"
-
-    # init-container-name-template contains a template for the default
-    # init container name, if none is specified.  This field supports
-    # Go templating and is supplied with the ObjectMeta of the
-    # enclosing Service or Configuration, so values such as
-    # {{.Name}} are also valid.
-    init-container-name-template: "init-container"
-
-    # container-concurrency specifies the maximum number
-    # of requests the Container can handle at once, and requests
-    # above this threshold are queued.  Setting a value of zero
-    # disables this throttling and lets through as many requests as
-    # the pod receives.
-    container-concurrency: "0"
-
-    # The container concurrency max limit is an operator setting ensuring that
-    # the individual revisions cannot have arbitrary large concurrency
-    # values, or autoscaling targets. `container-concurrency` default setting
-    # must be at or below this value.
-    #
-    # Must be greater than 1.
-    #
-    # Note: even with this set, a user can choose a containerConcurrency
-    # of 0 (i.e. unbounded) unless allow-container-concurrency-zero is
-    # set to "false".
-    container-concurrency-max-limit: "1000"
-
-    # allow-container-concurrency-zero controls whether users can
-    # specify 0 (i.e. unbounded) for containerConcurrency.
-    allow-container-concurrency-zero: "true"
-
-    # enable-service-links specifies the default value used for the
-    # enableServiceLinks field of the PodSpec, when it is omitted by the user.
-    # See: https://kubernetes.io/docs/concepts/services-networking/connect-applications-service/#accessing-the-service
-    #
-    # This is a tri-state flag with possible values of (true|false|default).
-    #
-    # In environments with large number of services it is suggested
-    # to set this value to `false`.
-    # See https://github.com/knative/serving/issues/8498.
-    enable-service-links: "false"
-
----
-# Source: dataplane/templates/gateway/configmap-deployment.yaml
-# Copyright 2019 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: config-deployment
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: controller
-  annotations:
-    knative.dev/example-checksum: "720ddb97"
-data:
-  # This is the Go import path for the binary that is containerized
-  # and substituted here.
-  queue-sidecar-image: gcr.io/knative-releases/knative.dev/serving/cmd/queue@sha256:a3cc71ce80dbc6df8781f15eac2cf3531a4c9815271799afd8776bef9e6aeaf2
-  progress-deadline: "30m"
-  queue-sidecar-cpu-limit: "1000m"
-  queue-sidecar-cpu-request: "25m"
-  queue-sidecar-ephemeral-storage-limit: "1024Mi"
-  queue-sidecar-ephemeral-storage-request: "512Mi"
-  queue-sidecar-memory-limit: "800Mi"
-  queue-sidecar-memory-request: "400Mi"
-  registries-skipping-tag-resolving: "managed.cr.union.ai,ghcr.io,docker.io,union-dataplane"
-  _example: |-
-    ################################
-    #                              #
-    #    EXAMPLE CONFIGURATION     #
-    #                              #
-    ################################
-
-    # This block is not actually functional configuration,
-    # but serves to illustrate the available configuration
-    # options and document them in a way that is accessible
-    # to users that `kubectl edit` this config map.
-    #
-    # These sample configuration options may be copied out of
-    # this example block and unindented to be in the data block
-    # to actually change the configuration.
-
-    # List of repositories for which tag to digest resolving should be skipped
-    registries-skipping-tag-resolving: "kind.local,ko.local,dev.local"
-
-    # Maximum time allowed for an image's digests to be resolved.
-    digest-resolution-timeout: "10s"
-
-    # Duration we wait for the deployment to be ready before considering it failed.
-    progress-deadline: "600s"
-
-    # Sets the queue proxy's CPU request.
-    # If omitted, a default value (currently "25m"), is used.
-    queue-sidecar-cpu-request: "25m"
-
-    # Sets the queue proxy's CPU limit.
-    # If omitted, a default value (currently "1000m"), is used when
-    # `queueproxy.resource-defaults` is set to `Enabled`.
-    queue-sidecar-cpu-limit: "1000m"
-
-    # Sets the queue proxy's memory request.
-    # If omitted, a default value (currently "400Mi"), is used when
-    # `queueproxy.resource-defaults` is set to `Enabled`.
-    queue-sidecar-memory-request: "400Mi"
-
-    # Sets the queue proxy's memory limit.
-    # If omitted, a default value (currently "800Mi"), is used when
-    # `queueproxy.resource-defaults` is set to `Enabled`.
-    queue-sidecar-memory-limit: "800Mi"
-
-    # Sets the queue proxy's ephemeral storage request.
-    # If omitted, no value is specified and the system default is used.
-    queue-sidecar-ephemeral-storage-request: "512Mi"
-
-    # Sets the queue proxy's ephemeral storage limit.
-    # If omitted, no value is specified and the system default is used.
-    queue-sidecar-ephemeral-storage-limit: "1024Mi"
-
-    # Sets tokens associated with specific audiences for queue proxy - used by QPOptions
-    #
-    # For example, to add the `service-x` audience:
-    #    queue-sidecar-token-audiences: "service-x"
-    # Also supports a list of audiences, for example:
-    #    queue-sidecar-token-audiences: "service-x,service-y"
-    # If omitted, or empty, no tokens are created
-    queue-sidecar-token-audiences: ""
-
-    # Sets rootCA for the queue proxy - used by QPOptions
-    # If omitted, or empty, no rootCA is added to the golang rootCAs
-    queue-sidecar-rootca: ""
-
-    # If set, it automatically configures pod anti-affinity requirements for all Knative services.
-    # It employs the `preferredDuringSchedulingIgnoredDuringExecution` weighted pod affinity term,
-    # aligning with the Knative revision label. It yields the configuration below in all workloads' deployments:
-    # `
-    #   affinity:
-    #     podAntiAffinity:
-    #       preferredDuringSchedulingIgnoredDuringExecution:
-    #       - podAffinityTerm:
-    #           topologyKey: kubernetes.io/hostname
-    #           labelSelector:
-    #             matchLabels:
-    #               serving.knative.dev/revision: {{revision-name}}
-    #         weight: 100
-    # `
-    # This may be "none" or "prefer-spread-revision-over-nodes" (default)
-    # default-affinity-type: "prefer-spread-revision-over-nodes"
-
-    # runtime-class-name contains the selector for which runtimeClassName
-    # is selected to put in a revision.
-    # By default, it is not set by Knative.
-    #
-    # Example:
-    # runtime-class-name: |
-    #   "":
-    #     selector:
-    #       use-default-runc: "yes"
-    #   kata: {}
-    #   gvisor:
-    #     selector:
-    #       use-gvisor: "please"
-    runtime-class-name: ""
-
----
-# Source: dataplane/templates/gateway/configmap-domain.yaml
-# Copyright 2018 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: config-domain
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: controller
-  annotations:
-    knative.dev/example-checksum: "26c09de5"
-data:
-  _example: |
-    ################################
-    #                              #
-    #    EXAMPLE CONFIGURATION     #
-    #                              #
-    ################################
-
-    # This block is not actually functional configuration,
-    # but serves to illustrate the available configuration
-    # options and document them in a way that is accessible
-    # to users that `kubectl edit` this config map.
-    #
-    # These sample configuration options may be copied out of
-    # this example block and unindented to be in the data block
-    # to actually change the configuration.
-
-    # Default value for domain.
-    # Routes having the cluster domain suffix (by default 'svc.cluster.local')
-    # will not be exposed through Ingress. You can define your own label
-    # selector to assign that domain suffix to your Route here, or you can set
-    # the label
-    #    "networking.knative.dev/visibility=cluster-local"
-    # to achieve the same effect.  This shows how to make routes having
-    # the label app=secret only exposed to the local cluster.
-    svc.cluster.local: |
-      selector:
-        app: secret
-
-    # These are example settings of domain.
-    # example.com will be used for all routes, but it is the least-specific rule so it
-    # will only be used if no other domain matches.
-    example.com: |
-
-    # example.org will be used for routes having app=nonprofit.
-    example.org: |
-      selector:
-        app: nonprofit
-
----
-# Source: dataplane/templates/gateway/configmap-features.yaml
-# Copyright 2020 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: config-features
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: controller
-  annotations:
-    knative.dev/example-checksum: "9ff569ad"
-data:
-  kubernetes.containerspec-addcapabilities: "enabled"
-  kubernetes.podspec-affinity: "enabled"
-  kubernetes.podspec-dnsconfig: "enabled"
-  kubernetes.podspec-dnspolicy: "enabled"
-  kubernetes.podspec-fieldref: "enabled"
-  kubernetes.podspec-hostaliases: "enabled"
-  kubernetes.podspec-init-containers: "enabled"
-  kubernetes.podspec-nodeselector: "enabled"
-  kubernetes.podspec-persistent-volume-claim: "enabled"
-  kubernetes.podspec-persistent-volume-write: "enabled"
-  kubernetes.podspec-priorityclassname: "enabled"
-  kubernetes.podspec-runtimeclassname: "enabled"
-  kubernetes.podspec-schedulername: "enabled"
-  kubernetes.podspec-securitycontext: "enabled"
-  kubernetes.podspec-shareprocessnamespace: "enabled"
-  kubernetes.podspec-tolerations: "enabled"
-  kubernetes.podspec-topologyspreadconstraints: "enabled"
-  kubernetes.podspec-volumes-csi: "enabled"
-  kubernetes.podspec-volumes-emptydir: "enabled"
-  kubernetes.podspec-volumes-hostpath: "enabled"
-  kubernetes.podspec-volumes-mount-propagation: "enabled"
-  _example: |-
-    ################################
-    #                              #
-    #    EXAMPLE CONFIGURATION     #
-    #                              #
-    ################################
-
-    # This block is not actually functional configuration,
-    # but serves to illustrate the available configuration
-    # options and document them in a way that is accessible
-    # to users that `kubectl edit` this config map.
-    #
-    # These sample configuration options may be copied out of
-    # this example block and unindented to be in the data block
-    # to actually change the configuration.
-
-    # Default SecurityContext settings to secure-by-default values
-    # if unset.
-    #
-    # This value will default to "enabled" in a future release,
-    # probably Knative 1.10
-    secure-pod-defaults: "disabled"
-
-    # Indicates whether multi container support is enabled
-    #
-    # WARNING: Cannot safely be disabled once enabled.
-    # See: https://knative.dev/docs/serving/configuration/feature-flags/#multiple-containers
-    multi-container: "enabled"
-
-    # Indicates whether multi container probing is enabled
-    #
-    # WARNING: Cannot safely be disabled once enabled.
-    # See: https://knative.dev/docs/serving/configuration/feature-flags/#multiple-container-probing
-    multi-container-probing: "disabled"
-
-    # Indicates whether Kubernetes affinity support is enabled
-    #
-    # WARNING: Cannot safely be disabled once enabled.
-    # See: https://knative.dev/docs/serving/feature-flags/#kubernetes-node-affinity
-    kubernetes.podspec-affinity: "disabled"
-
-    # Indicates whether Kubernetes topologySpreadConstraints support is enabled
-    #
-    # WARNING: Cannot safely be disabled once enabled.
-    # See: https://knative.dev/docs/serving/feature-flags/#kubernetes-topology-spread-constraints
-    kubernetes.podspec-topologyspreadconstraints: "disabled"
-
-    # Indicates whether Kubernetes hostAliases support is enabled
-    #
-    # WARNING: Cannot safely be disabled once enabled.
-    # See: https://knative.dev/docs/serving/feature-flags/#kubernetes-host-aliases
-    kubernetes.podspec-hostaliases: "disabled"
-
-    # Indicates whether Kubernetes nodeSelector support is enabled
-    #
-    # WARNING: Cannot safely be disabled once enabled.
-    # See: https://knative.dev/docs/serving/feature-flags/#kubernetes-node-selector
-    kubernetes.podspec-nodeselector: "disabled"
-
-    # Indicates whether Kubernetes tolerations support is enabled
-    #
-    # WARNING: Cannot safely be disabled once enabled
-    # See: https://knative.dev/docs/serving/feature-flags/#kubernetes-toleration
-    kubernetes.podspec-tolerations: "disabled"
-
-    # Indicates whether Kubernetes FieldRef support is enabled
-    #
-    # WARNING: Cannot safely be disabled once enabled.
-    # See: https://knative.dev/docs/serving/feature-flags/#kubernetes-fieldref
-    kubernetes.podspec-fieldref: "disabled"
-
-    # Indicates whether Kubernetes RuntimeClassName support is enabled
-    #
-    # WARNING: Cannot safely be disabled once enabled.
-    # See: https://knative.dev/docs/serving/feature-flags/#kubernetes-runtime-class
-    kubernetes.podspec-runtimeclassname: "disabled"
-
-    # Indicates whether Kubernetes DNSPolicy support is enabled
-    #
-    # WARNING: Cannot safely be disabled once enabled.
-    # See: https://knative.dev/docs/serving/feature-flags/#kubernetes-dnspolicy
-    kubernetes.podspec-dnspolicy: "disabled"
-
-    # Indicates whether Kubernetes DNSConfig support is enabled
-    #
-    # WARNING: Cannot safely be disabled once enabled.
-    # See: https://knative.dev/docs/serving/feature-flags/#kubernetes-dnsconfig
-    kubernetes.podspec-dnsconfig: "disabled"
-
-    # This feature allows end-users to set a subset of fields on the Pod's SecurityContext
-    #
-    # When set to "enabled" or "allowed" it allows the following
-    # PodSecurityContext properties:
-    # - FSGroup
-    # - RunAsGroup
-    # - RunAsNonRoot
-    # - SupplementalGroups
-    # - RunAsUser
-    # - SeccompProfile
-    #
-    # This feature flag should be used with caution as the PodSecurityContext
-    # properties may have a side-effect on non-user sidecar containers that come
-    # from Knative or your service mesh
-    #
-    # WARNING: Cannot safely be disabled once enabled.
-    # See: https://knative.dev/docs/serving/feature-flags/#kubernetes-security-context
-    kubernetes.podspec-securitycontext: "disabled"
-
-    # Indicated whether sharing the process namespace via ShareProcessNamespace pod spec is allowed.
-    # This can be especially useful for sharing data from images directly between sidecars
-    #
-    # See: https://knative.dev/docs/serving/configuration/feature-flags/#kubernetes-share-process-namespace
-    kubernetes.podspec-shareprocessnamespace: "disabled"
-
-    # Indicates whether hostIPC support is enabled
-    #
-    # WARNING: Cannot safely be disabled once enabled.
-    # See https://knative.dev/docs/serving/configuration/feature-flags/#kubernetes-host-ipc
-    kubernetes.podspec-hostipc: "disabled"
-
-    # Indicates whether hostPID support is enabled
-    #
-    # WARNING: Cannot safely be disabled once enabled.
-    # See https://knative.dev/docs/serving/configuration/feature-flags/#kubernetes-host-pid
-    kubernetes.podspec-hostpid: "disabled"
-
-    # Indicates whether hostNetwork support is enabled
-    #
-    # WARNING: Cannot safely be disabled once enabled.
-    # See See https://knative.dev/docs/serving/configuration/feature-flags/#kubernetes-host-network
-    kubernetes.podspec-hostnetwork: "disabled"
-
-    # Indicates whether Kubernetes PriorityClassName support is enabled
-    #
-    # WARNING: Cannot safely be disabled once enabled.
-    # See: https://knative.dev/docs/serving/feature-flags/#kubernetes-priority-class-name
-    kubernetes.podspec-priorityclassname: "disabled"
-
-    # Indicates whether Kubernetes SchedulerName support is enabled
-    #
-    # WARNING: Cannot safely be disabled once enabled.
-    # See: https://knative.dev/docs/serving/feature-flags/#kubernetes-scheduler-name
-    kubernetes.podspec-schedulername: "disabled"
-
-    # This feature flag allows end-users to add a subset of capabilities on the Pod's SecurityContext.
-    #
-    # When set to "enabled" or "allowed" it allows capabilities to be added to the container.
-    # For a list of possible capabilities, see https://man7.org/linux/man-pages/man7/capabilities.7.html
-    kubernetes.containerspec-addcapabilities: "disabled"
-
-    # This feature validates PodSpecs from the validating webhook
-    # against the K8s API Server.
-    #
-    # When "enabled", the server will always run the extra validation.
-    # When "allowed", the server will not run the dry-run validation by default.
-    #   However, clients may enable the behavior on an individual Service by
-    #   attaching the following metadata annotation: "features.knative.dev/podspec-dryrun":"enabled".
-    # See: https://knative.dev/docs/serving/feature-flags/#kubernetes-dry-run
-    kubernetes.podspec-dryrun: "allowed"
-
-    # Controls whether tag header based routing feature are enabled or not.
-    # 1. Enabled: enabling tag header based routing
-    # 2. Disabled: disabling tag header based routing
-    # See: https://knative.dev/docs/serving/feature-flags/#tag-header-based-routing
-    tag-header-based-routing: "disabled"
-
-    # Controls whether http2 auto-detection should be enabled or not.
-    # 1. Enabled: http2 connection will be attempted via upgrade.
-    # 2. Disabled: http2 connection will only be attempted when port name is set to "h2c".
-    autodetect-http2: "disabled"
-
-    # Controls whether volume support for EmptyDir is enabled or not.
-    # 1. Enabled: enabling EmptyDir volume support
-    # 2. Disabled: disabling EmptyDir volume support
-    kubernetes.podspec-volumes-emptydir: "enabled"
-
-    # Controls whether init containers support is enabled or not.
-    # 1. Enabled: enabling init containers support
-    # 2. Disabled: disabling init containers support
-    kubernetes.podspec-init-containers: "disabled"
-
-    # Controls whether persistent volume claim support is enabled or not.
-    # 1. Enabled: enabling persistent volume claim support
-    # 2. Disabled: disabling persistent volume claim support
-    kubernetes.podspec-persistent-volume-claim: "disabled"
-
-    # Controls whether write access for persistent volumes is enabled or not.
-    # 1. Enabled: enabling write access for persistent volumes
-    # 2. Disabled: disabling write access for persistent volumes
-    kubernetes.podspec-persistent-volume-write: "disabled"
-
-    # Controls if the queue proxy podInfo feature is enabled, allowed or disabled
-    #
-    # This feature should be enabled/allowed when using queue proxy Options (Extensions)
-    # Enabling will mount a podInfo volume to the queue proxy container.
-    # The volume will contains an 'annotations' file (from the pod's annotation field).
-    # The annotations in this file include the Service annotations set by the client creating the service.
-    # If mounted, the annotations can be accessed by queue proxy extensions at /etc/podinfo/annnotations
-    #
-    # 1. "enabled": always mount a podInfo volume
-    # 2. "disabled": never mount a podInfo volume
-    # 3. "allowed": by default, do not mount a podInfo volume
-    #   However, a client may mount the podInfo volume on an individual Service by attaching
-    #   the following metadata annotation to the Service: "features.knative.dev/queueproxy-podinfo":"enabled".
-    #
-    # NOTE THAT THIS IS AN EXPERIMENTAL / ALPHA FEATURE
-    queueproxy.mount-podinfo: "disabled"
-
-    # Default queue proxy resource requests and limits to good values for most cases if set.
-    queueproxy.resource-defaults: "disabled"
-
----
-# Source: dataplane/templates/gateway/configmap-gc.yaml
-# Copyright 2018 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: config-gc
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: controller
-  annotations:
-    knative.dev/example-checksum: "aa3813a8"
-data:
-  _example: |
-    ################################
-    #                              #
-    #    EXAMPLE CONFIGURATION     #
-    #                              #
-    ################################
-
-    # This block is not actually functional configuration,
-    # but serves to illustrate the available configuration
-    # options and document them in a way that is accessible
-    # to users that `kubectl edit` this config map.
-    #
-    # These sample configuration options may be copied out of
-    # this example block and unindented to be in the data block
-    # to actually change the configuration.
-
-    # ---------------------------------------
-    # Garbage Collector Settings
-    # ---------------------------------------
-    #
-    # Active
-    #   * Revisions which are referenced by a Route are considered active.
-    #   * Individual revisions may be marked with the annotation
-    #      "serving.knative.dev/no-gc":"true" to be permanently considered active.
-    #   * Active revisions are not considered for GC.
-    # Retention
-    #   * Revisions are retained if they are any of the following:
-    #       1. Active
-    #       2. Were created within "retain-since-create-time"
-    #       3. Were last referenced by a route within
-    #           "retain-since-last-active-time"
-    #       4. There are fewer than "min-non-active-revisions"
-    #     If none of these conditions are met, or if the count of revisions exceed
-    #      "max-non-active-revisions", they will be deleted by GC.
-    #     The special value "disabled" may be used to turn off these limits.
-    #
-    # Example config to immediately collect any inactive revision:
-    #    min-non-active-revisions: "0"
-    #    max-non-active-revisions: "0"
-    #    retain-since-create-time: "disabled"
-    #    retain-since-last-active-time: "disabled"
-    #
-    # Example config to always keep around the last ten non-active revisions:
-    #     retain-since-create-time: "disabled"
-    #     retain-since-last-active-time: "disabled"
-    #     max-non-active-revisions: "10"
-    #
-    # Example config to disable all garbage collection:
-    #     retain-since-create-time: "disabled"
-    #     retain-since-last-active-time: "disabled"
-    #     max-non-active-revisions: "disabled"
-    #
-    # Example config to keep recently deployed or active revisions,
-    # always maintain the last two in case of rollback, and prevent
-    # burst activity from exploding the count of old revisions:
-    #      retain-since-create-time: "48h"
-    #      retain-since-last-active-time: "15h"
-    #      min-non-active-revisions: "2"
-    #      max-non-active-revisions: "1000"
-
-    # Duration since creation before considering a revision for GC or "disabled".
-    retain-since-create-time: "48h"
-
-    # Duration since active before considering a revision for GC or "disabled".
-    retain-since-last-active-time: "15h"
-
-    # Minimum number of non-active revisions to retain.
-    min-non-active-revisions: "20"
-
-    # Maximum number of non-active revisions to retain
-    # or "disabled" to disable any maximum limit.
-    max-non-active-revisions: "1000"
-
----
-# Source: dataplane/templates/gateway/configmap-kourier.yaml
-# Copyright 2021 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: config-kourier
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: net-kourier
-    networking.knative.dev/ingress-provider: kourier
-data:
-  _example: |
-    ################################
-    #                              #
-    #    EXAMPLE CONFIGURATION     #
-    #                              #
-    ################################
-
-    # This block is not actually functional configuration,
-    # but serves to illustrate the available configuration
-    # options and document them in a way that is accessible
-    # to users that `kubectl edit` this config map.
-    #
-    # These sample configuration options may be copied out of
-    # this example block and unindented to be in the data block
-    # to actually change the configuration.
-
-    # Specifies whether requests reaching the Kourier gateway
-    # in the context of services should be logged. Readiness
-    # probes etc. must be configured via the bootstrap config.
-    enable-service-access-logging: "true"
-
-    # Specifies whether to use proxy-protocol in order to safely
-    # transport connection information such as a client's address
-    # across multiple layers of TCP proxies.
-    # NOTE THAT THIS IS AN EXPERIMENTAL / ALPHA FEATURE
-    enable-proxy-protocol: "false"
-
-    # The server certificates to serve the internal TLS traffic for Kourier Gateway.
-    # It is specified by the secret name in controller namespace, which has
-    # the "tls.crt" and "tls.key" data field.
-    # Use an empty value to disable the feature (default).
-    #
-    # NOTE: This flag is in an alpha state and is mostly here to enable internal testing
-    #       for now. Use with caution.
-    cluster-cert-secret: ""
-
-    # Specifies the amount of time that Kourier waits for the incoming requests.
-    # The default, 0s, imposes no timeout at all.
-    stream-idle-timeout: "0s"
-
-    # Specifies whether to use CryptoMB private key provider in order to
-    # acclerate the TLS handshake.
-    # NOTE THAT THIS IS AN EXPERIMENTAL / ALPHA FEATURE.
-    enable-cryptomb: "false"
-
-    # Configures the number of additional ingress proxy hops from the
-    # right side of the x-forwarded-for HTTP header to trust.
-    trusted-hops-count: "0"
-
-    # Configures the connection manager to use the real remote address
-    # of the client connection when determining internal versus external origin and manipulating various headers.
-    use-remote-address: "false"
-
-    # Specifies the cipher suites for TLS external listener.
-    # Use ',' separated values like "ECDHE-ECDSA-AES128-GCM-SHA256,ECDHE-ECDSA-CHACHA20-POLY1305"
-    # The default uses the default cipher suites of the envoy version.
-    cipher-suites: ""
-
----
-# Source: dataplane/templates/gateway/configmap-leader-election.yaml
-# Copyright 2020 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: config-leader-election
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: controller
-  annotations:
-    knative.dev/example-checksum: "f4b71f57"
-data:
-  _example: |
-    ################################
-    #                              #
-    #    EXAMPLE CONFIGURATION     #
-    #                              #
-    ################################
-
-    # This block is not actually functional configuration,
-    # but serves to illustrate the available configuration
-    # options and document them in a way that is accessible
-    # to users that `kubectl edit` this config map.
-    #
-    # These sample configuration options may be copied out of
-    # this example block and unindented to be in the data block
-    # to actually change the configuration.
-
-    # lease-duration is how long non-leaders will wait to try to acquire the
-    # lock; 15 seconds is the value used by core kubernetes controllers.
-    lease-duration: "60s"
-
-    # renew-deadline is how long a leader will try to renew the lease before
-    # giving up; 10 seconds is the value used by core kubernetes controllers.
-    renew-deadline: "40s"
-
-    # retry-period is how long the leader election client waits between tries of
-    # actions; 2 seconds is the value used by core kubernetes controllers.
-    retry-period: "10s"
-
-    # buckets is the number of buckets used to partition key space of each
-    # Reconciler. If this number is M and the replica number of the controller
-    # is N, the N replicas will compete for the M buckets. The owner of a
-    # bucket will take care of the reconciling for the keys partitioned into
-    # that bucket.
-    buckets: "1"
-
----
-# Source: dataplane/templates/gateway/configmap-logging.yaml
-# Copyright 2018 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: config-logging
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: logging
-  annotations:
-    knative.dev/example-checksum: "9f25d429"
-data:
-  _example: |
-    ################################
-    #                              #
-    #    EXAMPLE CONFIGURATION     #
-    #                              #
-    ################################
-
-    # This block is not actually functional configuration,
-    # but serves to illustrate the available configuration
-    # options and document them in a way that is accessible
-    # to users that `kubectl edit` this config map.
-    #
-    # These sample configuration options may be copied out of
-    # this example block and unindented to be in the data block
-    # to actually change the configuration.
-
-    # Common configuration for all Knative codebase
-    zap-logger-config: |
-      {
-        "level": "info",
-        "development": false,
-        "outputPaths": ["stdout"],
-        "errorOutputPaths": ["stderr"],
-        "encoding": "json",
-        "encoderConfig": {
-          "timeKey": "timestamp",
-          "levelKey": "severity",
-          "nameKey": "logger",
-          "callerKey": "caller",
-          "messageKey": "message",
-          "stacktraceKey": "stacktrace",
-          "lineEnding": "",
-          "levelEncoder": "",
-          "timeEncoder": "iso8601",
-          "durationEncoder": "",
-          "callerEncoder": ""
-        }
-      }
-
-    # Log level overrides
-    # For all components except the queue proxy,
-    # changes are picked up immediately.
-    # For queue proxy, changes require recreation of the pods.
-    loglevel.controller: "info"
-    loglevel.autoscaler: "info"
-    loglevel.queueproxy: "info"
-    loglevel.webhook: "info"
-    loglevel.activator: "info"
-    loglevel.hpaautoscaler: "info"
-    loglevel.net-istio-controller: "info"
-    loglevel.net-contour-controller: "info"
-    loglevel.net-kourier-controller: "info"
-    loglevel.net-gateway-api-controller: "info"
-
----
-# Source: dataplane/templates/gateway/configmap-network.yaml
-# Copyright 2018 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: config-network
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: networking
-  annotations:
-    knative.dev/example-checksum: "0573e07d"
-data:
-  ingress-class: "kourier.ingress.networking.knative.dev"
-  _example: |
-    ################################
-    #                              #
-    #    EXAMPLE CONFIGURATION     #
-    #                              #
-    ################################
-
-    # This block is not actually functional configuration,
-    # but serves to illustrate the available configuration
-    # options and document them in a way that is accessible
-    # to users that `kubectl edit` this config map.
-    #
-    # These sample configuration options may be copied out of
-    # this example block and unindented to be in the data block
-    # to actually change the configuration.
-
-    # ingress-class specifies the default ingress class
-    # to use when not dictated by Route annotation.
-    #
-    # If not specified, will use the Istio ingress.
-    #
-    # Note that changing the Ingress class of an existing Route
-    # will result in undefined behavior.  Therefore it is best to only
-    # update this value during the setup of Knative, to avoid getting
-    # undefined behavior.
-    ingress-class: "istio.ingress.networking.knative.dev"
-
-    # certificate-class specifies the default Certificate class
-    # to use when not dictated by Route annotation.
-    #
-    # If not specified, will use the Cert-Manager Certificate.
-    #
-    # Note that changing the Certificate class of an existing Route
-    # will result in undefined behavior.  Therefore it is best to only
-    # update this value during the setup of Knative, to avoid getting
-    # undefined behavior.
-    certificate-class: "cert-manager.certificate.networking.knative.dev"
-
-    # namespace-wildcard-cert-selector specifies a LabelSelector which
-    # determines which namespaces should have a wildcard certificate
-    # provisioned.
-    #
-    # Use an empty value to disable the feature (this is the default):
-    #   namespace-wildcard-cert-selector: ""
-    #
-    # Use an empty object to enable for all namespaces
-    #   namespace-wildcard-cert-selector: {}
-    #
-    # Useful labels include the "kubernetes.io/metadata.name" label to
-    # avoid provisioning a certificate for the "kube-system" namespaces.
-    # Use the following selector to match pre-1.0 behavior of using
-    # "networking.knative.dev/disableWildcardCert" to exclude namespaces:
-    #
-    # matchExpressions:
-    # - key: "networking.knative.dev/disableWildcardCert"
-    #   operator: "NotIn"
-    #   values: ["true"]
-    namespace-wildcard-cert-selector: ""
-
-    # domain-template specifies the golang text template string to use
-    # when constructing the Knative service's DNS name. The default
-    # value is "{{.Name}}.{{.Namespace}}.{{.Domain}}".
-    #
-    # Valid variables defined in the template include Name, Namespace, Domain,
-    # Labels, and Annotations. Name will be the result of the tag-template
-    # below, if a tag is specified for the route.
-    #
-    # Changing this value might be necessary when the extra levels in
-    # the domain name generated is problematic for wildcard certificates
-    # that only support a single level of domain name added to the
-    # certificate's domain. In those cases you might consider using a value
-    # of "{{.Name}}-{{.Namespace}}.{{.Domain}}", or removing the Namespace
-    # entirely from the template. When choosing a new value be thoughtful
-    # of the potential for conflicts - for example, when users choose to use
-    # characters such as `-` in their service, or namespace, names.
-    # {{.Annotations}} or {{.Labels}} can be used for any customization in the
-    # go template if needed.
-    # We strongly recommend keeping namespace part of the template to avoid
-    # domain name clashes:
-    # eg. '{{.Name}}-{{.Namespace}}.{{ index .Annotations "sub"}}.{{.Domain}}'
-    # and you have an annotation {"sub":"foo"}, then the generated template
-    # would be {Name}-{Namespace}.foo.{Domain}
-    domain-template: "{{.Name}}.{{.Namespace}}.{{.Domain}}"
-
-    # tag-template specifies the golang text template string to use
-    # when constructing the DNS name for "tags" within the traffic blocks
-    # of Routes and Configuration.  This is used in conjunction with the
-    # domain-template above to determine the full URL for the tag.
-    tag-template: "{{.Tag}}-{{.Name}}"
-
-    # auto-tls is deprecated and replaced by external-domain-tls
-    auto-tls: "Disabled"
-
-    # Controls whether TLS certificates are automatically provisioned and
-    # installed in the Knative ingress to terminate TLS connections
-    # for cluster external domains (like: app.example.com)
-    # - Enabled: enables the TLS certificate provisioning feature for cluster external domains.
-    # - Disabled: disables the TLS certificate provisioning feature for cluster external domains.
-    external-domain-tls: "Disabled"
-
-    # Controls weather TLS certificates are automatically provisioned and
-    # installed in the Knative ingress to terminate TLS connections
-    # for cluster local domains (like: app.namespace.svc.<your-cluster-domain>)
-    # - Enabled: enables the TLS certificate provisioning feature for cluster cluster-local domains.
-    # - Disabled: disables the TLS certificate provisioning feature for cluster cluster local domains.
-    # NOTE: This flag is in an alpha state and is mostly here to enable internal testing
-    #       for now. Use with caution.
-    cluster-local-domain-tls: "Disabled"
-
-    # internal-encryption is deprecated and replaced by system-internal-tls
-    internal-encryption: "false"
-
-    # system-internal-tls controls weather TLS encryption is used for connections between
-    # the internal components of Knative:
-    # - ingress to activator
-    # - ingress to queue-proxy
-    # - activator to queue-proxy
-    #
-    # Possible values for this flag are:
-    # - Enabled: enables the TLS certificate provisioning feature for cluster cluster-local domains.
-    # - Disabled: disables the TLS certificate provisioning feature for cluster cluster local domains.
-    # NOTE: This flag is in an alpha state and is mostly here to enable internal testing
-    #       for now. Use with caution.
-    system-internal-tls: "Disabled"
-
-    # Controls the behavior of the HTTP endpoint for the Knative ingress.
-    # It requires auto-tls to be enabled.
-    # - Enabled: The Knative ingress will be able to serve HTTP connection.
-    # - Redirected: The Knative ingress will send a 301 redirect for all
-    # http connections, asking the clients to use HTTPS.
-    #
-    # "Disabled" option is deprecated.
-    http-protocol: "Enabled"
-
-    # rollout-duration contains the minimal duration in seconds over which the
-    # Configuration traffic targets are rolled out to the newest revision.
-    rollout-duration: "0"
-
-    # autocreate-cluster-domain-claims controls whether ClusterDomainClaims should
-    # be automatically created (and deleted) as needed when DomainMappings are
-    # reconciled.
-    #
-    # If this is "false" (the default), the cluster administrator is
-    # responsible for creating ClusterDomainClaims and delegating them to
-    # namespaces via their spec.Namespace field. This setting should be used in
-    # multitenant environments which need to control which namespace can use a
-    # particular domain name in a domain mapping.
-    #
-    # If this is "true", users are able to associate arbitrary names with their
-    # services via the DomainMapping feature.
-    autocreate-cluster-domain-claims: "false"
-
-    # If true, networking plugins can add additional information to deployed
-    # applications to make their pods directly accessible via their IPs even if mesh is
-    # enabled and thus direct-addressability is usually not possible.
-    # Consumers like Knative Serving can use this setting to adjust their behavior
-    # accordingly, i.e. to drop fallback solutions for non-pod-addressable systems.
-    #
-    # NOTE: This flag is in an alpha state and is mostly here to enable internal testing
-    #       for now. Use with caution.
-    enable-mesh-pod-addressability: "false"
-
-    # mesh-compatibility-mode indicates whether consumers of network plugins
-    # should directly contact Pod IPs (most efficient), or should use the
-    # Cluster IP (less efficient, needed when mesh is enabled unless
-    # `enable-mesh-pod-addressability`, above, is set).
-    # Permitted values are:
-    #  - "auto" (default): automatically determine which mesh mode to use by trying Pod IP and falling back to Cluster IP as needed.
-    #  - "enabled": always use Cluster IP and do not attempt to use Pod IPs.
-    #  - "disabled": always use Pod IPs and do not fall back to Cluster IP on failure.
-    mesh-compatibility-mode: "auto"
-
-    # Defines the scheme used for external URLs if auto-tls is not enabled.
-    # This can be used for making Knative report all URLs as "HTTPS" for example, if you're
-    # fronting Knative with an external loadbalancer that deals with TLS termination and
-    # Knative doesn't know about that otherwise.
-    default-external-scheme: "http"
-
----
-# Source: dataplane/templates/gateway/configmap-observability.yaml
-# Copyright 2018 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: config-observability
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: observability
-  annotations:
-    knative.dev/example-checksum: "54abd711"
-data:
-  _example: |
-    ################################
-    #                              #
-    #    EXAMPLE CONFIGURATION     #
-    #                              #
-    ################################
-
-    # This block is not actually functional configuration,
-    # but serves to illustrate the available configuration
-    # options and document them in a way that is accessible
-    # to users that `kubectl edit` this config map.
-    #
-    # These sample configuration options may be copied out of
-    # this example block and unindented to be in the data block
-    # to actually change the configuration.
-
-    # logging.enable-var-log-collection defaults to false.
-    # The fluentd daemon set will be set up to collect /var/log if
-    # this flag is true.
-    logging.enable-var-log-collection: "false"
-
-    # logging.revision-url-template provides a template to use for producing the
-    # logging URL that is injected into the status of each Revision.
-    logging.revision-url-template: "http://logging.example.com/?revisionUID=${REVISION_UID}"
-
-    # If non-empty, this enables queue proxy writing user request logs to stdout, excluding probe
-    # requests.
-    # NB: after 0.18 release logging.enable-request-log must be explicitly set to true
-    # in order for request logging to be enabled.
-    #
-    # The value determines the shape of the request logs and it must be a valid go text/template.
-    # It is important to keep this as a single line. Multiple lines are parsed as separate entities
-    # by most collection agents and will split the request logs into multiple records.
-    #
-    # The following fields and functions are available to the template:
-    #
-    # Request: An http.Request (see https://golang.org/pkg/net/http/#Request)
-    # representing an HTTP request received by the server.
-    #
-    # Response:
-    # struct {
-    #   Code    int       // HTTP status code (see https://www.iana.org/assignments/http-status-codes/http-status-codes.xhtml)
-    #   Size    int       // An int representing the size of the response.
-    #   Latency float64   // A float64 representing the latency of the response in seconds.
-    # }
-    #
-    # Revision:
-    # struct {
-    #   Name          string  // Knative revision name
-    #   Namespace     string  // Knative revision namespace
-    #   Service       string  // Knative service name
-    #   Configuration string  // Knative configuration name
-    #   PodName       string  // Name of the pod hosting the revision
-    #   PodIP         string  // IP of the pod hosting the revision
-    # }
-    #
-    logging.request-log-template: '{"httpRequest": {"requestMethod": "{{.Request.Method}}", "requestUrl": "{{js .Request.RequestURI}}", "requestSize": "{{.Request.ContentLength}}", "status": {{.Response.Code}}, "responseSize": "{{.Response.Size}}", "userAgent": "{{js .Request.UserAgent}}", "remoteIp": "{{js .Request.RemoteAddr}}", "serverIp": "{{.Revision.PodIP}}", "referer": "{{js .Request.Referer}}", "latency": "{{.Response.Latency}}s", "protocol": "{{.Request.Proto}}"}, "traceId": "{{index .Request.Header "X-B3-Traceid"}}"}'
-
-    # If true, the request logging will be enabled.
-    # NB: up to and including Knative version 0.18 if logging.request-log-template is non-empty, this value
-    # will be ignored.
-    logging.enable-request-log: "false"
-
-    # If true, this enables queue proxy writing request logs for probe requests to stdout.
-    # It uses the same template for user requests, i.e. logging.request-log-template.
-    logging.enable-probe-request-log: "false"
-
-    # metrics.backend-destination field specifies the system metrics destination.
-    # It supports either prometheus (the default) or opencensus.
-    metrics.backend-destination: prometheus
-
-    # metrics.reporting-period-seconds specifies the global metrics reporting period for control and data plane components.
-    # If a zero or negative value is passed the default reporting period is used (10 secs).
-    # If the attribute is not specified a default value is used per metrics backend.
-    # For the prometheus backend the default reporting period is 5s while for opencensus it is 60s.
-    metrics.reporting-period-seconds: "5"
-
-    # metrics.request-metrics-backend-destination specifies the request metrics
-    # destination. It enables queue proxy to send request metrics.
-    # Currently supported values: prometheus (the default), opencensus.
-    metrics.request-metrics-backend-destination: prometheus
-
-    # metrics.request-metrics-reporting-period-seconds specifies the request metrics reporting period in sec at queue proxy.
-    # If a zero or negative value is passed the default reporting period is used (10 secs).
-    # If the attribute is not specified, it is overridden by the value of metrics.reporting-period-seconds.
-    metrics.request-metrics-reporting-period-seconds: "5"
-
-    # profiling.enable indicates whether it is allowed to retrieve runtime profiling data from
-    # the pods via an HTTP server in the format expected by the pprof visualization tool. When
-    # enabled, the Knative Serving pods expose the profiling data on an alternate HTTP port 8008.
-    # The HTTP context root for profiling is then /debug/pprof/.
-    profiling.enable: "false"
-
----
-# Source: dataplane/templates/gateway/configmap-tracing.yaml
-# Copyright 2019 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: config-tracing
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: tracing
-  annotations:
-    knative.dev/example-checksum: "26614636"
-data:
-  _example: |
-    ################################
-    #                              #
-    #    EXAMPLE CONFIGURATION     #
-    #                              #
-    ################################
-
-    # This block is not actually functional configuration,
-    # but serves to illustrate the available configuration
-    # options and document them in a way that is accessible
-    # to users that `kubectl edit` this config map.
-    #
-    # These sample configuration options may be copied out of
-    # this example block and unindented to be in the data block
-    # to actually change the configuration.
-    #
-    # This may be "zipkin" or "none" (default)
-    backend: "none"
-
-    # URL to zipkin collector where traces are sent.
-    # This must be specified when backend is "zipkin"
-    zipkin-endpoint: "http://zipkin.istio-system.svc.cluster.local:9411/api/v2/spans"
-
-    # Enable zipkin debug mode. This allows all spans to be sent to the server
-    # bypassing sampling.
-    debug: "false"
-
-    # Percentage (0-1) of requests to trace
-    sample-rate: "0.1"
 
 ---
 # Source: dataplane/templates/imagebuilder/build-image-configmap.yaml
@@ -6129,15 +4336,13 @@ data:
       enableTunnelService: true
       #  enableDepot: false
       tunnel:
-        enableDirectToAppIngress: true
+        enableDirectToAppIngress: false
         deploymentToRestart: union-operator-proxy
-        appIngressOriginURL: "http://union-operator-gateway:80"
         enableDataplaneIngress: true
         dataplaneIngressOriginURL: "http://union-operator-gateway:8888"
       limitNamespace: union
-      disableClusterPermissions: true
       apps:
-        enabled: 'true'
+        enabled: 'false'
       syncClusterConfig:
         enabled: false
       clusterId:
@@ -6154,7 +4359,7 @@ data:
         userRole: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
         userRoleKey: 'eks.amazonaws.com/role-arn'
       collectUsages:
-        enabled: false
+        enabled: true
       billing:
         model: ResourceUsage
       dependenciesHeartbeat:
@@ -6180,7 +4385,7 @@ data:
     proxy:
       imageBuilderConfig:
         authenticationType: 'noop'
-        defaultRepository: ''
+        defaultRepository: 'union-dataplane'
       persistedLogs:
         objectStore:
           pathTemplate: namespace-{{.KubernetesNamespace}}.pod-{{.KubernetesPodName}}.cont-{{.KubernetesContainerName}}
@@ -6446,301 +4651,6 @@ data:
       static_configs:
       - targets:
         - localhost:9090
-    - bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
-      job_name: kubernetes-apiservers
-      kubernetes_sd_configs:
-      - role: endpoints
-      relabel_configs:
-      - action: keep
-        regex: default;kubernetes;https
-        source_labels:
-        - __meta_kubernetes_namespace
-        - __meta_kubernetes_service_name
-        - __meta_kubernetes_endpoint_port_name
-      scheme: https
-      tls_config:
-        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-        insecure_skip_verify: true
-    - bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
-      job_name: kubernetes-nodes
-      kubernetes_sd_configs:
-      - role: node
-      relabel_configs:
-      - action: labelmap
-        regex: __meta_kubernetes_node_label_(.+)
-      - replacement: kubernetes.default.svc:443
-        target_label: __address__
-      - regex: (.+)
-        replacement: /api/v1/nodes/$1/proxy/metrics
-        source_labels:
-        - __meta_kubernetes_node_name
-        target_label: __metrics_path__
-      scheme: https
-      tls_config:
-        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-        insecure_skip_verify: true
-    - bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
-      job_name: kubernetes-nodes-cadvisor
-      kubernetes_sd_configs:
-      - role: node
-      relabel_configs:
-      - action: labelmap
-        regex: __meta_kubernetes_node_label_(.+)
-      - replacement: kubernetes.default.svc:443
-        target_label: __address__
-      - regex: (.+)
-        replacement: /api/v1/nodes/$1/proxy/metrics/cadvisor
-        source_labels:
-        - __meta_kubernetes_node_name
-        target_label: __metrics_path__
-      scheme: https
-      tls_config:
-        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-        insecure_skip_verify: true
-    - honor_labels: true
-      job_name: kubernetes-service-endpoints
-      kubernetes_sd_configs:
-      - role: endpoints
-      relabel_configs:
-      - action: keep
-        regex: true
-        source_labels:
-        - __meta_kubernetes_service_annotation_prometheus_io_scrape
-      - action: drop
-        regex: true
-        source_labels:
-        - __meta_kubernetes_service_annotation_prometheus_io_scrape_slow
-      - action: replace
-        regex: (https?)
-        source_labels:
-        - __meta_kubernetes_service_annotation_prometheus_io_scheme
-        target_label: __scheme__
-      - action: replace
-        regex: (.+)
-        source_labels:
-        - __meta_kubernetes_service_annotation_prometheus_io_path
-        target_label: __metrics_path__
-      - action: replace
-        regex: (.+?)(?::\d+)?;(\d+)
-        replacement: $1:$2
-        source_labels:
-        - __address__
-        - __meta_kubernetes_service_annotation_prometheus_io_port
-        target_label: __address__
-      - action: labelmap
-        regex: __meta_kubernetes_service_annotation_prometheus_io_param_(.+)
-        replacement: __param_$1
-      - action: labelmap
-        regex: __meta_kubernetes_service_label_(.+)
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_namespace
-        target_label: namespace
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_service_name
-        target_label: service
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_pod_node_name
-        target_label: node
-    - honor_labels: true
-      job_name: kubernetes-service-endpoints-slow
-      kubernetes_sd_configs:
-      - role: endpoints
-      relabel_configs:
-      - action: keep
-        regex: true
-        source_labels:
-        - __meta_kubernetes_service_annotation_prometheus_io_scrape_slow
-      - action: replace
-        regex: (https?)
-        source_labels:
-        - __meta_kubernetes_service_annotation_prometheus_io_scheme
-        target_label: __scheme__
-      - action: replace
-        regex: (.+)
-        source_labels:
-        - __meta_kubernetes_service_annotation_prometheus_io_path
-        target_label: __metrics_path__
-      - action: replace
-        regex: (.+?)(?::\d+)?;(\d+)
-        replacement: $1:$2
-        source_labels:
-        - __address__
-        - __meta_kubernetes_service_annotation_prometheus_io_port
-        target_label: __address__
-      - action: labelmap
-        regex: __meta_kubernetes_service_annotation_prometheus_io_param_(.+)
-        replacement: __param_$1
-      - action: labelmap
-        regex: __meta_kubernetes_service_label_(.+)
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_namespace
-        target_label: namespace
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_service_name
-        target_label: service
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_pod_node_name
-        target_label: node
-      scrape_interval: 5m
-      scrape_timeout: 30s
-    - honor_labels: true
-      job_name: prometheus-pushgateway
-      kubernetes_sd_configs:
-      - role: service
-      relabel_configs:
-      - action: keep
-        regex: pushgateway
-        source_labels:
-        - __meta_kubernetes_service_annotation_prometheus_io_probe
-    - honor_labels: true
-      job_name: kubernetes-services
-      kubernetes_sd_configs:
-      - role: service
-      metrics_path: /probe
-      params:
-        module:
-        - http_2xx
-      relabel_configs:
-      - action: keep
-        regex: true
-        source_labels:
-        - __meta_kubernetes_service_annotation_prometheus_io_probe
-      - source_labels:
-        - __address__
-        target_label: __param_target
-      - replacement: blackbox
-        target_label: __address__
-      - source_labels:
-        - __param_target
-        target_label: instance
-      - action: labelmap
-        regex: __meta_kubernetes_service_label_(.+)
-      - source_labels:
-        - __meta_kubernetes_namespace
-        target_label: namespace
-      - source_labels:
-        - __meta_kubernetes_service_name
-        target_label: service
-    - honor_labels: true
-      job_name: kubernetes-pods
-      kubernetes_sd_configs:
-      - role: pod
-      relabel_configs:
-      - action: keep
-        regex: true
-        source_labels:
-        - __meta_kubernetes_pod_annotation_prometheus_io_scrape
-      - action: drop
-        regex: true
-        source_labels:
-        - __meta_kubernetes_pod_annotation_prometheus_io_scrape_slow
-      - action: replace
-        regex: (https?)
-        source_labels:
-        - __meta_kubernetes_pod_annotation_prometheus_io_scheme
-        target_label: __scheme__
-      - action: replace
-        regex: (.+)
-        source_labels:
-        - __meta_kubernetes_pod_annotation_prometheus_io_path
-        target_label: __metrics_path__
-      - action: replace
-        regex: (\d+);(([A-Fa-f0-9]{1,4}::?){1,7}[A-Fa-f0-9]{1,4})
-        replacement: '[$2]:$1'
-        source_labels:
-        - __meta_kubernetes_pod_annotation_prometheus_io_port
-        - __meta_kubernetes_pod_ip
-        target_label: __address__
-      - action: replace
-        regex: (\d+);((([0-9]+?)(\.|$)){4})
-        replacement: $2:$1
-        source_labels:
-        - __meta_kubernetes_pod_annotation_prometheus_io_port
-        - __meta_kubernetes_pod_ip
-        target_label: __address__
-      - action: labelmap
-        regex: __meta_kubernetes_pod_annotation_prometheus_io_param_(.+)
-        replacement: __param_$1
-      - action: labelmap
-        regex: __meta_kubernetes_pod_label_(.+)
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_namespace
-        target_label: namespace
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_pod_name
-        target_label: pod
-      - action: drop
-        regex: Pending|Succeeded|Failed|Completed
-        source_labels:
-        - __meta_kubernetes_pod_phase
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_pod_node_name
-        target_label: node
-    - honor_labels: true
-      job_name: kubernetes-pods-slow
-      kubernetes_sd_configs:
-      - role: pod
-      relabel_configs:
-      - action: keep
-        regex: true
-        source_labels:
-        - __meta_kubernetes_pod_annotation_prometheus_io_scrape_slow
-      - action: replace
-        regex: (https?)
-        source_labels:
-        - __meta_kubernetes_pod_annotation_prometheus_io_scheme
-        target_label: __scheme__
-      - action: replace
-        regex: (.+)
-        source_labels:
-        - __meta_kubernetes_pod_annotation_prometheus_io_path
-        target_label: __metrics_path__
-      - action: replace
-        regex: (\d+);(([A-Fa-f0-9]{1,4}::?){1,7}[A-Fa-f0-9]{1,4})
-        replacement: '[$2]:$1'
-        source_labels:
-        - __meta_kubernetes_pod_annotation_prometheus_io_port
-        - __meta_kubernetes_pod_ip
-        target_label: __address__
-      - action: replace
-        regex: (\d+);((([0-9]+?)(\.|$)){4})
-        replacement: $2:$1
-        source_labels:
-        - __meta_kubernetes_pod_annotation_prometheus_io_port
-        - __meta_kubernetes_pod_ip
-        target_label: __address__
-      - action: labelmap
-        regex: __meta_kubernetes_pod_annotation_prometheus_io_param_(.+)
-        replacement: __param_$1
-      - action: labelmap
-        regex: __meta_kubernetes_pod_label_(.+)
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_namespace
-        target_label: namespace
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_pod_name
-        target_label: pod
-      - action: drop
-        regex: Pending|Succeeded|Failed|Completed
-        source_labels:
-        - __meta_kubernetes_pod_phase
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_pod_node_name
-        target_label: node
-      scrape_interval: 5m
-      scrape_timeout: 30s
     - job_name: 'kube-state-metrics'
       metrics_path: /metrics
       scrape_interval: 1m
@@ -6756,9 +4666,10 @@ data:
         - source_labels: [__meta_kubernetes_endpoint_port_name]
           regex: http
           action: keep
+      # Keep only the series a dashboard or recording rule reads.
       metric_relabel_configs:
         - source_labels: [__name__]
-          regex: "kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total"
+          regex: "kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_spec_replicas|kube_deployment_status_replicas_(available|unavailable)|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total"
           action: keep
         - source_labels: [__name__, phase]
           separator: ";"
@@ -6816,28 +4727,7 @@ data:
           action: keep
     # cAdvisor container metrics for CPU and memory tracking (Infrastructure panels).
     # Scrapes the kubelet cadvisor endpoint via the API server proxy.
-    - job_name: 'kubernetes-cadvisor'
-      metrics_path: /metrics
-      scheme: https
-      kubernetes_sd_configs:
-        - role: node
-      bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
-      tls_config:
-        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-        insecure_skip_verify: true
-      metric_relabel_configs:
-        - source_labels: [__name__]
-          regex: "container_cpu_usage_seconds_total|container_memory_working_set_bytes"
-          action: keep
-      relabel_configs:
-        - action: labelmap
-          regex: __meta_kubernetes_node_label_(.+)
-        - target_label: __address__
-          replacement: kubernetes.default.svc:443
-        - source_labels: [__meta_kubernetes_node_name]
-          regex: (.+)
-          target_label: __metrics_path__
-          replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+    # Needs cluster-scoped node access, so it is only rendered when singleNamespace is false.
     # Flyte propeller metrics for execution info and fast task duration.
     # No-op when propeller is not deployed (no pods match the label selector).
     - job_name: 'flytepropeller'
@@ -6889,12 +4779,13 @@ data:
           target_label: pod
     # DCGM GPU metrics.
     # No-op when dcgm-exporter is not deployed (no pods match the label selector).
+    # Only finds dcgm-exporter in the release namespace, where the subchart deploys it;
+    # one managed elsewhere (e.g. by the NVIDIA GPU operator) is not scraped.
     - job_name: 'gpu-metrics'
       kubernetes_sd_configs:
         - role: pod
           namespaces:
-            names:
-              - kube-system
+            own_namespace: true
           selectors:
             - role: pod
               label: app.kubernetes.io/name=dcgm-exporter
@@ -7652,31 +5543,12 @@ data:
       socketDir: /run/uvol
       stateDir: /var/lib/uvol/state
       nodeCacheDir: /var/lib/uvol/node-cache
+      blockAllow:
+        - namespace: '*'
+      blockFreezeMax: "60s"
       metricsScope: "uvol_broker"
       profilerPort: 10254
 
----
-# Source: dataplane/charts/fluentbit/templates/clusterrole.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: release-name-fluentbit
-  labels:
-    helm.sh/chart: fluentbit-0.48.9
-    app.kubernetes.io/name: fluentbit
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "3.2.8"
-    app.kubernetes.io/managed-by: Helm
-rules:
-  - apiGroups:
-      - ""
-    resources:
-      - namespaces
-      - pods
-    verbs:
-      - get
-      - list
-      - watch
 ---
 # Source: dataplane/charts/monitoring/charts/grafana/templates/clusterrole.yaml
 kind: ClusterRole
@@ -8020,341 +5892,19 @@ rules:
 
 
 ---
-# Source: dataplane/templates/gateway/kourier-controller.yaml
+# Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: net-kourier
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    networking.knative.dev/ingress-provider: kourier
-    app.kubernetes.io/component: net-kourier
-rules:
-  - apiGroups: [""]
-    resources: ["events"]
-    verbs: ["create", "update", "patch"]
-  - apiGroups: [""]
-    resources: ["pods", "endpoints", "services", "secrets"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
-  - apiGroups: ["networking.internal.knative.dev"]
-    resources: ["ingresses"]
-    verbs: ["get", "list", "watch", "patch"]
-  - apiGroups: ["networking.internal.knative.dev"]
-    resources: ["ingresses/status"]
-    verbs: ["update"]
----
-# Source: dataplane/templates/gateway/rbac.yaml
-kind: ClusterRole
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: knative-serving-activator-cluster
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    serving.knative.dev/controller: "true"
-rules:
-  - apiGroups: [""]
-    resources: ["services", "endpoints"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["serving.knative.dev"]
-    resources: ["revisions"]
-    verbs: ["get", "list", "watch"]
----
-# Source: dataplane/templates/gateway/rbac.yaml
-# Copyright 2019 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-# Use this aggregated ClusterRole when you need readonly access to "Addressables"
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  # Named like this to avoid clashing with eventing's existing `addressable-resolver` role
-  # (which should be identical, but isn't guaranteed to be installed alongside serving).
-  name: knative-serving-aggregated-addressable-resolver
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-aggregationRule:
-  clusterRoleSelectors:
-    - matchLabels:
-        duck.knative.dev/addressable: "true"
----
-# Source: dataplane/templates/gateway/rbac.yaml
-kind: ClusterRole
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: knative-serving-addressable-resolver
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    # Labeled to facilitate aggregated cluster roles that act on Addressables.
-    duck.knative.dev/addressable: "true"
-# Do not use this role directly. These rules will be added to the "addressable-resolver" role.
+  name: union-operator-cluster-read
 rules:
   - apiGroups:
-      - serving.knative.dev
+    - ""
     resources:
-      - routes
-      - routes/status
-      - services
-      - services/status
+    - nodes
     verbs:
-      - get
-      - list
-      - watch
----
-# Source: dataplane/templates/gateway/rbac.yaml
-# Copyright 2019 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-kind: ClusterRole
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: knative-serving-namespaced-admin
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    rbac.authorization.k8s.io/aggregate-to-admin: "true"
-rules:
-  - apiGroups: ["serving.knative.dev"]
-    resources: ["*"]
-    verbs: ["*"]
-  - apiGroups: ["networking.internal.knative.dev", "autoscaling.internal.knative.dev", "caching.internal.knative.dev"]
-    resources: ["*"]
-    verbs: ["get", "list", "watch"]
----
-# Source: dataplane/templates/gateway/rbac.yaml
-kind: ClusterRole
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: knative-serving-namespaced-edit
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    rbac.authorization.k8s.io/aggregate-to-edit: "true"
-rules:
-  - apiGroups: ["serving.knative.dev"]
-    resources: ["*"]
-    verbs: ["create", "update", "patch", "delete"]
-  - apiGroups: ["networking.internal.knative.dev", "autoscaling.internal.knative.dev", "caching.internal.knative.dev"]
-    resources: ["*"]
-    verbs: ["get", "list", "watch"]
----
-# Source: dataplane/templates/gateway/rbac.yaml
-kind: ClusterRole
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: knative-serving-namespaced-view
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    rbac.authorization.k8s.io/aggregate-to-view: "true"
-rules:
-  - apiGroups: ["serving.knative.dev", "networking.internal.knative.dev", "autoscaling.internal.knative.dev", "caching.internal.knative.dev"]
-    resources: ["*"]
-    verbs: ["get", "list", "watch"]
----
-# Source: dataplane/templates/gateway/rbac.yaml
-# Copyright 2019 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-kind: ClusterRole
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: knative-serving-core
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    serving.knative.dev/controller: "true"
-rules:
-  - apiGroups: [""]
-    resources: ["pods", "namespaces", "secrets", "configmaps", "endpoints", "services", "events", "serviceaccounts"]
-    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
-  - apiGroups: [""]
-    resources: ["endpoints/restricted"] # Permission for RestrictedEndpointsAdmission
-    verbs: ["create"]
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["endpointslices/restricted"] # Permission for RestrictedEndpointsAdmission
-    verbs: ["create"]
-  - apiGroups: [""]
-    resources: ["namespaces/finalizers"] # finalizers are needed for the owner reference of the webhook
-    verbs: ["update"]
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["endpointslices"]
-    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
-  - apiGroups: ["apps"]
-    resources: ["deployments", "deployments/finalizers"] # finalizers are needed for the owner reference of the webhook
-    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
-  - apiGroups: ["admissionregistration.k8s.io"]
-    resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
-    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
-  - apiGroups: ["apiextensions.k8s.io"]
-    resources: ["customresourcedefinitions", "customresourcedefinitions/status"]
-    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
-  - apiGroups: ["autoscaling"]
-    resources: ["horizontalpodautoscalers"]
-    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
-  - apiGroups: ["serving.knative.dev", "autoscaling.internal.knative.dev", "networking.internal.knative.dev"]
-    resources: ["*", "*/status", "*/finalizers"]
-    verbs: ["get", "list", "create", "update", "delete", "deletecollection", "patch", "watch"]
-  - apiGroups: ["caching.internal.knative.dev"]
-    resources: ["images"]
-    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
-  - apiGroups: ["cert-manager.io"]
-    resources: ["certificates", "clusterissuers", "certificaterequests", "issuers"]
-    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
-  - apiGroups: ["acme.cert-manager.io"]
-    resources: ["challenges"]
-    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["clusterroles"]
-    verbs: ["delete"]
-    resourceNames: ["knative-serving-certmanager"]
-  - apiGroups: ["*"]
-    resources: ["*/scale"]
-    verbs: ["patch"]
----
-# Source: dataplane/templates/gateway/rbac.yaml
-# Copyright 2019 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-kind: ClusterRole
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: knative-serving-podspecable-binding
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    # Labeled to facilitate aggregated cluster roles that act on PodSpecables.
-    duck.knative.dev/podspecable: "true"
-# Do not use this role directly. These rules will be added to the "podspecable-binder" role.
-rules:
-  - apiGroups:
-      - serving.knative.dev
-    resources:
-      - configurations
-      - services
-    verbs:
-      - list
-      - watch
-      - patch
----
-# Source: dataplane/templates/gateway/rbac.yaml
-kind: ClusterRole
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: knative-serving-admin
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-aggregationRule:
-  clusterRoleSelectors:
-    - matchLabels:
-        serving.knative.dev/controller: "true"
----
-# Source: dataplane/charts/fluentbit/templates/clusterrolebinding.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: release-name-fluentbit
-  labels:
-    helm.sh/chart: fluentbit-0.48.9
-    app.kubernetes.io/name: fluentbit
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "3.2.8"
-    app.kubernetes.io/managed-by: Helm
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: release-name-fluentbit
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
+    - list
+    - watch
 ---
 # Source: dataplane/charts/monitoring/charts/grafana/templates/clusterrolebinding.yaml
 kind: ClusterRoleBinding
@@ -8452,91 +6002,19 @@ subjects:
 
 
 ---
-# Source: dataplane/templates/gateway/kourier-controller.yaml
+# Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: net-kourier
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    networking.knative.dev/ingress-provider: kourier
-    app.kubernetes.io/component: net-kourier
+  name: union-operator-cluster-read
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: net-kourier
+  name: union-operator-cluster-read
 subjects:
   - kind: ServiceAccount
-    name: net-kourier
+    name: union-system
     namespace: union
----
-# Source: dataplane/templates/gateway/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: knative-serving-controller-admin
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: controller
-subjects:
-  - kind: ServiceAccount
-    name: controller
-    namespace: union
-roleRef:
-  kind: ClusterRole
-  name: knative-serving-admin
-  apiGroup: rbac.authorization.k8s.io
----
-# Source: dataplane/templates/gateway/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: knative-serving-controller-addressable-resolver
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: controller
-subjects:
-  - kind: ServiceAccount
-    name: controller
-    namespace: union
-roleRef:
-  kind: ClusterRole
-  name: knative-serving-aggregated-addressable-resolver
-  apiGroup: rbac.authorization.k8s.io
----
-# Source: dataplane/templates/gateway/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: knative-serving-activator-cluster
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: activator
-subjects:
-  - kind: ServiceAccount
-    name: activator
-    namespace: union
-roleRef:
-  kind: ClusterRole
-  name: knative-serving-activator-cluster
-  apiGroup: rbac.authorization.k8s.io
-
 ---
 # Source: dataplane/charts/monitoring/charts/grafana/templates/role.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -8552,94 +6030,182 @@ metadata:
 rules: []
 
 ---
-# Source: dataplane/templates/gateway/rbac.yaml
-# Copyright 2023 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-kind: Role
+# Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
 metadata:
-  name: knative-serving-activator
+  name: union-leaseworker-comp-ns-read
   namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    serving.knative.dev/controller: "true"
 rules:
-  - apiGroups: [""]
-    resources: ["configmaps", "secrets"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get", "list", "watch"]
-    resourceNames: ["routing-serving-certs", "knative-serving-certs"]
+  - apiGroups:
+    - ""
+    resources:
+    - endpoints
+    verbs:
+    - get
+    - list
+    - watch
 ---
-# Source: dataplane/templates/leaseworker/serviceaccount.yaml
+# Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: union-leaseworker
-  labels:
-    app: leaseworker
+  name: union-operator-comp-ns-read
+  namespace: union
 rules:
-# Allow RO access to PODS
-- apiGroups:
-  - ""
-  resources:
-  - pods
-  verbs:
-  - get
-  - list
-  - watch
-# Allow Event recording access
-- apiGroups:
-  - ""
-  resources:
-  - events
-  verbs:
-  - create
-  - update
-  - delete
-  - patch
-# Allow Access All plugin objects
-- apiGroups:
-  - '*'
-  resources:
-  - '*'
-  verbs:
-  - get
-  - list
-  - watch
-  - create
-  - update
-  - delete
-  - patch
-# Allow Access to CRD
-- apiGroups:
-  - apiextensions.k8s.io
-  resources:
-  - customresourcedefinitions
-  verbs:
-  - get
-  - list
-  - watch
-  - create
-  - delete
-  - update
+  - apiGroups:
+    - metrics.k8s.io
+    resources:
+    - pods
+    verbs:
+    - list
+  - apiGroups:
+    - ""
+    resourceNames:
+    - union-operator
+    resources:
+    - configmaps
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - ""
+    resources:
+    - secrets
+    verbs:
+    - list
+    - watch
+---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: union-operator-comp-ns-write
+  namespace: union
+rules:
+  - apiGroups:
+    - apps
+    resourceNames:
+    - union-operator-proxy
+    resources:
+    - deployments
+    verbs:
+    - get
+    - update
+  - apiGroups:
+    - ""
+    resourceNames:
+    - union-secret-auth
+    resources:
+    - secrets
+    verbs:
+    - get
+    - update
+  - apiGroups:
+    - ""
+    resources:
+    - secrets
+    verbs:
+    - create
+  - apiGroups:
+    - ""
+    resourceNames:
+    - union-operator-apikey-state
+    resources:
+    - secrets
+    verbs:
+    - get
+    - update
+---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: union-work-ns
+  namespace: union
+rules:
+  - apiGroups:
+    - '*'
+    resources:
+    - '*'
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - flyte.lyft.com
+    resources:
+    - flyteworkflows
+    verbs:
+    - create
+    - delete
+  - apiGroups:
+    - ""
+    resources:
+    - resourcequotas
+    - pods
+    - configmaps
+    - podtemplates
+    - secrets
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - delete
+  - apiGroups:
+    - apps
+    resources:
+    - deployments
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - delete
+  - apiGroups:
+    - '*'
+    resources:
+    - events
+    - flyteworkflows
+    - pods/log
+    - pods
+    - rayjobs
+    - resourcequotas
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - ""
+    resources:
+    - secrets
+    - pods
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+  - apiGroups:
+    - apps
+    resources:
+    - replicasets/finalizers
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
 ---
 # Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -8652,9 +6218,10 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+
 rules:
   - apiGroups:
-      - '*'
+      - ""
     resources:
       - secrets
     verbs:
@@ -8662,113 +6229,6 @@ rules:
       - list
       - create
       - update
-      - delete
----
-# Source: dataplane/templates/operator/serviceaccount-proxy.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: proxy-system
-  labels:
-    app.kubernetes.io/name: operator-proxy
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-rules:
-  - apiGroups:
-      - '*'
-    resources:
-      - events
-      - flyteworkflows
-      - pods/log
-      - pods
-      - rayjobs
-      - resourcequotas
-    verbs:
-      - get
-      - list
-      - watch
----
-# Source: dataplane/templates/operator/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: operator-system
-  labels:
-    app.kubernetes.io/name: union-operator
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-rules:
-  - apiGroups:
-      - '*'
-    resources:
-      - secrets
-      - deployments
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-  # Read-only: the cluster snapshot reports the namespace's DaemonSets and
-  # StatefulSets next to its Deployments.
-  - apiGroups:
-      - apps
-    resources:
-      - daemonsets
-      - statefulsets
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - flyte.lyft.com
-    resources:
-      - flyteworkflows
-      - flyteworkflows/finalizers
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - delete
-      - patch
-      - post
-      - deletecollection
-  # nodes are cluster-scoped and so cannot be granted by a namespaced Role. Node access
-  # comes from the <namespace>-<operator>-node-capacity ClusterRole, rendered independently
-  # of low_privilege.
-  - apiGroups:
-      - '*'
-    resources:
-      - resourcequotas
-      - pods
-      - configmaps
-      - podtemplates
-      - secrets
-      - namespaces
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - delete
-  - apiGroups:
-      - serving.knative.dev
-    resources:
-      - revisions
-      - configurations
-      - services
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
       - delete
 ---
 # Source: dataplane/templates/prometheus/rbac.yaml
@@ -8778,18 +6238,18 @@ metadata:
   name: union-operator-prometheus-rbac
   namespace: union
   labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.10.0"
+    app.kubernetes.io/managed-by: Helm
     release: release-name
 rules:
-  # Prometheus server scrape permissions
   - apiGroups: [""]
     resources:
-      - nodes
-      - nodes/proxy
-      - nodes/metrics
       - services
       - endpoints
       - pods
-      - ingresses
       - configmaps
     verbs:
       - get
@@ -8810,113 +6270,33 @@ rules:
       - get
       - list
       - watch
-  # kube-state-metrics permissions (rbac.create=false on the subchart; managed here instead)
-  - apiGroups: ["certificates.k8s.io"]
-    resources: ["certificatesigningrequests"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["batch"]
-    resources: ["cronjobs"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["extensions", "apps"]
-    resources: ["daemonsets"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["extensions", "apps"]
-    resources: ["deployments"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["endpoints"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["endpointslices"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["autoscaling"]
-    resources: ["horizontalpodautoscalers"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["extensions", "networking.k8s.io"]
-    resources: ["ingresses"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["limitranges"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["admissionregistration.k8s.io"]
-    resources: ["mutatingwebhookconfigurations"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["namespaces"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["networkpolicies"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["persistentvolumeclaims"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["persistentvolumes"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["policy"]
-    resources: ["poddisruptionbudgets"]
-    verbs: ["list", "watch"]
+---
+# Source: dataplane/templates/prometheus/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: release-name-kube-state-metrics
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.10.0"
+    app.kubernetes.io/managed-by: Helm
+    release: release-name
+rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["list", "watch"]
   - apiGroups: ["extensions", "apps"]
-    resources: ["replicasets"]
+    resources: ["deployments"]
     verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["replicationcontrollers"]
+  - apiGroups: ["extensions", "apps"]
+    resources: ["daemonsets"]
     verbs: ["list", "watch"]
   - apiGroups: [""]
     resources: ["resourcequotas"]
     verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["services"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["apps"]
-    resources: ["statefulsets"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["storage.k8s.io"]
-    resources: ["storageclasses"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["admissionregistration.k8s.io"]
-    resources: ["validatingwebhookconfigurations"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["storage.k8s.io"]
-    resources: ["volumeattachments"]
-    verbs: ["list", "watch"]
----
-# Source: dataplane/templates/webhook/serviceaccount.yaml
-kind: Role
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: union-webhook-role
-  namespace: union
-rules:
-  - apiGroups:
-      - "*"
-    resources:
-      - mutatingwebhookconfigurations
-      - secrets
-      - pods
-      - replicasets/finalizers
-    verbs:
-      - get
-      - create
-      - update
-      - patch
-      - list
-      - watch
 ---
 # Source: dataplane/charts/monitoring/charts/grafana/templates/rolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -8939,44 +6319,65 @@ subjects:
   namespace: union
 
 ---
-# Source: dataplane/templates/gateway/rbac.yaml
+# Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: knative-serving-activator
+  name: union-leaseworker-comp-ns-read
   namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: activator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: union-leaseworker-comp-ns-read
 subjects:
   - kind: ServiceAccount
-    name: activator
+    name: union-system
     namespace: union
-roleRef:
-  kind: Role
-  name: knative-serving-activator
-  apiGroup: rbac.authorization.k8s.io
 ---
-# Source: dataplane/templates/leaseworker/serviceaccount.yaml
+# Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: union-leaseworker
-  labels:
-    app: leaseworker
+  name: union-operator-comp-ns-read
+  namespace: union
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: union-leaseworker
+  name: union-operator-comp-ns-read
 subjects:
-- kind: ServiceAccount
-  name: union-system
+  - kind: ServiceAccount
+    name: union-system
+    namespace: union
+---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: union-operator-comp-ns-write
   namespace: union
-
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: union-operator-comp-ns-write
+subjects:
+  - kind: ServiceAccount
+    name: union-system
+    namespace: union
+---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: union-work-ns
+  namespace: union
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: union-work-ns
+subjects:
+  - kind: ServiceAccount
+    name: union-system
+    namespace: union
 ---
 # Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -8998,45 +6399,7 @@ subjects:
     name: union-system
     namespace: union
 
----
-# Source: dataplane/templates/operator/serviceaccount-proxy.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: proxy-system
-  labels:
-    app.kubernetes.io/name: operator-proxy
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: proxy-system
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
 
----
-# Source: dataplane/templates/operator/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: operator-system
-  labels:
-    app.kubernetes.io/name: union-operator
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: operator-system
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
 ---
 # Source: dataplane/templates/prometheus/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -9045,6 +6408,11 @@ metadata:
   name: union-operator-prometheus-rbac
   namespace: union
   labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.10.0"
+    app.kubernetes.io/managed-by: Helm
     release: release-name
 subjects:
   - kind: ServiceAccount
@@ -9056,39 +6424,26 @@ roleRef:
   name: union-operator-prometheus-rbac
 ---
 # Source: dataplane/templates/prometheus/rbac.yaml
-# kube-state-metrics service account RoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: release-name-prometheus-kube-state-metrics
+  name: release-name-kube-state-metrics
   namespace: union
   labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.10.0"
+    app.kubernetes.io/managed-by: Helm
     release: release-name
 subjects:
   - kind: ServiceAccount
-    name: release-name-prometheus-kube-state-metrics
+    name: release-name-kube-state-metrics
     namespace: union
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: union-operator-prometheus-rbac
-
----
-# Source: dataplane/templates/webhook/serviceaccount.yaml
-# Create a binding from Role -> ServiceAccount
-kind: RoleBinding
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: union-webhook-binding
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-webhook-role
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
+  name: release-name-kube-state-metrics
 
 ---
 # Source: dataplane/charts/fluentbit/templates/service.yaml
@@ -9423,127 +6778,6 @@ spec:
     app.kubernetes.io/name: flyteconnector
     app.kubernetes.io/instance: release-name
 ---
-# Source: dataplane/templates/gateway/activator.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: activator-service
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app: activator
-    app.kubernetes.io/component: activator
-spec:
-  selector:
-    app: activator
-  ports:
-    # Define metrics and profiling for them to be accessible within service meshes.
-    - name: http-metrics
-      port: 9090
-      targetPort: 9090
-    - name: http-profiling
-      port: 8008
-      targetPort: 8008
-    - name: http
-      port: 80
-      targetPort: 8012
-    - name: http2
-      port: 81
-      targetPort: 8013
-    - name: https
-      port: 443
-      targetPort: 8112
-  type: ClusterIP
-
----
-# Source: dataplane/templates/gateway/autoscaler-hpa.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app: autoscaler-hpa
-    app.kubernetes.io/component: autoscaler-hpa
-    autoscaling.knative.dev/autoscaler-provider: hpa
-  name: autoscaler-hpa
-  namespace: union
-spec:
-  ports:
-    - name: http-metrics
-      port: 9090
-      targetPort: 9090
-    - name: http-profiling
-      port: 8008
-      targetPort: 8008
-  selector:
-    app: autoscaler-hpa
-
----
-# Source: dataplane/templates/gateway/autoscaler.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app: autoscaler
-    app.kubernetes.io/component: autoscaler
-  name: autoscaler
-  namespace: union
-spec:
-  ports:
-    # Define metrics and profiling for them to be accessible within service meshes.
-    - name: http-metrics
-      port: 9090
-      targetPort: 9090
-    - name: http-profiling
-      port: 8008
-      targetPort: 8008
-    - name: http
-      port: 8080
-      targetPort: 8080
-  selector:
-    app: autoscaler
-
----
-# Source: dataplane/templates/gateway/controller.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app: controller
-    app.kubernetes.io/component: controller
-  name: controller
-  namespace: union
-spec:
-  ports:
-    # Define metrics and profiling for them to be accessible within service meshes.
-    - name: http-metrics
-      port: 9090
-      targetPort: 9090
-    - name: http-profiling
-      port: 8008
-      targetPort: 8008
-  selector:
-    app: controller
-
----
 # Source: dataplane/templates/gateway/envoy.yaml
 apiVersion: v1
 kind: Service
@@ -9560,103 +6794,10 @@ spec:
   selector:
     app: gateway
   ports:
-    - name: http-apps
-      port: 80
-      protocol: TCP
-      targetPort: 8081
     - name: http-static
       port: 8888
       protocol: TCP
       targetPort: 8888
----
-# Source: dataplane/templates/gateway/envoy.yaml
-# net-kourier-controller probes endpoints/kourier-internal (name is hardcoded in
-# upstream) to confirm envoy loaded the xDS snapshot. Without this Service the
-# probe fails, KIngress.LoadBalancerReady stays Unknown, and dependent Knative
-# Services never reach Ready=True even though traffic is flowing.
-apiVersion: v1
-kind: Service
-metadata:
-  name: kourier-internal
-  namespace: union
-  labels:
-    app: gateway
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-spec:
-  type: ClusterIP
-  selector:
-    app: gateway
-  ports:
-    - name: http2
-      port: 80
-      protocol: TCP
-      targetPort: 8081
-    - name: https
-      port: 443
-      protocol: TCP
-      targetPort: 8444
----
-# Source: dataplane/templates/gateway/kourier-controller.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: net-kourier-controller
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    networking.knative.dev/ingress-provider: kourier
-    app.kubernetes.io/component: net-kourier
-spec:
-  ports:
-    - name: grpc-xds
-      port: 18000
-      protocol: TCP
-      targetPort: 18000
-    - name: http-metrics
-      port: 9090
-      protocol: TCP
-      targetPort: 9090
-  selector:
-    app: net-kourier-controller
-  type: ClusterIP
-
----
-# Source: dataplane/templates/gateway/webhook.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app: webhook
-    role: webhook
-    app.kubernetes.io/component: webhook
-  name: webhook
-  namespace: union
-spec:
-  ports:
-    # Define metrics and profiling for them to be accessible within service meshes.
-    - name: http-metrics
-      port: 9090
-      targetPort: 9090
-    - name: http-profiling
-      port: 8008
-      targetPort: 8008
-    - name: https-webhook
-      port: 443
-      targetPort: 8443
-  selector:
-    app: webhook
-    role: webhook
 ---
 # Source: dataplane/templates/imagebuilder/service.yaml
 apiVersion: v1
@@ -10042,7 +7183,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "07b7507eb2797c90b2f72e5946a2c4136f77a843c43ffb3c95072c102df0692"
+        configChecksum: "77ecb070483e87c3f8bbe929b351e4ac6a0be967b3d0cbd605c2ecd646e5b09"
         prometheus.io/scrape: "true"
         prometheus.io/port: "10254"
         prometheus.io/path: /metrics
@@ -10622,7 +7763,7 @@ spec:
       - name: kube-state-metrics
         args:
         - --port=8080
-        - --resources=certificatesigningrequests,configmaps,cronjobs,daemonsets,deployments,endpoints,horizontalpodautoscalers,ingresses,jobs,leases,limitranges,mutatingwebhookconfigurations,namespaces,networkpolicies,nodes,persistentvolumeclaims,persistentvolumes,poddisruptionbudgets,pods,replicasets,replicationcontrollers,resourcequotas,secrets,services,statefulsets,storageclasses,validatingwebhookconfigurations,volumeattachments
+        - --resources=pods,deployments,daemonsets,resourcequotas
         - --namespaces=union
         imagePullPolicy: IfNotPresent
         image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.14.0
@@ -10828,7 +7969,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "58064b260b9ada285bd2d3ec6ee23ac9f71fb146b87598b4d915c85cf1815ab2"
+        configChecksum: "e204aacd57875c5d1e4e08ed8093d724e2c6188cc8db47378951aaf4747bf80c"
         
       labels:
         
@@ -10984,481 +8125,6 @@ spec:
       serviceAccountName: union-system
 
 ---
-# Source: dataplane/templates/gateway/activator.yaml
----
-# Copyright 2018 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: activator
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: activator
-    platform.union.ai/component: knative-activator
-spec:
-  selector:
-    matchLabels:
-      app: activator
-      role: activator
-  template:
-    metadata:
-      labels:
-        app: activator
-        role: activator
-        app.kubernetes.io/component: activator
-        app.kubernetes.io/name: knative-serving
-        app.kubernetes.io/version: "1.23.0"
-        platform.union.ai/component: knative-activator
-    spec:
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-          - podAffinityTerm:
-              labelSelector:
-                matchExpressions:
-                - key: app
-                  operator: In
-                  values:
-                  - activator
-              topologyKey: topology.kubernetes.io/zone
-            weight: 100
-      serviceAccountName: activator
-      containers:
-        - name: activator
-          # This is the Go import path for the binary that is containerized
-          # and substituted here.
-          image: gcr.io/knative-releases/knative.dev/serving/cmd/activator@sha256:e5ab46f3b73fa2e3898fe47f6a3a0c2bd765596f4fb36ceb4c28c35d0a74b2e5
-          # The numbers are based on performance test results from
-          # https://github.com/knative/serving/issues/1625#issuecomment-511930023
-          resources:
-            requests:
-              cpu: 300m
-              memory: 300Mi
-            limits:
-              cpu: 1000m
-              memory: 1000Mi
-          env:
-            # Run Activator with GC collection when newly generated memory is 500%.
-            - name: GOGC
-              value: "500"
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-            - name: POD_IP
-              valueFrom:
-                fieldRef:
-                  fieldPath: status.podIP
-            - name: SYSTEM_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-            - name: CONFIG_LOGGING_NAME
-              value: config-logging
-            - name: CONFIG_OBSERVABILITY_NAME
-              value: config-observability
-            # TODO(https://github.com/knative/pkg/pull/953): Remove stackdriver specific config
-            - name: METRICS_DOMAIN
-              value: knative.dev/internal/serving
-            - name: KUBERNETES_MIN_VERSION
-              value: v1.32.0
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            capabilities:
-              drop:
-                - ALL
-            seccompProfile:
-              type: RuntimeDefault
-          ports:
-            - name: metrics
-              containerPort: 9090
-            - name: profiling
-              containerPort: 8008
-            - name: http1
-              containerPort: 8012
-            - name: h2c
-              containerPort: 8013
-          readinessProbe:
-            httpGet:
-              port: 8012
-            periodSeconds: 5
-            failureThreshold: 5
-          livenessProbe:
-            httpGet:
-              port: 8012
-            periodSeconds: 10
-            failureThreshold: 12
-            initialDelaySeconds: 15
-      # The activator (often) sits on the dataplane, and may proxy long (e.g.
-      # streaming, websockets) requests.  We give a long grace period for the
-      # activator to "lame duck" and drain outstanding requests before we
-      # forcibly terminate the pod (and outstanding connections).  This value
-      # should be at least as large as the upper bound on the Revision's
-      # timeoutSeconds property to avoid servicing events disrupting
-      # connections.
-      terminationGracePeriodSeconds: 600
----
-# Source: dataplane/templates/gateway/autoscaler-hpa.yaml
-# Copyright 2018 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: autoscaler-hpa
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: autoscaler-hpa
-    autoscaling.knative.dev/autoscaler-provider: hpa
-    platform.union.ai/component: knative-autoscaler-hpa
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: autoscaler-hpa
-  template:
-    metadata:
-      labels:
-        app: autoscaler-hpa
-        app.kubernetes.io/component: autoscaler-hpa
-        app.kubernetes.io/name: knative-serving
-        app.kubernetes.io/version: "1.23.0"
-        platform.union.ai/component: knative-autoscaler-hpa
-    spec:
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-          - podAffinityTerm:
-              labelSelector:
-                matchExpressions:
-                - key: app
-                  operator: In
-                  values:
-                  - autoscaler-hpa
-              topologyKey: topology.kubernetes.io/zone
-            weight: 100
-      serviceAccountName: controller
-      containers:
-        - name: autoscaler-hpa
-          image: gcr.io/knative-releases/knative.dev/serving/cmd/autoscaler-hpa@sha256:e2494132a71c23587ac8dd25bc5288f70261e592285487e1d19f8dea1f896133
-          resources:
-            requests:
-              cpu: 30m
-              memory: 40Mi
-            limits:
-              cpu: 300m
-              memory: 400Mi
-          env:
-            - name: SYSTEM_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-            - name: CONFIG_LOGGING_NAME
-              value: config-logging
-            - name: CONFIG_OBSERVABILITY_NAME
-              value: config-observability
-            - name: METRICS_DOMAIN
-              value: knative.dev/serving
-            - name: KUBERNETES_MIN_VERSION
-              value: v1.32.0
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            capabilities:
-              drop:
-                - ALL
-            seccompProfile:
-              type: RuntimeDefault
-          ports:
-            - name: metrics
-              containerPort: 9090
-            - name: profiling
-              containerPort: 8008
-            - name: probes
-              containerPort: 8080
-          readinessProbe:
-            httpGet:
-              path: /readiness
-              port: probes
-            periodSeconds: 5
-            failureThreshold: 5
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: probes
-            periodSeconds: 5
-            failureThreshold: 5
----
-# Source: dataplane/templates/gateway/autoscaler.yaml
-# Copyright 2018 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: autoscaler
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: autoscaler
-    platform.union.ai/component: knative-autoscaler
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: autoscaler
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0
-  template:
-    metadata:
-      labels:
-        app: autoscaler
-        app.kubernetes.io/component: autoscaler
-        app.kubernetes.io/name: knative-serving
-        app.kubernetes.io/version: "1.23.0"
-        platform.union.ai/component: knative-autoscaler
-    spec:
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-          - podAffinityTerm:
-              labelSelector:
-                matchExpressions:
-                - key: app
-                  operator: In
-                  values:
-                  - autoscaler
-              topologyKey: topology.kubernetes.io/zone
-            weight: 100
-      serviceAccountName: controller
-      containers:
-        - name: autoscaler
-          # This is the Go import path for the binary that is containerized
-          # and substituted here.
-          image: gcr.io/knative-releases/knative.dev/serving/cmd/autoscaler@sha256:879da127b23db65d862cafa6b23fb987381d0e44150f0027d44e1f5aee83bde2
-          resources:
-            limits:
-              cpu: 4000m
-              memory: 2000Mi
-            requests:
-              cpu: 250m
-              memory: 128Mi
-          env:
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-            - name: POD_IP
-              valueFrom:
-                fieldRef:
-                  fieldPath: status.podIP
-            - name: SYSTEM_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-            - name: CONFIG_LOGGING_NAME
-              value: config-logging
-            - name: CONFIG_OBSERVABILITY_NAME
-              value: config-observability
-            # TODO(https://github.com/knative/pkg/pull/953): Remove stackdriver specific config
-            - name: METRICS_DOMAIN
-              value: knative.dev/serving
-            - name: KUBERNETES_MIN_VERSION
-              value: v1.32.0
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            capabilities:
-              drop:
-                - ALL
-            seccompProfile:
-              type: RuntimeDefault
-          ports:
-            - name: metrics
-              containerPort: 9090
-            - name: profiling
-              containerPort: 8008
-            - name: websocket
-              containerPort: 8080
-          readinessProbe:
-            httpGet:
-              port: 8080
-          livenessProbe:
-            httpGet:
-              port: 8080
-            failureThreshold: 6
----
-# Source: dataplane/templates/gateway/controller.yaml
-# Copyright 2018 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: controller
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: controller
-    platform.union.ai/component: knative-controller
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: controller
-  template:
-    metadata:
-      labels:
-        app: controller
-        app.kubernetes.io/component: controller
-        app.kubernetes.io/name: knative-serving
-        app.kubernetes.io/version: "1.23.0"
-        platform.union.ai/component: knative-controller
-    spec:
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-          - podAffinityTerm:
-              labelSelector:
-                matchExpressions:
-                - key: app
-                  operator: In
-                  values:
-                  - controller
-              topologyKey: topology.kubernetes.io/zone
-            weight: 100
-      serviceAccountName: controller
-      containers:
-        - name: controller
-          # This is the Go import path for the binary that is containerized
-          # and substituted here.
-          image: gcr.io/knative-releases/knative.dev/serving/cmd/controller@sha256:ca5062ece0329d002a81940cf4268d7898866434d70049bb93f27d3a786d3292
-          resources:
-            requests:
-              cpu: 100m
-              memory: 100Mi
-            limits:
-              cpu: 1000m
-              memory: 1000Mi
-          env:
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-            - name: SYSTEM_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-            - name: CONFIG_LOGGING_NAME
-              value: config-logging
-            - name: CONFIG_OBSERVABILITY_NAME
-              value: config-observability
-            # TODO(https://github.com/knative/pkg/pull/953): Remove stackdriver specific config
-            - name: METRICS_DOMAIN
-              value: knative.dev/internal/serving
-            - name: KUBERNETES_MIN_VERSION
-              value: v1.32.0
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            capabilities:
-              drop:
-                - ALL
-            seccompProfile:
-              type: RuntimeDefault
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: probes
-              scheme: HTTP
-            periodSeconds: 5
-            failureThreshold: 6
-          readinessProbe:
-            httpGet:
-              path: /readiness
-              port: probes
-              scheme: HTTP
-            periodSeconds: 5
-            failureThreshold: 3
-          ports:
-            - name: metrics
-              containerPort: 9090
-            - name: profiling
-              containerPort: 8008
-            - name: probes
-              containerPort: 8080
----
 # Source: dataplane/templates/gateway/envoy.yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -11496,7 +8162,7 @@ spec:
         # makes the pod-template hash drift when the configmap content
         # does. Mirrors the legacy serving/knative-serving.yaml workload-
         # block at .annotations.checksum/bootstrap-config.
-        checksum/bootstrap-config: 365cc798d09486107d59a5326fe967548293e8bda50f10b61c0d4332059c2471
+        checksum/bootstrap-config: d5705b67cc59be1a6a1c3cda406a733dc104bf2fc0b337bbb12e3099cec3061d
         prometheus.io/scrape: "true"
         prometheus.io/port: "9000"
         prometheus.io/path: "/stats/prometheus"
@@ -11558,11 +8224,12 @@ spec:
               memory: 256Mi
           readinessProbe:
             httpGet:
-              httpHeaders:
-                - name: Host
-                  value: internalkourier
-              path: /ready
-              port: 8081
+              # App serving is off, so there is no net-kourier-controller and no
+              # xDS listener on :8081 — probing it would leave the pod NotReady
+              # forever. Probe the stats listener instead: it is defined in the
+              # static bootstrap and answers 200 on /stats.
+              path: /stats
+              port: 9000
               scheme: HTTP
             initialDelaySeconds: 10
             periodSeconds: 5
@@ -11591,261 +8258,6 @@ spec:
         - name: config-volume
           configMap:
             name: union-operator-gateway-envoy-bootstrap
----
-# Source: dataplane/templates/gateway/kourier-controller.yaml
-# Copyright 2020 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: net-kourier-controller
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    networking.knative.dev/ingress-provider: kourier
-    app.kubernetes.io/component: net-kourier
-    platform.union.ai/component: kourier
-spec:
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 100%
-  replicas: 2
-  selector:
-    matchLabels:
-      app: net-kourier-controller
-  template:
-    metadata:
-      annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "9090"
-        prometheus.io/path: "/metrics"
-      labels:
-        app: net-kourier-controller
-        helm.sh/chart: dataplane-2026.10.1
-        app.kubernetes.io/managed-by: Helm
-        app.kubernetes.io/instance: release-name
-        app.kubernetes.io/name: knative-serving
-        app.kubernetes.io/version: "1.23.0"
-        networking.knative.dev/ingress-provider: kourier
-        platform.union.ai/component: kourier
-    spec:
-      containers:
-        - name: controller
-          image: public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0
-          command:
-            - /bin/kourier
-          env:
-            - name: CERTS_SECRET_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-            - name: CERTS_SECRET_NAME
-              value: ""
-            - name: SYSTEM_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-            - name: METRICS_DOMAIN
-              value: "knative.dev/samples"
-            - name: KOURIER_GATEWAY_NAMESPACE
-              value: "union"
-            - name: ENABLE_SECRET_INFORMER_FILTERING_BY_CERT_UID
-              value: "false"
-            # KUBE_API_BURST and KUBE_API_QPS allows to configure maximum burst for throttle and maximum QPS to the server from the client.
-            # Setting these values using env vars is possible since https://github.com/knative/pkg/pull/2755.
-            # 200 is an arbitrary value, but it speeds up kourier startup duration, and the whole ingress reconciliation process as a whole.
-            - name: KUBE_API_BURST
-              value: "200"
-            - name: KUBE_API_QPS
-              value: "200"
-            - name: KOURIER_UNION_APPS_ENABLED
-              value: "true"
-          ports:
-            - name: http2-xds
-              containerPort: 18000
-              protocol: TCP
-            - name: metrics
-              containerPort: 9090
-              protocol: TCP
-          readinessProbe:
-            grpc:
-              port: 18000
-            periodSeconds: 10
-            failureThreshold: 3
-          livenessProbe:
-            grpc:
-              port: 18000
-            periodSeconds: 10
-            failureThreshold: 6
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            capabilities:
-              drop:
-                - ALL
-            seccompProfile:
-              type: RuntimeDefault
-          resources:
-            limits:
-              cpu: "1"
-              memory: 2Gi
-            requests:
-              cpu: 500m
-              memory: 1Gi
-      restartPolicy: Always
-      serviceAccountName: net-kourier
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-          - podAffinityTerm:
-              labelSelector:
-                matchExpressions:
-                - key: app
-                  operator: In
-                  values:
-                  - net-kourier-controller
-              topologyKey: topology.kubernetes.io/zone
-            weight: 100
----
-# Source: dataplane/templates/gateway/webhook.yaml
-# Copyright 2018 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: webhook
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: webhook
-    platform.union.ai/component: knative-webhook
-spec:
-  selector:
-    matchLabels:
-      app: webhook
-      role: webhook
-  template:
-    metadata:
-      labels:
-        app: webhook
-        role: webhook
-        app.kubernetes.io/component: webhook
-        app.kubernetes.io/version: "1.23.0"
-        app.kubernetes.io/name: knative-serving
-        platform.union.ai/component: knative-webhook
-    spec:
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-          - podAffinityTerm:
-              labelSelector:
-                matchExpressions:
-                - key: app
-                  operator: In
-                  values:
-                  - webhook
-              topologyKey: topology.kubernetes.io/zone
-            weight: 100
-      serviceAccountName: controller
-      containers:
-        - name: webhook
-          # This is the Go import path for the binary that is containerized
-          # and substituted here.
-          image: gcr.io/knative-releases/knative.dev/serving/cmd/webhook@sha256:3846e9a416665c5b9ec2e4de246cfcb5c4ab0d01ba19348aa008caf30144b650
-          resources:
-            requests:
-              cpu: 100m
-              memory: 100Mi
-            limits:
-              cpu: 500m
-              memory: 500Mi
-          env:
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-            - name: SYSTEM_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-            - name: CONFIG_LOGGING_NAME
-              value: config-logging
-            - name: CONFIG_OBSERVABILITY_NAME
-              value: config-observability
-            - name: WEBHOOK_NAME
-              value: webhook
-            - name: WEBHOOK_PORT
-              value: "8443"
-            # TODO(https://github.com/knative/pkg/pull/953): Remove stackdriver specific config
-            - name: METRICS_DOMAIN
-              value: knative.dev/internal/serving
-            - name: KUBERNETES_MIN_VERSION
-              value: v1.32.0
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            capabilities:
-              drop:
-                - ALL
-            seccompProfile:
-              type: RuntimeDefault
-          ports:
-            - name: metrics
-              containerPort: 9090
-            - name: profiling
-              containerPort: 8008
-            - name: https-webhook
-              containerPort: 8443
-          readinessProbe:
-            periodSeconds: 1
-            httpGet:
-              scheme: HTTPS
-              port: 8443
-          livenessProbe:
-            periodSeconds: 10
-            httpGet:
-              scheme: HTTPS
-              port: 8443
-            failureThreshold: 6
-            initialDelaySeconds: 20
-      # Our webhook should gracefully terminate by lame ducking first, set this to a sufficiently
-      # high value that we respect whatever value it has configured for the lame duck grace period.
-      terminationGracePeriodSeconds: 300
 ---
 # Source: dataplane/templates/imagebuilder/deployment.yaml
 apiVersion: apps/v1
@@ -12088,7 +8500,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "58064b260b9ada285bd2d3ec6ee23ac9f71fb146b87598b4d915c85cf1815ab2"
+        configChecksum: "e204aacd57875c5d1e4e08ed8093d724e2c6188cc8db47378951aaf4747bf80c"
         
       labels:
         
@@ -12228,7 +8640,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "58064b260b9ada285bd2d3ec6ee23ac9f71fb146b87598b4d915c85cf1815ab2"
+        configChecksum: "e204aacd57875c5d1e4e08ed8093d724e2c6188cc8db47378951aaf4747bf80c"
         
       labels:
         
@@ -12481,53 +8893,6 @@ spec:
           averageUtilization: 80
 
 ---
-# Source: dataplane/templates/gateway/activator.yaml
-# Copyright 2020 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: activator
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: activator
-spec:
-  minReplicas: 2
-  maxReplicas: 20
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: activator
-  metrics:
-    - resource:
-        name: cpu
-        target:
-          averageUtilization: 70
-          type: Utilization
-      type: Resource
-    - resource:
-        name: memory
-        target:
-          averageUtilization: 70
-          type: Utilization
-      type: Resource
----
 # Source: dataplane/templates/gateway/envoy.yaml
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -12560,53 +8925,6 @@ spec:
           type: Utilization
       type: Resource
 
----
-# Source: dataplane/templates/gateway/webhook.yaml
-# Copyright 2020 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: webhook
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: webhook
-spec:
-  minReplicas: 2
-  maxReplicas: 10
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: webhook
-  metrics:
-    - resource:
-        name: cpu
-        target:
-          averageUtilization: 70
-          type: Utilization
-      type: Resource
-    - resource:
-        name: memory
-        target:
-          averageUtilization: 70
-          type: Utilization
-      type: Resource
 ---
 # Source: dataplane/charts/monitoring/templates/prometheus-operator/admission-webhooks/mutatingWebhookConfiguration.yaml
 apiVersion: admissionregistration.k8s.io/v1
@@ -12649,170 +8967,6 @@ webhooks:
     admissionReviewVersions: ["v1", "v1beta1"]
     sideEffects: None
 
----
-# Source: dataplane/templates/gateway/webhookconfigurations.yaml
-# Copyright 2020 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: admissionregistration.k8s.io/v1
-kind: MutatingWebhookConfiguration
-metadata:
-  name: webhook.serving.knative.dev
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: webhook
-webhooks:
-  - admissionReviewVersions: ["v1", "v1beta1"]
-    clientConfig:
-      service:
-        name: webhook
-        namespace: union
-    failurePolicy: Fail
-    sideEffects: None
-    name: webhook.serving.knative.dev
-    # Exempt ONLY the bootstrap Certificate (routing-serving-certs) from this
-    # fail-closed webhook. It is created in the same release as the webhook's
-    # backend, so on a cold zero-trust install the webhook Service has no Ready
-    # endpoints / no caBundle yet and a fail-closed admission call deadlocks the
-    # install -- the cert's admission depends on the very webhook it bootstraps.
-    #
-    # matchConditions (CEL) keys on the object's immutable identity, NOT a label,
-    # so it is not tenant-bypassable. The Knative serving webhook reconciler
-    # rebuilds .rules/.namespaceSelector/.caBundle on every reconcile but never
-    # touches .matchConditions, so this survives reconciliation (verified against
-    # knative.dev/pkg and empirically on-cluster). matchConditions is GA in k8s
-    # 1.30+ and beta/default-on in 1.28-1.29 (this chart's kubeVersion floor is
-    # 1.28).
-    matchConditions:
-      - name: exclude-bootstrap-routing-cert
-        expression: "!(request.resource.group == 'networking.internal.knative.dev' && request.resource.resource == 'certificates' && request.namespace == 'union' && request.name == 'routing-serving-certs')"
-    timeoutSeconds: 10
-    rules:
-      - apiGroups:
-          - autoscaling.internal.knative.dev
-        apiVersions:
-          - v1alpha1
-        operations:
-          - CREATE
-          - UPDATE
-        resources:
-          - metrics
-          - metrics/status
-        scope: "*"
-      - apiGroups:
-          - autoscaling.internal.knative.dev
-        apiVersions:
-          - v1alpha1
-        operations:
-          - CREATE
-          - UPDATE
-        resources:
-          - podautoscalers
-          - podautoscalers/status
-        scope: "*"
-      - apiGroups:
-          - networking.internal.knative.dev
-        apiVersions:
-          - v1alpha1
-        operations:
-          - CREATE
-          - UPDATE
-        resources:
-          - certificates
-          - certificates/status
-        scope: "*"
-      - apiGroups:
-          - networking.internal.knative.dev
-        apiVersions:
-          - v1alpha1
-        operations:
-          - CREATE
-          - UPDATE
-        resources:
-          - ingresses
-          - ingresses/status
-        scope: "*"
-      - apiGroups:
-          - networking.internal.knative.dev
-        apiVersions:
-          - v1alpha1
-        operations:
-          - CREATE
-          - UPDATE
-        resources:
-          - serverlessservices
-          - serverlessservices/status
-        scope: "*"
-      - apiGroups:
-          - serving.knative.dev
-        apiVersions:
-          - v1
-        operations:
-          - CREATE
-          - UPDATE
-        resources:
-          - configurations
-          - configurations/status
-        scope: "*"
-      - apiGroups:
-          - serving.knative.dev
-        apiVersions:
-          - v1
-        operations:
-          - CREATE
-          - UPDATE
-        resources:
-          - revisions
-          - revisions/status
-        scope: "*"
-      - apiGroups:
-          - serving.knative.dev
-        apiVersions:
-          - v1
-        operations:
-          - CREATE
-          - UPDATE
-        resources:
-          - routes
-          - routes/status
-        scope: "*"
-      - apiGroups:
-          - serving.knative.dev
-        apiVersions:
-          - v1
-        operations:
-          - CREATE
-          - UPDATE
-        resources:
-          - services
-          - services/status
-        scope: "*"
-      - apiGroups:
-          - serving.knative.dev
-        apiVersions:
-          - v1beta1
-        operations:
-          - CREATE
-          - UPDATE
-        resources:
-          - domainmappings
-          - domainmappings/status
-        scope: "*"
 ---
 # Source: dataplane/templates/webhook/mutatingwebhookconfiguration.yaml
 apiVersion: admissionregistration.k8s.io/v1
@@ -12919,219 +9073,6 @@ webhooks:
     sideEffects: None
 
 ---
-# Source: dataplane/templates/gateway/webhookconfigurations.yaml
-# Copyright 2020 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingWebhookConfiguration
-metadata:
-  name: config.webhook.serving.knative.dev
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: webhook
-webhooks:
-  - admissionReviewVersions: ["v1", "v1beta1"]
-    clientConfig:
-      service:
-        name: webhook
-        namespace: union
-    failurePolicy: Ignore
-    sideEffects: None
-    name: config.webhook.serving.knative.dev
-    objectSelector:
-      matchExpressions:
-        - key: app.kubernetes.io/name
-          operator: In
-          values: ["knative-serving"]
-        - key: app.kubernetes.io/component
-          operator: In
-          values: ["autoscaler", "controller", "logging", "networking", "observability", "tracing", "net-certmanager"]
-    timeoutSeconds: 10
----
-# Source: dataplane/templates/gateway/webhookconfigurations.yaml
-# Copyright 2020 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingWebhookConfiguration
-metadata:
-  name: validation.webhook.serving.knative.dev
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: webhook
-webhooks:
-  - admissionReviewVersions: ["v1", "v1beta1"]
-    clientConfig:
-      service:
-        name: webhook
-        namespace: union
-    failurePolicy: Fail
-    sideEffects: None
-    name: validation.webhook.serving.knative.dev
-    # Exempt ONLY the bootstrap Certificate (routing-serving-certs). See the
-    # matching note on webhook.serving.knative.dev above for the full rationale.
-    matchConditions:
-      - name: exclude-bootstrap-routing-cert
-        expression: "!(request.resource.group == 'networking.internal.knative.dev' && request.resource.resource == 'certificates' && request.namespace == 'union' && request.name == 'routing-serving-certs')"
-    timeoutSeconds: 10
-    rules:
-      - apiGroups:
-          - autoscaling.internal.knative.dev
-        apiVersions:
-          - v1alpha1
-        operations:
-          - CREATE
-          - UPDATE
-          - DELETE
-        resources:
-          - metrics
-          - metrics/status
-        scope: "*"
-      - apiGroups:
-          - autoscaling.internal.knative.dev
-        apiVersions:
-          - v1alpha1
-        operations:
-          - CREATE
-          - UPDATE
-          - DELETE
-        resources:
-          - podautoscalers
-          - podautoscalers/status
-        scope: "*"
-      - apiGroups:
-          - networking.internal.knative.dev
-        apiVersions:
-          - v1alpha1
-        operations:
-          - CREATE
-          - UPDATE
-          - DELETE
-        resources:
-          - certificates
-          - certificates/status
-        scope: "*"
-      - apiGroups:
-          - networking.internal.knative.dev
-        apiVersions:
-          - v1alpha1
-        operations:
-          - CREATE
-          - UPDATE
-          - DELETE
-        resources:
-          - ingresses
-          - ingresses/status
-        scope: "*"
-      - apiGroups:
-          - networking.internal.knative.dev
-        apiVersions:
-          - v1alpha1
-        operations:
-          - CREATE
-          - UPDATE
-          - DELETE
-        resources:
-          - serverlessservices
-          - serverlessservices/status
-        scope: "*"
-      - apiGroups:
-          - serving.knative.dev
-        apiVersions:
-          - v1
-        operations:
-          - CREATE
-          - UPDATE
-          - DELETE
-        resources:
-          - configurations
-          - configurations/status
-        scope: "*"
-      - apiGroups:
-          - serving.knative.dev
-        apiVersions:
-          - v1
-        operations:
-          - CREATE
-          - UPDATE
-          - DELETE
-        resources:
-          - revisions
-          - revisions/status
-        scope: "*"
-      - apiGroups:
-          - serving.knative.dev
-        apiVersions:
-          - v1
-        operations:
-          - CREATE
-          - UPDATE
-          - DELETE
-        resources:
-          - routes
-          - routes/status
-        scope: "*"
-      - apiGroups:
-          - serving.knative.dev
-        apiVersions:
-          - v1
-        operations:
-          - CREATE
-          - UPDATE
-          - DELETE
-        resources:
-          - services
-          - services/status
-        scope: "*"
-      - apiGroups:
-          - serving.knative.dev
-        apiVersions:
-          - v1beta1
-        operations:
-          - CREATE
-          - UPDATE
-          - DELETE
-        resources:
-          - domainmappings
-          - domainmappings/status
-        scope: "*"
-
----
-# Source: dataplane/templates/propeller/serviceaccount.yaml
----
-
----
 # Source: dataplane/templates/uvol-broker/csidriver.yaml
 apiVersion: storage.k8s.io/v1
 kind: CSIDriver
@@ -13153,60 +9094,6 @@ spec:
   podInfoOnMount: true
   storageCapacity: false
   fsGroupPolicy: None
-
----
-# Source: dataplane/templates/gateway/misc.yaml
-apiVersion: networking.internal.knative.dev/v1alpha1
-kind: Certificate
-metadata:
-  annotations:
-    networking.knative.dev/certificate.class: cert-manager.certificate.networking.knative.dev
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    networking.knative.dev/certificate-type: system-internal
-  name: routing-serving-certs
-  namespace: union
-spec:
-  dnsNames:
-    - kn-routing
-    - data-plane.knative.dev # for reverse-compatibility with net-* implementations that do not work with multi-SANs
-  secretName: routing-serving-certs
----
-# Source: dataplane/templates/gateway/misc.yaml
-# Copyright 2018 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: caching.internal.knative.dev/v1alpha1
-kind: Image
-metadata:
-  name: queue-proxy
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.10.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.23.0"
-    app.kubernetes.io/component: queue-proxy
-spec:
-  # This is the Go import path for the binary that is containerized
-  # and substituted here.
-  image: gcr.io/knative-releases/knative.dev/serving/cmd/queue@sha256:a3cc71ce80dbc6df8781f15eac2cf3531a4c9815271799afd8776bef9e6aeaf2
 
 ---
 # Source: dataplane/templates/common/task-podtemplate.yaml
@@ -16914,12 +12801,8 @@ metadata:
 rules:
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["mutatingwebhookconfigurations"]
-    verbs: ["get", "delete"]
-  - apiGroups: ["apps"]
-    resources: ["deployments"]
-    verbs: ["get", "delete"]
-  - apiGroups: [""]
-    resources: ["secrets"]
+    resourceNames:
+      - flyte-pod-webhook
     verbs: ["get", "delete"]
 ---
 # Source: dataplane/charts/monitoring/templates/prometheus-operator/admission-webhooks/job-patch/clusterrolebinding.yaml
@@ -17001,6 +12884,29 @@ rules:
       - create
 
 ---
+# Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: flyte-webhook-cleanup-union
+  namespace: union
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames:
+      - flytepropeller-webhook
+      - union-operator-prometheus
+    verbs: ["get", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - flyte-pod-webhook
+    verbs: ["get", "delete"]
+---
 # Source: dataplane/charts/monitoring/templates/prometheus-operator/admission-webhooks/job-patch/rolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -17031,6 +12937,25 @@ subjects:
     name: monitoring-admission
     namespace: union
 
+---
+# Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: flyte-webhook-cleanup-union
+  namespace: union
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: flyte-webhook-cleanup-union
+subjects:
+  - kind: ServiceAccount
+    name: flyte-webhook-cleanup
+    namespace: union
 ---
 # Source: dataplane/charts/fluentbit/templates/tests/test-connection.yaml
 apiVersion: v1
