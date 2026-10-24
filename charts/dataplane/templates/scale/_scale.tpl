@@ -108,6 +108,11 @@ callerKeyPath: /etc/union/scale-caller/{{ $s.callerAuth.key }}
 {{- end }}
 organization: {{ include "scale.org" . | quote }}
 cluster: {{ include "getClusterName" . | quote }}
+{{- /* The runtime deletes conversations past this; the proxy stops serving them at the same age. */}}
+{{- $retention := dig "retention" dict ($s.config | default dict) }}
+{{- if hasKey $retention "conversations" }}
+conversationRetention: {{ $retention.conversations | toString | quote }}
+{{- end }}
 {{- end -}}
 
 {{/*
