@@ -1,0 +1,38 @@
+{{- if .Values.sts.enabled }}
+# The dataplane STS token endpoint task pods exchange their projected
+# service-account token at (see sts in values.yaml).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "union-operator.fullname" . }}-sts
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "operator.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.sts.port }}
+      targetPort: sts
+      protocol: TCP
+      name: sts
+  selector:
+    {{- include "operator.selectorLabels" . | nindent 4 }}
+---
+# The STS checks each projected token with a TokenReview, a cluster-scoped API:
+# system:auth-delegator grants exactly tokenreviews/subjectaccessreviews create.
+# Pods and the STS's own Secrets are already covered by the operator's Role.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Namespace }}-{{ include "union-operator.fullname" . }}-sts-auth-delegator
+  labels:
+    {{- include "operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
