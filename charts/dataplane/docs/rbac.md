@@ -201,6 +201,28 @@ App serving is off by default and requires `singleNamespace: false`.
 naming both exits. Since `singleNamespace` defaults on, `apps.enabled` defaults off — so the
 default install is self-consistent and never meets the refusal.
 
+To turn app serving on, layer this over the zero-trust default:
+
+```yaml
+# App serving needs both of these keys. The Knative Serving / Kourier stack reads
+# cluster-wide, so the chart refuses to render it while singleNamespace is true.
+apps:
+  enabled: true
+# low_privilege is the older name for this key. If another values file you layer
+# sets low_privilege: true, the render fails ("singleNamespace is false but
+# low_privilege is true") rather than let one file silently flip scope. Use one
+# name in every file, preferably singleNamespace; see charts/MIGRATION.md.
+singleNamespace: false
+
+# singleNamespace: false runs one namespace per project/domain, so something has
+# to create them as projects are registered. clusterresourcesync is that
+# something, and it defaults to off. Drop this block only if you provision those
+# namespaces yourself; task pods fail with Forbidden or "namespace not found"
+# otherwise.
+clusterresourcesync:
+  enabled: true
+```
+
 The refusal covers the vendored delivery path — `serving.useVendoredGateway`, i.e.
 `apps.enabled` with `gateway.enabled` (the default) — not zero trust specifically. The
 vendored Knative stack renders whenever app serving is on and delivered by this chart,

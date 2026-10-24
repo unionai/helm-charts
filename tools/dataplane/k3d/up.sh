@@ -81,6 +81,45 @@ done
 
 _need() { for b in "$@"; do command -v "$b" >/dev/null || { echo "ERROR: '$b' not found on PATH." >&2; exit 3; }; done; }
 
+# Append an ECR Public credential to the registries config the cluster is created with, so
+# the dataplane image pulls from public.ecr.aws count against the authenticated limits
+# rather than the shared anonymous quota, which returns 429 once spent. The CI deployer
+# role's permission to mint the token is granted in unionai/cloud, alongside the role.
+#
+# Deliberately CI-only, because the credential is static and the cluster can outlive it.
+# The token lasts 12 hours; a local cluster lasts as long as its owner leaves it running,
+# and once a credential is configured an expired one does NOT degrade to an anonymous pull
+# — the registry hands back a token that fails the manifest request, so uncached pulls
+# break instead of being merely rate limited. Nor can a re-run repair it: the
+# existing-cluster guard below skips `k3d cluster create`, and the config written here is
+# deleted either way. CI clusters are created fresh on a throwaway runner and torn down
+# well inside the token's life, which is also where the rate limit actually bites.
+#
+# Credentials are optional even there. Without them the config is left as it was and pulls
+# stay anonymous, so no leg depends on the token being mintable.
+_append_ecr_public_auth() {
+  local reg="$1" token
+  [ -n "${GITHUB_ACTIONS:-}" ] || return 0
+  command -v aws >/dev/null || {
+    echo ">> [cluster] no aws CLI — public.ecr.aws pulls stay anonymous (rate limited)"; return 0; }
+  # Public-registry tokens are only issued in us-east-1, whatever region the caller uses.
+  if ! token="$(aws ecr-public get-login-password --region us-east-1 2>/dev/null)" || [ -z "$token" ]; then
+    echo ">> [cluster] could not mint an ECR Public token — public.ecr.aws pulls stay anonymous (rate limited)" >&2
+    return 0
+  fi
+  # Keep the token out of the CI log if anything downstream echoes it. The runner consumes
+  # the directive rather than printing it.
+  echo "::add-mask::$token"
+  cat >> "$reg" <<EOF
+configs:
+  "public.ecr.aws":
+    auth:
+      username: AWS
+      password: '$token'
+EOF
+  echo ">> [cluster] public.ecr.aws pulls authenticated (token valid 12h)"
+}
+
 _resolve_creds() {
   if [ -n "$FROM_AWS_SECRET" ]; then
     _need aws jq
@@ -103,6 +142,7 @@ mirrors:
     endpoint:
       - "http://k3d-registry:5000"
 EOF
+  _append_ecr_public_auth "$reg"
   # CI pre-loads a pinned k3s image and passes it via K3S_IMAGE to skip a Docker
   # Hub pull; locally it's unset and k3d pulls the default. Retry the create — a
   # transient blip during node bring-up otherwise fails the whole run.

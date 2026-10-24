@@ -64,8 +64,8 @@ operator cannot parse fails the render.
   With cluster permissions disabled, set `config.operator.clusterData.cloudProvider` (it
   defaults to the top-level `provider`): the operator cannot detect it from node labels.
 - **Use one name for the scope flag across every values file you layer.** The examples
-  `examples/values.full-privilege.yaml`, `values.zero-trust.yaml` and `values-legacy.yaml` now
-  set `singleNamespace: false`. Layered with an overlay that sets `low_privilege: true`, the
+  `examples/values.full-privilege.yaml` and `values-legacy.yaml`, and the app-serving recipe in
+  `dataplane/docs/rbac.md`, now set `singleNamespace: false`. Layered with an overlay that sets `low_privilege: true`, the
   later file used to win; now the render fails with
   `singleNamespace is false but low_privilege is true`. The refusal is deliberate — picking
   either value would silently flip scope. Migrate overlays to `singleNamespace`, or, while

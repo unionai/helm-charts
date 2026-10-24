@@ -1,5 +1,73 @@
 # controlplane — Release Notes
 
+## 2026.10.1
+
+`version` moves `2026.10.0` → `2026.10.1`. `appVersion` stays `2026.10.0`: this is
+a chart-only release, so the control-plane and console images are unchanged.
+
+### `WatchExecutionStatusUpdates` requires authentication
+
+With auth enabled, `/flyteidl.service.WatchService/WatchExecutionStatusUpdates`
+was reachable unauthenticated at the edge. It is removed from the unprotected
+`GRPCRoute` (the protected route already covers `flyteidl.service.WatchService`),
+and on NGINX Ingress the `-grpc-streaming` ingress now carries
+`ingress.protectedIngressAnnotationsGrpc` when auth is enabled. Authless installs
+(`useAuth` false) are unchanged. The `envoy-gateway-config` chart drops the same
+path from its `unprotectedRoutes` default.
+
+### `telemetry.enabled: false` opts the console out of telemetry
+
+New top-level value `telemetry.enabled` (default `true`). Setting it to `false`
+sets `DO_NOT_TRACK=1` ([donottrack.sh](https://donottrack.sh)) on the console,
+which then skips Google Tag Manager and Grafana Faro.
+`console.telemetry.externalEnabled` keeps working. Defaults render unchanged.
+
+## 2026.10.0
+
+`version` and `appVersion` move `2026.9.7` → `2026.10.0`. Controlplane templates and
+values are unchanged.
+
+### Control-plane and console images
+
+- Fleet: chart and template RPCs; values sourced from stored templates; chart
+  policy changes are attributed to whoever made them; chart upgrades and values
+  refresh are observed in staging, canary and production.
+- Leasor: a `STRICT_FIFO` queue head reserves only its own demand, across queues
+  and ticks; Ray tasks with a reuse policy are treated as a reusable environment
+  and charged once; the shadow scheduling strategy logs its infeasible verdicts.
+- Run service: the outputs of a succeeded action are available immediately after
+  it succeeds; the data proxy returns a fully-qualified URI from `UploadInputs`;
+  the empty `inputs.pb` write is skipped for a task that reads no inputs.
+- Cluster: `ClusterSummary.cloud_provider` comes from the pushed environment.
+- ClickHouse: databases, tables and views are applied by a single schema
+  reconciler.
+- Actions: the leasor replication queue is gated on the circuit breaker rather
+  than org backoff.
+- Console: agents-view fixes — names, order and avatars stay stable while
+  loading, a hidden tab no longer reports "0 live", and phones get a keyboard
+  button in the live view — plus lower CPU when restoring run-details tabs.
+- Go toolchain updated to 1.27.2; flyte2 picks up unified Redis configuration
+  ([flyteorg/flyte#8121](https://github.com/flyteorg/flyte/pull/8121)).
+
+## 2026.9.7
+
+`version` and `appVersion` move `2026.9.6` → `2026.9.7`. Controlplane templates
+and values are unchanged.
+
+### Control-plane and console images
+
+- Leasor: routes debug MCP by the server's partition, honoring org overrides
+  ([cloud#18715](https://github.com/unionai/cloud/pull/18715)), and uses canonical GPU accelerator strings internally ([cloud#18731](https://github.com/unionai/cloud/pull/18731)).
+- Fleet: the customer can choose the dataplane namespace ([cloud#18541](https://github.com/unionai/cloud/pull/18541)).
+- Billing: direct Metronome AWS Marketplace integration, enabled ([cloud#18588](https://github.com/unionai/cloud/pull/18588), [cloud#18719](https://github.com/unionai/cloud/pull/18719)).
+- Factories: pick source versions when materializing, and flag partition schema
+  mismatches ([cloud#18707](https://github.com/unionai/cloud/pull/18707)).
+- Console: an IDE-shaped Agents view ([cloud#18712](https://github.com/unionai/cloud/pull/18712)), LLM gateway detail and virtual-key
+  pages ([cloud#18689](https://github.com/unionai/cloud/pull/18689), [cloud#18703](https://github.com/unionai/cloud/pull/18703)), and cluster connection setup steps ([cloud#18736](https://github.com/unionai/cloud/pull/18736)).
+- Signup: trial copy, alerts, and a Flyte-sourced reskin ([cloud#18694](https://github.com/unionai/cloud/pull/18694), [cloud#18717](https://github.com/unionai/cloud/pull/18717), [cloud#18769](https://github.com/unionai/cloud/pull/18769)).
+
+Image source: [cloud changes since release/2026.9.6](https://github.com/unionai/cloud/compare/release/2026.9.6...release/2026.9.7).
+
 ## 2026.9.6
 
 `version` and `appVersion` move `2026.9.4` → `2026.9.6`. Controlplane templates

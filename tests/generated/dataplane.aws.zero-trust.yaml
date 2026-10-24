@@ -1,14 +1,17 @@
 ---
-# Source: dataplane/templates/leaseworker/priorityclass.yaml
+# Source: dataplane/templates/uvol-broker/priorityclass.yaml
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
-  name: union-leaseworker
+  name: release-name-uvol-broker
   labels:
-    app: leaseworker
+    app.kubernetes.io/name: uvol-broker
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
 value: 1000000
 globalDefault: false
-description: "Priority for the Union leaseworker (a Recreate singleton) so it schedules ahead of task pods and leases keep flowing during node scale-up. Uses a custom class rather than a reserved system class (e.g. system-cluster-critical), which GKE restricts to kube-system."
+description: "Priority for the Union uvol mount broker (a node-critical CSI DaemonSet on the task Volume-mount path) so it schedules ahead of task pods and a node's broker is not evicted out from under pods that depend on it to mount Volumes. Uses a custom class rather than a reserved system class (e.g. system-node-critical), which GKE restricts to kube-system."
 
 ---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/serviceaccount.yaml
@@ -38,6 +41,7 @@ metadata:
     app.kubernetes.io/version: v2.55.1
     helm.sh/chart: prometheus-25.30.2
     app.kubernetes.io/part-of: prometheus
+    platform.union.ai/component: prometheus
   name: union-operator-prometheus
   namespace: union
   annotations:
@@ -54,16 +58,86 @@ metadata:
     'eks.amazonaws.com/role-arn': 'test-backend-iam-role-arn'
 
 ---
-# Source: dataplane/templates/flyteconnector/serviceaccount.yaml
+# Source: dataplane/templates/common/union-serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: flyteconnector
+  name: union
   namespace: union
-  labels: 
-    app.kubernetes.io/name: flyteconnector
-    app.kubernetes.io/instance: release-name
+  annotations:
+    eks.amazonaws.com/role-arn: test-worker-iam-role-arn
+automountServiceAccountToken: true
+---
+# Source: dataplane/templates/gateway/kourier-controller.yaml
+# Copyright 2020 The Knative Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: net-kourier
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.23.0"
+    networking.knative.dev/ingress-provider: kourier
+    app.kubernetes.io/component: net-kourier
+---
+# Source: dataplane/templates/gateway/rbac.yaml
+# Copyright 2018 The Knative Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: controller
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.23.0"
+    app.kubernetes.io/component: controller
+---
+# Source: dataplane/templates/gateway/rbac.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: activator
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.23.0"
+    app.kubernetes.io/component: activator
 ---
 # Source: dataplane/templates/common/auth-secret.yaml
 apiVersion: v1
@@ -109,7 +183,7 @@ metadata:
   name: webhook-certs
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -189,7 +263,7 @@ metadata:
   name: union-operator-gateway-envoy-bootstrap
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -468,7 +542,7 @@ metadata:
   name: config-autoscaler
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -662,6 +736,80 @@ data:
     max-scale-limit: "0"
 
 ---
+# Source: dataplane/templates/gateway/configmap-certmanager.yaml
+# Copyright 2020 The Knative Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-certmanager
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.23.0"
+    app.kubernetes.io/component: controller
+    networking.knative.dev/certificate-provider: cert-manager
+  annotations:
+    knative.dev/example-checksum: "b7a9a602"
+data:
+  _example: |
+    ################################
+    #                              #
+    #    EXAMPLE CONFIGURATION     #
+    #                              #
+    ################################
+
+    # This block is not actually functional configuration,
+    # but serves to illustrate the available configuration
+    # options and document them in a way that is accessible
+    # to users that `kubectl edit` this config map.
+    #
+    # These sample configuration options may be copied out of
+    # this block and unindented to actually change the configuration.
+
+    # issuerRef is a reference to the issuer for external-domain certificates used for ingress.
+    # IssuerRef should be either `ClusterIssuer` or `Issuer`.
+    # Please refer `IssuerRef` in https://cert-manager.io/docs/concepts/issuer/
+    # for more details about IssuerRef configuration.
+    # If the issuerRef is not specified, the self-signed `knative-selfsigned-issuer` ClusterIssuer is used.
+    issuerRef: |
+      kind: ClusterIssuer
+      name: letsencrypt-issuer
+
+    # clusterLocalIssuerRef is a reference to the issuer for cluster-local-domain certificates used for ingress.
+    # clusterLocalIssuerRef should be either `ClusterIssuer` or `Issuer`.
+    # Please refer `IssuerRef` in https://cert-manager.io/docs/concepts/issuer/
+    # for more details about ClusterInternalIssuerRef configuration.
+    # If the clusterLocalIssuerRef is not specified, the self-signed `knative-selfsigned-issuer` ClusterIssuer is used.
+    clusterLocalIssuerRef: |
+      kind: ClusterIssuer
+      name: your-company-issuer
+
+    # systemInternalIssuerRef is a reference to the issuer for certificates for system-internal-tls certificates used by Knative internal components.
+    # systemInternalIssuerRef should be either `ClusterIssuer` or `Issuer`.
+    # Please refer `IssuerRef` in https://cert-manager.io/docs/concepts/issuer/
+    # for more details about ClusterInternalIssuerRef configuration.
+    # If the systemInternalIssuerRef is not specified, the self-signed `knative-selfsigned-issuer` ClusterIssuer is used.
+    systemInternalIssuerRef: |
+      kind: ClusterIssuer
+      name: knative-selfsigned-issuer
+
+---
 # Source: dataplane/templates/gateway/configmap-defaults.yaml
 # Copyright 2019 The Knative Authors
 #
@@ -683,7 +831,7 @@ metadata:
   name: config-defaults
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -843,7 +991,7 @@ metadata:
   name: config-deployment
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -982,7 +1130,7 @@ metadata:
   name: config-domain
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -1051,7 +1199,7 @@ metadata:
   name: config-features
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -1064,7 +1212,6 @@ data:
   kubernetes.podspec-affinity: "enabled"
   kubernetes.podspec-dnsconfig: "enabled"
   kubernetes.podspec-dnspolicy: "enabled"
-  kubernetes.podspec-dryrun: "disabled"
   kubernetes.podspec-fieldref: "enabled"
   kubernetes.podspec-hostaliases: "enabled"
   kubernetes.podspec-init-containers: "enabled"
@@ -1315,7 +1462,7 @@ metadata:
   name: config-gc
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -1419,7 +1566,7 @@ metadata:
   name: config-kourier
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -1507,7 +1654,7 @@ metadata:
   name: config-leader-election
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -1573,7 +1720,7 @@ metadata:
   name: config-logging
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -1658,7 +1805,7 @@ metadata:
   name: config-network
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -1868,7 +2015,7 @@ metadata:
   name: config-observability
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -1992,7 +2139,7 @@ metadata:
   name: config-tracing
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -2030,6 +2177,37 @@ data:
 
     # Percentage (0-1) of requests to trace
     sample-rate: "0.1"
+
+---
+# Source: dataplane/templates/imagebuilder/build-image-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: build-image-config
+  labels:
+    app.kubernetes.io/name: union-operator
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+data:
+  storage.yaml: | 
+    storage:
+      container: "test-metadata-bucket"
+      type: stow
+      stow:
+        kind: s3
+        config:
+          auth_type: iam
+          region: test-region
+      enable-multicontainer: true
+      limits:
+        maxDownloadMBs: 1024
+      cache:
+        max_size_mbs: 0
+        target_gc_percent: 70
+  buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
+  default-repository: "123456789012.dkr.ecr.test-region.amazonaws.com/union-dataplane"
+  authentication-type: "noop"
 
 ---
 # Source: dataplane/templates/imagebuilder/configmap.yaml
@@ -2130,6 +2308,8 @@ data:
   webhook.yaml: |
 
     
+    propeller:
+      limit-namespace: union
     webhook:
       certDir: /etc/webhook/certs
       disableCreateMutatingWebhookConfig: true
@@ -2178,6 +2358,8 @@ data:
       capacity: 100000
       cluster: 'test-cluster-name'
       dispatcherCount: 512
+      limit-namespace: union
+      namespace-template: union
       organization: 'union'
       refreshInterval: 10s
       task_resources:
@@ -2202,13 +2384,13 @@ data:
         unaryRPCTimeout: 30s
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: ''
+        clientId: 'test-auth-client-id'
         clientSecretLocation: /etc/union/secret/client_secret
         enable: true
         tokenRefreshWindow: 5m
         type: ClientSecret
     admin:
-      clientId: ''
+      clientId: 'test-auth-client-id'
       clientSecretLocation: /etc/union/secret/client_secret
       endpoint: 'dns:///test-controlplane-host'
       insecure: false
@@ -5124,6 +5306,66 @@ data:
         default-env-vars: []
         default-memory: 100Mi
         default-pod-template-name: task-template
+  plugins.yaml: | 
+    plugins:
+      connector-service:
+        defaultConnector:
+          defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
+          endpoint: k8s:///flyteconnector.union:8000
+      logs:
+        cloudwatch-enabled: false
+        dynamic-log-links:
+        - vscode:
+            displayName: VS Code Debugger
+            linkType: ide
+            templateUris:
+            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{ .Values.global.CLUSTER_NAME }}/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
+        - wandb-execution-id:
+            displayName: Weights & Biases
+            linkType: dashboard
+            templateUris:
+            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
+              }}/runs/{{ .podName }}'
+        - wandb-custom-id:
+            displayName: Weights & Biases
+            linkType: dashboard
+            templateUris:
+            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
+              }}/runs/{{ .taskConfig.id }}'
+        - comet-ml-execution-id:
+            displayName: Comet
+            linkType: dashboard
+            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
+              .taskConfig.project_name }}/{{ .executionName }}{{ .nodeId }}{{
+              .taskRetryAttempt }}{{ .taskConfig.link_suffix }}'
+        - comet-ml-custom-id:
+            displayName: Comet
+            linkType: dashboard
+            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
+              .taskConfig.project_name }}/{{ .taskConfig.experiment_key }}'
+        - neptune-scale-run:
+            displayName: Neptune Run
+            linkType: dashboard
+            templateUris:
+            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
+              .podName }}
+        - neptune-scale-custom-id:
+            displayName: Neptune Run
+            linkType: dashboard
+            templateUris:
+            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
+              .taskConfig.id }}
+        kubernetes-enabled: false
+    tasks:
+      task-plugins:
+        enabled-plugins:
+        - container
+        - sidecar
+        - k8s-array
+        - echo
+        - fast-task
+        - connector-service
+        - artifact-trigger
   config.yaml: |
     union:
       connection:
@@ -5135,7 +5377,7 @@ data:
         unaryRPCTimeout: 30s
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: ''
+        clientId: 'test-auth-client-id'
         clientSecretLocation: /etc/union/secret/client_secret
         enable: true
         tokenRefreshWindow: 5m
@@ -5161,6 +5403,8 @@ data:
         appIngressOriginURL: "http://union-operator-gateway:80"
         enableDataplaneIngress: true
         dataplaneIngressOriginURL: "http://union-operator-gateway:8888"
+      limitNamespace: union
+      disableClusterPermissions: true
       apps:
         enabled: 'true'
       syncClusterConfig:
@@ -5169,7 +5413,7 @@ data:
         name: 'test-cluster-name'
         organization: 'union'
       clusterData:
-        appId: ''
+        appId: 'test-auth-client-id'
         bucketName: 'test-metadata-bucket'
         bucketRegion: 'test-region'
         cloudHostName: 'test-controlplane-host'
@@ -5179,14 +5423,16 @@ data:
         userRole: 'test-worker-iam-role-arn'
         userRoleKey: 'eks.amazonaws.com/role-arn'
       collectUsages:
-        enabled: true
+        enabled: false
       billing:
         model: ResourceUsage
       dependenciesHeartbeat:
-        prometheus:
-          endpoint: 'http://union-operator-prometheus:80/-/healthy'
+        leaseworker:
+          endpoint: 'http://union-operator-leaseworker:10254'
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
+      org:
+        namespaceTemplate: "union"
       secretsWatcher:
         dryRun: true
         enabled: false
@@ -5203,7 +5449,7 @@ data:
     proxy:
       imageBuilderConfig:
         authenticationType: 'noop'
-        defaultRepository: '123456789012.dkr.ecr.test-region.amazonaws.com/union-dataplane'
+        defaultRepository: ''
       persistedLogs:
         objectStore:
           pathTemplate: namespace-{{.KubernetesNamespace}}.pod-{{.KubernetesPodName}}.cont-{{.KubernetesContainerName}}
@@ -5428,10 +5674,10 @@ metadata:
   name: release-name-prometheus
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.9.6"
+    app.kubernetes.io/version: "2026.10.0"
     app.kubernetes.io/managed-by: Helm
 data:
   allow-snippet-annotations: "false"
@@ -5448,7 +5694,7 @@ data:
       scrape_timeout: 10s
     remote_write:
     - oauth2:
-        client_id: test-org-name-test-cluster-name-operator
+        client_id: test-auth-client-id
         client_secret_file: /etc/prometheus/secrets/app_secret
         scopes:
         - all
@@ -5464,6 +5710,301 @@ data:
       static_configs:
       - targets:
         - localhost:9090
+    - bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      job_name: kubernetes-apiservers
+      kubernetes_sd_configs:
+      - role: endpoints
+      relabel_configs:
+      - action: keep
+        regex: default;kubernetes;https
+        source_labels:
+        - __meta_kubernetes_namespace
+        - __meta_kubernetes_service_name
+        - __meta_kubernetes_endpoint_port_name
+      scheme: https
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecure_skip_verify: true
+    - bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      job_name: kubernetes-nodes
+      kubernetes_sd_configs:
+      - role: node
+      relabel_configs:
+      - action: labelmap
+        regex: __meta_kubernetes_node_label_(.+)
+      - replacement: kubernetes.default.svc:443
+        target_label: __address__
+      - regex: (.+)
+        replacement: /api/v1/nodes/$1/proxy/metrics
+        source_labels:
+        - __meta_kubernetes_node_name
+        target_label: __metrics_path__
+      scheme: https
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecure_skip_verify: true
+    - bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      job_name: kubernetes-nodes-cadvisor
+      kubernetes_sd_configs:
+      - role: node
+      relabel_configs:
+      - action: labelmap
+        regex: __meta_kubernetes_node_label_(.+)
+      - replacement: kubernetes.default.svc:443
+        target_label: __address__
+      - regex: (.+)
+        replacement: /api/v1/nodes/$1/proxy/metrics/cadvisor
+        source_labels:
+        - __meta_kubernetes_node_name
+        target_label: __metrics_path__
+      scheme: https
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecure_skip_verify: true
+    - honor_labels: true
+      job_name: kubernetes-service-endpoints
+      kubernetes_sd_configs:
+      - role: endpoints
+      relabel_configs:
+      - action: keep
+        regex: true
+        source_labels:
+        - __meta_kubernetes_service_annotation_prometheus_io_scrape
+      - action: drop
+        regex: true
+        source_labels:
+        - __meta_kubernetes_service_annotation_prometheus_io_scrape_slow
+      - action: replace
+        regex: (https?)
+        source_labels:
+        - __meta_kubernetes_service_annotation_prometheus_io_scheme
+        target_label: __scheme__
+      - action: replace
+        regex: (.+)
+        source_labels:
+        - __meta_kubernetes_service_annotation_prometheus_io_path
+        target_label: __metrics_path__
+      - action: replace
+        regex: (.+?)(?::\d+)?;(\d+)
+        replacement: $1:$2
+        source_labels:
+        - __address__
+        - __meta_kubernetes_service_annotation_prometheus_io_port
+        target_label: __address__
+      - action: labelmap
+        regex: __meta_kubernetes_service_annotation_prometheus_io_param_(.+)
+        replacement: __param_$1
+      - action: labelmap
+        regex: __meta_kubernetes_service_label_(.+)
+      - action: replace
+        source_labels:
+        - __meta_kubernetes_namespace
+        target_label: namespace
+      - action: replace
+        source_labels:
+        - __meta_kubernetes_service_name
+        target_label: service
+      - action: replace
+        source_labels:
+        - __meta_kubernetes_pod_node_name
+        target_label: node
+    - honor_labels: true
+      job_name: kubernetes-service-endpoints-slow
+      kubernetes_sd_configs:
+      - role: endpoints
+      relabel_configs:
+      - action: keep
+        regex: true
+        source_labels:
+        - __meta_kubernetes_service_annotation_prometheus_io_scrape_slow
+      - action: replace
+        regex: (https?)
+        source_labels:
+        - __meta_kubernetes_service_annotation_prometheus_io_scheme
+        target_label: __scheme__
+      - action: replace
+        regex: (.+)
+        source_labels:
+        - __meta_kubernetes_service_annotation_prometheus_io_path
+        target_label: __metrics_path__
+      - action: replace
+        regex: (.+?)(?::\d+)?;(\d+)
+        replacement: $1:$2
+        source_labels:
+        - __address__
+        - __meta_kubernetes_service_annotation_prometheus_io_port
+        target_label: __address__
+      - action: labelmap
+        regex: __meta_kubernetes_service_annotation_prometheus_io_param_(.+)
+        replacement: __param_$1
+      - action: labelmap
+        regex: __meta_kubernetes_service_label_(.+)
+      - action: replace
+        source_labels:
+        - __meta_kubernetes_namespace
+        target_label: namespace
+      - action: replace
+        source_labels:
+        - __meta_kubernetes_service_name
+        target_label: service
+      - action: replace
+        source_labels:
+        - __meta_kubernetes_pod_node_name
+        target_label: node
+      scrape_interval: 5m
+      scrape_timeout: 30s
+    - honor_labels: true
+      job_name: prometheus-pushgateway
+      kubernetes_sd_configs:
+      - role: service
+      relabel_configs:
+      - action: keep
+        regex: pushgateway
+        source_labels:
+        - __meta_kubernetes_service_annotation_prometheus_io_probe
+    - honor_labels: true
+      job_name: kubernetes-services
+      kubernetes_sd_configs:
+      - role: service
+      metrics_path: /probe
+      params:
+        module:
+        - http_2xx
+      relabel_configs:
+      - action: keep
+        regex: true
+        source_labels:
+        - __meta_kubernetes_service_annotation_prometheus_io_probe
+      - source_labels:
+        - __address__
+        target_label: __param_target
+      - replacement: blackbox
+        target_label: __address__
+      - source_labels:
+        - __param_target
+        target_label: instance
+      - action: labelmap
+        regex: __meta_kubernetes_service_label_(.+)
+      - source_labels:
+        - __meta_kubernetes_namespace
+        target_label: namespace
+      - source_labels:
+        - __meta_kubernetes_service_name
+        target_label: service
+    - honor_labels: true
+      job_name: kubernetes-pods
+      kubernetes_sd_configs:
+      - role: pod
+      relabel_configs:
+      - action: keep
+        regex: true
+        source_labels:
+        - __meta_kubernetes_pod_annotation_prometheus_io_scrape
+      - action: drop
+        regex: true
+        source_labels:
+        - __meta_kubernetes_pod_annotation_prometheus_io_scrape_slow
+      - action: replace
+        regex: (https?)
+        source_labels:
+        - __meta_kubernetes_pod_annotation_prometheus_io_scheme
+        target_label: __scheme__
+      - action: replace
+        regex: (.+)
+        source_labels:
+        - __meta_kubernetes_pod_annotation_prometheus_io_path
+        target_label: __metrics_path__
+      - action: replace
+        regex: (\d+);(([A-Fa-f0-9]{1,4}::?){1,7}[A-Fa-f0-9]{1,4})
+        replacement: '[$2]:$1'
+        source_labels:
+        - __meta_kubernetes_pod_annotation_prometheus_io_port
+        - __meta_kubernetes_pod_ip
+        target_label: __address__
+      - action: replace
+        regex: (\d+);((([0-9]+?)(\.|$)){4})
+        replacement: $2:$1
+        source_labels:
+        - __meta_kubernetes_pod_annotation_prometheus_io_port
+        - __meta_kubernetes_pod_ip
+        target_label: __address__
+      - action: labelmap
+        regex: __meta_kubernetes_pod_annotation_prometheus_io_param_(.+)
+        replacement: __param_$1
+      - action: labelmap
+        regex: __meta_kubernetes_pod_label_(.+)
+      - action: replace
+        source_labels:
+        - __meta_kubernetes_namespace
+        target_label: namespace
+      - action: replace
+        source_labels:
+        - __meta_kubernetes_pod_name
+        target_label: pod
+      - action: drop
+        regex: Pending|Succeeded|Failed|Completed
+        source_labels:
+        - __meta_kubernetes_pod_phase
+      - action: replace
+        source_labels:
+        - __meta_kubernetes_pod_node_name
+        target_label: node
+    - honor_labels: true
+      job_name: kubernetes-pods-slow
+      kubernetes_sd_configs:
+      - role: pod
+      relabel_configs:
+      - action: keep
+        regex: true
+        source_labels:
+        - __meta_kubernetes_pod_annotation_prometheus_io_scrape_slow
+      - action: replace
+        regex: (https?)
+        source_labels:
+        - __meta_kubernetes_pod_annotation_prometheus_io_scheme
+        target_label: __scheme__
+      - action: replace
+        regex: (.+)
+        source_labels:
+        - __meta_kubernetes_pod_annotation_prometheus_io_path
+        target_label: __metrics_path__
+      - action: replace
+        regex: (\d+);(([A-Fa-f0-9]{1,4}::?){1,7}[A-Fa-f0-9]{1,4})
+        replacement: '[$2]:$1'
+        source_labels:
+        - __meta_kubernetes_pod_annotation_prometheus_io_port
+        - __meta_kubernetes_pod_ip
+        target_label: __address__
+      - action: replace
+        regex: (\d+);((([0-9]+?)(\.|$)){4})
+        replacement: $2:$1
+        source_labels:
+        - __meta_kubernetes_pod_annotation_prometheus_io_port
+        - __meta_kubernetes_pod_ip
+        target_label: __address__
+      - action: labelmap
+        regex: __meta_kubernetes_pod_annotation_prometheus_io_param_(.+)
+        replacement: __param_$1
+      - action: labelmap
+        regex: __meta_kubernetes_pod_label_(.+)
+      - action: replace
+        source_labels:
+        - __meta_kubernetes_namespace
+        target_label: namespace
+      - action: replace
+        source_labels:
+        - __meta_kubernetes_pod_name
+        target_label: pod
+      - action: drop
+        regex: Pending|Succeeded|Failed|Completed
+        source_labels:
+        - __meta_kubernetes_pod_phase
+      - action: replace
+        source_labels:
+        - __meta_kubernetes_pod_node_name
+        target_label: node
+      scrape_interval: 5m
+      scrape_timeout: 30s
     - job_name: 'kube-state-metrics'
       metrics_path: /metrics
       scrape_interval: 1m
@@ -5479,10 +6020,9 @@ data:
         - source_labels: [__meta_kubernetes_endpoint_port_name]
           regex: http
           action: keep
-      # Keep only the series a dashboard or recording rule reads.
       metric_relabel_configs:
         - source_labels: [__name__]
-          regex: "kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_spec_replicas|kube_deployment_status_replicas_(available|unavailable)|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total"
+          regex: "kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total"
           action: keep
         - source_labels: [__name__, phase]
           separator: ";"
@@ -5540,7 +6080,6 @@ data:
           action: keep
     # cAdvisor container metrics for CPU and memory tracking (Infrastructure panels).
     # Scrapes the kubelet cadvisor endpoint via the API server proxy.
-    # Needs cluster-scoped node access, so it is only rendered when singleNamespace is false.
     - job_name: 'kubernetes-cadvisor'
       metrics_path: /metrics
       scheme: https
@@ -5614,13 +6153,12 @@ data:
           target_label: pod
     # DCGM GPU metrics.
     # No-op when dcgm-exporter is not deployed (no pods match the label selector).
-    # Only finds dcgm-exporter in the release namespace, where the subchart deploys it;
-    # one managed elsewhere (e.g. by the NVIDIA GPU operator) is not scraped.
     - job_name: 'gpu-metrics'
       kubernetes_sd_configs:
         - role: pod
           namespaces:
-            own_namespace: true
+            names:
+              - kube-system
           selectors:
             - role: pod
               label: app.kubernetes.io/name=dcgm-exporter
@@ -6359,620 +6897,702 @@ data:
   rules: |
     {}
 ---
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+# Source: dataplane/templates/uvol-broker/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
 metadata:
-  name: union-work-ns
-rules:
-  - apiGroups:
-    - '*'
-    resources:
-    - '*'
-    verbs:
-    - get
-    - list
-    - watch
-    - create
-    - update
-    - patch
-    - delete
-  - apiGroups:
-    - flyte.lyft.com
-    resources:
-    - flyteworkflows
-    verbs:
-    - create
-    - delete
-  - apiGroups:
-    - ""
-    resources:
-    - resourcequotas
-    - pods
-    - configmaps
-    - podtemplates
-    - secrets
-    verbs:
-    - get
-    - list
-    - watch
-    - create
-    - update
-    - delete
-  - apiGroups:
-    - apps
-    resources:
-    - deployments
-    verbs:
-    - get
-    - list
-    - watch
-    - create
-    - update
-    - delete
-  - apiGroups:
-    - serving.knative.dev
-    resources:
-    - revisions
-    - configurations
-    - services
-    verbs:
-    - get
-    - list
-    - watch
-    - create
-    - update
-    - delete
-  - apiGroups:
-    - serving.knative.dev
-    resources:
-    - services
-    verbs:
-    - patch
-  - apiGroups:
-    - '*'
-    resources:
-    - events
-    - flyteworkflows
-    - pods/log
-    - pods
-    - rayjobs
-    - resourcequotas
-    verbs:
-    - get
-    - list
-    - watch
-  - apiGroups:
-    - ""
-    resources:
-    - secrets
-    - pods
-    verbs:
-    - get
-    - list
-    - watch
-    - create
-    - update
-    - patch
-  - apiGroups:
-    - apps
-    resources:
-    - replicasets/finalizers
-    verbs:
-    - get
-    - list
-    - watch
-    - create
-    - update
-    - patch
-  - apiGroups:
-    - ""
-    resources:
-    - services
-    - endpoints
-    - events
-    verbs:
-    - get
-    - list
-    - watch
-    - create
-    - update
-    - patch
-    - delete
-  - apiGroups:
-    - ""
-    resources:
-    - endpoints/restricted
-    verbs:
-    - create
-  - apiGroups:
-    - apps
-    resources:
-    - deployments
-    verbs:
-    - get
-    - list
-    - watch
-    - create
-    - update
-    - patch
-    - delete
-  - apiGroups:
-    - serving.knative.dev
-    resources:
-    - '*'
-    - '*/status'
-    - '*/finalizers'
-    verbs:
-    - get
-    - list
-    - watch
-    - create
-    - update
-    - patch
-    - delete
-    - deletecollection
-  - apiGroups:
-    - autoscaling.internal.knative.dev
-    resources:
-    - '*'
-    - '*/status'
-    - '*/finalizers'
-    verbs:
-    - get
-    - list
-    - watch
-    - create
-    - update
-    - patch
-    - delete
-    - deletecollection
-  - apiGroups:
-    - networking.internal.knative.dev
-    resources:
-    - '*'
-    - '*/status'
-    - '*/finalizers'
-    verbs:
-    - get
-    - list
-    - watch
-    - create
-    - update
-    - patch
-    - delete
-    - deletecollection
-  - apiGroups:
-    - caching.internal.knative.dev
-    resources:
-    - images
-    verbs:
-    - get
-    - list
-    - watch
-    - create
-    - update
-    - patch
-    - delete
-  - apiGroups:
-    - ""
-    resources:
-    - serviceaccounts
-    - secrets
-    verbs:
-    - get
-  - apiGroups:
-    - autoscaling.internal.knative.dev
-    resources:
-    - podautoscalers
-    - podautoscalers/status
-    - metrics
-    - metrics/status
-    verbs:
-    - get
-    - list
-    - watch
-    - create
-    - update
-    - patch
-    - delete
-    - deletecollection
-  - apiGroups:
-    - networking.internal.knative.dev
-    resources:
-    - serverlessservices
-    - serverlessservices/status
-    verbs:
-    - get
-    - list
-    - watch
-    - create
-    - update
-    - patch
-    - delete
-    - deletecollection
-  - apiGroups:
-    - autoscaling
-    resources:
-    - horizontalpodautoscalers
-    verbs:
-    - get
-    - list
-    - watch
-    - create
-    - update
-    - patch
-    - delete
-  - apiGroups:
-    - apps
-    resources:
-    - deployments/scale
-    verbs:
-    - patch
-  - apiGroups:
-    - networking.internal.knative.dev
-    resources:
-    - ingresses
-    verbs:
-    - get
-    - list
-    - watch
-    - patch
-  - apiGroups:
-    - networking.internal.knative.dev
-    resources:
-    - ingresses/status
-    verbs:
-    - update
-  - apiGroups:
-    - ""
-    resources:
-    - events
-    verbs:
-    - create
-    - update
-    - patch
+  name: union-uvol-broker
+  namespace: union
+  labels:
+    app.kubernetes.io/name: uvol-broker
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+data:
+  broker.yaml: |
+    uvolBroker:
+      driverName: volumes.union.ai
+      kubeletDir: /var/lib/kubelet
+      socketDir: /run/uvol
+      stateDir: /var/lib/uvol/state
+      nodeCacheDir: /var/lib/uvol/node-cache
+      metricsScope: "uvol_broker"
+      profilerPort: 10254
+
 ---
-# Source: dataplane/templates/common/rbac.yaml
+# Source: dataplane/charts/fluentbit/templates/clusterrole.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: union-leaseworker-work-ns-cluster-read
+  name: release-name-fluentbit
+  labels:
+    helm.sh/chart: fluentbit-0.48.9
+    app.kubernetes.io/name: fluentbit
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "3.2.8"
+    app.kubernetes.io/managed-by: Helm
 rules:
   - apiGroups:
-    - ""
+      - ""
     resources:
-    - podtemplates
-    - pods
+      - namespaces
+      - pods
     verbs:
-    - list
-    - watch
-  - apiGroups:
-    - events.k8s.io
-    resources:
-    - events
-    verbs:
-    - list
-    - watch
+      - get
+      - list
+      - watch
 ---
-# Source: dataplane/templates/common/rbac.yaml
+# Source: dataplane/templates/gateway/kourier-controller.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: union-operator-work-ns-cluster-read
+  name: net-kourier
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.23.0"
+    networking.knative.dev/ingress-provider: kourier
+    app.kubernetes.io/component: net-kourier
 rules:
-  - apiGroups:
-    - ""
-    resources:
-    - resourcequotas
-    - pods
-    verbs:
-    - list
-    - watch
-  - apiGroups:
-    - ""
-    resources:
-    - podtemplates
-    verbs:
-    - list
-    - watch
-  - apiGroups:
-    - serving.knative.dev
-    resources:
-    - services
-    - configurations
-    - revisions
-    verbs:
-    - list
-    - watch
-  - apiGroups:
-    - ""
-    resources:
-    - configmaps
-    verbs:
-    - list
-    - watch
-  - apiGroups:
-    - ""
-    resources:
-    - namespaces
-    verbs:
-    - list
-    - watch
-  - apiGroups:
-    - metrics.k8s.io
-    resources:
-    - pods
-    verbs:
-    - list
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["pods", "endpoints", "services", "secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
+  - apiGroups: ["networking.internal.knative.dev"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["networking.internal.knative.dev"]
+    resources: ["ingresses/status"]
+    verbs: ["update"]
 ---
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
+# Source: dataplane/templates/gateway/rbac.yaml
 kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
 metadata:
-  name: union-proxy-work-ns-cluster-read
+  name: knative-serving-activator-cluster
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.23.0"
+    serving.knative.dev/controller: "true"
 rules:
-  - apiGroups:
-    - ""
-    resources:
-    - pods
-    - resourcequotas
-    verbs:
-    - list
-    - watch
-  - apiGroups:
-    - events.k8s.io
-    resources:
-    - events
-    verbs:
-    - list
-    - watch
-  - apiGroups:
-    - ray.io
-    resources:
-    - rayjobs
-    verbs:
-    - list
-    - watch
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["serving.knative.dev"]
+    resources: ["revisions"]
+    verbs: ["get", "list", "watch"]
 ---
-# Source: dataplane/templates/common/rbac.yaml
+# Source: dataplane/templates/gateway/rbac.yaml
+# Copyright 2019 The Knative Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Use this aggregated ClusterRole when you need readonly access to "Addressables"
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: union-webhook-work-ns-cluster-read
-rules:
-  - apiGroups:
-    - ""
-    resources:
-    - secrets
-    verbs:
-    - list
-    - watch
+  # Named like this to avoid clashing with eventing's existing `addressable-resolver` role
+  # (which should be identical, but isn't guaranteed to be installed alongside serving).
+  name: knative-serving-aggregated-addressable-resolver
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.23.0"
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        duck.knative.dev/addressable: "true"
 ---
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
+# Source: dataplane/templates/gateway/rbac.yaml
 kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
 metadata:
-  name: union-operator-cluster-read
+  name: knative-serving-addressable-resolver
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.23.0"
+    # Labeled to facilitate aggregated cluster roles that act on Addressables.
+    duck.knative.dev/addressable: "true"
+# Do not use this role directly. These rules will be added to the "addressable-resolver" role.
 rules:
   - apiGroups:
-    - ""
+      - serving.knative.dev
     resources:
-    - nodes
+      - routes
+      - routes/status
+      - services
+      - services/status
     verbs:
-    - list
-    - watch
-  - nonResourceURLs:
-    - /metrics
-    verbs:
-    - get
+      - get
+      - list
+      - watch
 ---
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
+# Source: dataplane/templates/gateway/rbac.yaml
+# Copyright 2019 The Knative Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
 metadata:
-  name: union-knative-controller-cluster-read
+  name: knative-serving-namespaced-admin
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.23.0"
+    rbac.authorization.k8s.io/aggregate-to-admin: "true"
 rules:
-  - apiGroups:
-    - ""
-    resources:
-    - services
-    - endpoints
-    - namespaces
-    verbs:
-    - list
-    - watch
-  - apiGroups:
-    - serving.knative.dev
-    - autoscaling.internal.knative.dev
-    - networking.internal.knative.dev
-    - caching.internal.knative.dev
-    resources:
-    - '*'
-    verbs:
-    - list
-    - watch
-  - apiGroups:
-    - apps
-    resources:
-    - deployments
-    verbs:
-    - list
-    - watch
+  - apiGroups: ["serving.knative.dev"]
+    resources: ["*"]
+    verbs: ["*"]
+  - apiGroups: ["networking.internal.knative.dev", "autoscaling.internal.knative.dev", "caching.internal.knative.dev"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
 ---
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
+# Source: dataplane/templates/gateway/rbac.yaml
 kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
 metadata:
-  name: union-knative-webhook-cluster-read
+  name: knative-serving-namespaced-edit
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.23.0"
+    rbac.authorization.k8s.io/aggregate-to-edit: "true"
 rules:
-  - apiGroups:
-    - admissionregistration.k8s.io
-    resources:
-    - mutatingwebhookconfigurations
-    - validatingwebhookconfigurations
-    verbs:
-    - list
-    - watch
-  - apiGroups:
-    - ""
-    resourceNames:
-    - union
-    resources:
-    - namespaces
-    verbs:
-    - get
+  - apiGroups: ["serving.knative.dev"]
+    resources: ["*"]
+    verbs: ["create", "update", "patch", "delete"]
+  - apiGroups: ["networking.internal.knative.dev", "autoscaling.internal.knative.dev", "caching.internal.knative.dev"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
 ---
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
+# Source: dataplane/templates/gateway/rbac.yaml
 kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
 metadata:
-  name: union-knative-autoscaler-cluster-read
+  name: knative-serving-namespaced-view
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.23.0"
+    rbac.authorization.k8s.io/aggregate-to-view: "true"
 rules:
-  - apiGroups:
-    - ""
-    resources:
-    - pods
-    - services
-    verbs:
-    - list
-    - watch
-  - apiGroups:
-    - discovery.k8s.io
-    resources:
-    - endpointslices
-    verbs:
-    - list
-    - watch
-  - apiGroups:
-    - coordination.k8s.io
-    resources:
-    - leases
-    verbs:
-    - list
-    - watch
-  - apiGroups:
-    - autoscaling.internal.knative.dev
-    - networking.internal.knative.dev
-    resources:
-    - '*'
-    verbs:
-    - list
-    - watch
-  - apiGroups:
-    - serving.knative.dev
-    resources:
-    - revisions
-    verbs:
-    - list
-    - watch
-  - apiGroups:
-    - apps
-    resources:
-    - deployments
-    verbs:
-    - list
-    - watch
-  - apiGroups:
-    - autoscaling
-    resources:
-    - horizontalpodautoscalers
-    verbs:
-    - list
-    - watch
+  - apiGroups: ["serving.knative.dev", "networking.internal.knative.dev", "autoscaling.internal.knative.dev", "caching.internal.knative.dev"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
 ---
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
+# Source: dataplane/templates/gateway/rbac.yaml
+# Copyright 2019 The Knative Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
 metadata:
-  name: union-knative-activator-cluster-read
+  name: knative-serving-core
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.23.0"
+    serving.knative.dev/controller: "true"
 rules:
-  - apiGroups:
-    - ""
-    resources:
-    - services
-    - endpoints
-    verbs:
-    - list
-    - watch
-  - apiGroups:
-    - serving.knative.dev
-    resources:
-    - revisions
-    verbs:
-    - list
-    - watch
+  - apiGroups: [""]
+    resources: ["pods", "namespaces", "secrets", "configmaps", "endpoints", "services", "events", "serviceaccounts"]
+    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
+  - apiGroups: [""]
+    resources: ["endpoints/restricted"] # Permission for RestrictedEndpointsAdmission
+    verbs: ["create"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices/restricted"] # Permission for RestrictedEndpointsAdmission
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["namespaces/finalizers"] # finalizers are needed for the owner reference of the webhook
+    verbs: ["update"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/finalizers"] # finalizers are needed for the owner reference of the webhook
+    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
+    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions", "customresourcedefinitions/status"]
+    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
+  - apiGroups: ["serving.knative.dev", "autoscaling.internal.knative.dev", "networking.internal.knative.dev"]
+    resources: ["*", "*/status", "*/finalizers"]
+    verbs: ["get", "list", "create", "update", "delete", "deletecollection", "patch", "watch"]
+  - apiGroups: ["caching.internal.knative.dev"]
+    resources: ["images"]
+    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificates", "clusterissuers", "certificaterequests", "issuers"]
+    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
+  - apiGroups: ["acme.cert-manager.io"]
+    resources: ["challenges"]
+    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    verbs: ["delete"]
+    resourceNames: ["knative-serving-certmanager"]
+  - apiGroups: ["*"]
+    resources: ["*/scale"]
+    verbs: ["patch"]
 ---
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
+# Source: dataplane/templates/gateway/rbac.yaml
+# Copyright 2019 The Knative Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
 metadata:
-  name: union-knative-kourier-cluster-read
+  name: knative-serving-podspecable-binding
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.23.0"
+    # Labeled to facilitate aggregated cluster roles that act on PodSpecables.
+    duck.knative.dev/podspecable: "true"
+# Do not use this role directly. These rules will be added to the "podspecable-binder" role.
 rules:
   - apiGroups:
-    - ""
+      - serving.knative.dev
     resources:
-    - pods
-    - endpoints
-    - services
+      - configurations
+      - services
     verbs:
-    - list
-    - watch
-  - apiGroups:
-    - networking.internal.knative.dev
-    resources:
-    - ingresses
-    verbs:
-    - list
-    - watch
+      - list
+      - watch
+      - patch
 ---
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
+# Source: dataplane/templates/gateway/rbac.yaml
 kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
 metadata:
-  name: union-knative-webhook-cluster-write
+  name: knative-serving-admin
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.23.0"
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        serving.knative.dev/controller: "true"
+---
+# Source: dataplane/charts/fluentbit/templates/clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: release-name-fluentbit
+  labels:
+    helm.sh/chart: fluentbit-0.48.9
+    app.kubernetes.io/name: fluentbit
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "3.2.8"
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: release-name-fluentbit
+subjects:
+  - kind: ServiceAccount
+    name: union-system
+    namespace: union
+---
+# Source: dataplane/templates/gateway/kourier-controller.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: net-kourier
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.23.0"
+    networking.knative.dev/ingress-provider: kourier
+    app.kubernetes.io/component: net-kourier
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: net-kourier
+subjects:
+  - kind: ServiceAccount
+    name: net-kourier
+    namespace: union
+---
+# Source: dataplane/templates/gateway/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: knative-serving-controller-admin
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.23.0"
+    app.kubernetes.io/component: controller
+subjects:
+  - kind: ServiceAccount
+    name: controller
+    namespace: union
+roleRef:
+  kind: ClusterRole
+  name: knative-serving-admin
+  apiGroup: rbac.authorization.k8s.io
+---
+# Source: dataplane/templates/gateway/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: knative-serving-controller-addressable-resolver
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.23.0"
+    app.kubernetes.io/component: controller
+subjects:
+  - kind: ServiceAccount
+    name: controller
+    namespace: union
+roleRef:
+  kind: ClusterRole
+  name: knative-serving-aggregated-addressable-resolver
+  apiGroup: rbac.authorization.k8s.io
+---
+# Source: dataplane/templates/gateway/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: knative-serving-activator-cluster
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.23.0"
+    app.kubernetes.io/component: activator
+subjects:
+  - kind: ServiceAccount
+    name: activator
+    namespace: union
+roleRef:
+  kind: ClusterRole
+  name: knative-serving-activator-cluster
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Source: dataplane/templates/gateway/rbac.yaml
+# Copyright 2023 The Knative Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: knative-serving-activator
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.23.0"
+    serving.knative.dev/controller: "true"
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+    resourceNames: ["routing-serving-certs", "knative-serving-certs"]
+---
+# Source: dataplane/templates/leaseworker/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: union-leaseworker
+  labels:
+    app: leaseworker
+rules:
+# Allow RO access to PODS
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+# Allow Event recording access
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - update
+  - delete
+  - patch
+# Allow Access All plugin objects
+- apiGroups:
+  - '*'
+  resources:
+  - '*'
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - delete
+  - patch
+# Allow Access to CRD
+- apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - delete
+  - update
+---
+# Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: union-system-secret
+  namespace: union
+  labels:
+    app.kubernetes.io/name: operator-proxy
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
 rules:
   - apiGroups:
-    - admissionregistration.k8s.io
-    resourceNames:
-    - webhook.serving.knative.dev
+      - '*'
     resources:
-    - mutatingwebhookconfigurations
+      - secrets
     verbs:
-    - get
-    - update
+      - get
+      - list
+      - create
+      - update
+      - delete
+---
+# Source: dataplane/templates/operator/serviceaccount-proxy.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: proxy-system
+  labels:
+    app.kubernetes.io/name: operator-proxy
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+rules:
   - apiGroups:
-    - admissionregistration.k8s.io
-    resourceNames:
-    - config.webhook.serving.knative.dev
-    - validation.webhook.serving.knative.dev
+      - '*'
     resources:
-    - validatingwebhookconfigurations
+      - events
+      - flyteworkflows
+      - pods/log
+      - pods
+      - rayjobs
+      - resourcequotas
     verbs:
-    - get
-    - update
+      - get
+      - list
+      - watch
+---
+# Source: dataplane/templates/operator/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: operator-system
+  labels:
+    app.kubernetes.io/name: union-operator
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+rules:
   - apiGroups:
-    - ""
-    resourceNames:
-    - union
+      - '*'
     resources:
-    - namespaces/finalizers
+      - secrets
+      - deployments
     verbs:
-    - update
+      - get
+      - list
+      - watch
+      - create
+      - update
+  # Read-only: the cluster snapshot reports the namespace's DaemonSets and
+  # StatefulSets next to its Deployments.
+  - apiGroups:
+      - apps
+    resources:
+      - daemonsets
+      - statefulsets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - flyte.lyft.com
+    resources:
+      - flyteworkflows
+      - flyteworkflows/finalizers
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - delete
+      - patch
+      - post
+      - deletecollection
+  # nodes are cluster-scoped and so cannot be granted by a namespaced Role. Node access
+  # comes from the <namespace>-<operator>-node-capacity ClusterRole, rendered independently
+  # of low_privilege.
+  - apiGroups:
+      - '*'
+    resources:
+      - resourcequotas
+      - pods
+      - configmaps
+      - podtemplates
+      - secrets
+      - namespaces
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - delete
+  - apiGroups:
+      - serving.knative.dev
+    resources:
+      - revisions
+      - configurations
+      - services
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
 ---
 # Source: dataplane/templates/prometheus/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
   name: union-operator-prometheus-rbac
+  namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
-    app.kubernetes.io/name: release-name-dataplane
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.9.6"
-    app.kubernetes.io/managed-by: Helm
     release: release-name
 rules:
+  # Prometheus server scrape permissions
   - apiGroups: [""]
     resources:
       - nodes
@@ -6981,6 +7601,7 @@ rules:
       - services
       - endpoints
       - pods
+      - ingresses
       - configmaps
     verbs:
       - get
@@ -7001,184 +7622,208 @@ rules:
       - get
       - list
       - watch
-  - nonResourceURLs: ["/metrics"]
-    verbs: ["get"]
----
-# Source: dataplane/templates/prometheus/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: release-name-kube-state-metrics
-  labels:
-    helm.sh/chart: dataplane-2026.9.6
-    app.kubernetes.io/name: release-name-dataplane
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.9.6"
-    app.kubernetes.io/managed-by: Helm
-    release: release-name
-rules:
-  - apiGroups: [""]
-    resources: ["pods"]
+  # kube-state-metrics permissions (rbac.create=false on the subchart; managed here instead)
+  - apiGroups: ["certificates.k8s.io"]
+    resources: ["certificatesigningrequests"]
     verbs: ["list", "watch"]
-  - apiGroups: ["extensions", "apps"]
-    resources: ["deployments"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
     verbs: ["list", "watch"]
   - apiGroups: ["extensions", "apps"]
     resources: ["daemonsets"]
     verbs: ["list", "watch"]
+  - apiGroups: ["extensions", "apps"]
+    resources: ["deployments"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["extensions", "networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["limitranges"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingwebhookconfigurations"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["extensions", "apps"]
+    resources: ["replicasets"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["replicationcontrollers"]
+    verbs: ["list", "watch"]
   - apiGroups: [""]
     resources: ["resourcequotas"]
     verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingwebhookconfigurations"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["volumeattachments"]
+    verbs: ["list", "watch"]
 ---
-# Source: dataplane/templates/common/rbac.yaml
+# Source: dataplane/templates/webhook/serviceaccount.yaml
+kind: Role
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
 metadata:
-  name: union-leaseworker-work-ns-cluster-read
+  name: union-webhook-role
+  namespace: union
+rules:
+  - apiGroups:
+      - "*"
+    resources:
+      - mutatingwebhookconfigurations
+      - secrets
+      - pods
+      - replicasets/finalizers
+    verbs:
+      - get
+      - create
+      - update
+      - patch
+      - list
+      - watch
+---
+# Source: dataplane/templates/gateway/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: knative-serving-activator
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.23.0"
+    app.kubernetes.io/component: activator
+subjects:
+  - kind: ServiceAccount
+    name: activator
+    namespace: union
+roleRef:
+  kind: Role
+  name: knative-serving-activator
+  apiGroup: rbac.authorization.k8s.io
+---
+# Source: dataplane/templates/leaseworker/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: union-leaseworker
+  labels:
+    app: leaseworker
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-leaseworker-work-ns-cluster-read
+  kind: Role
+  name: union-leaseworker
+subjects:
+- kind: ServiceAccount
+  name: union-system
+  namespace: union
+
+---
+# Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: union-system-secret
+  namespace: union
+  labels:
+    app.kubernetes.io/name: operator-proxy
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: union-system-secret
 subjects:
   - kind: ServiceAccount
     name: union-system
     namespace: union
+
 ---
-# Source: dataplane/templates/common/rbac.yaml
+# Source: dataplane/templates/operator/serviceaccount-proxy.yaml
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
-  name: union-operator-work-ns-cluster-read
+  name: proxy-system
+  labels:
+    app.kubernetes.io/name: operator-proxy
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-operator-work-ns-cluster-read
+  kind: Role
+  name: proxy-system
 subjects:
   - kind: ServiceAccount
     name: union-system
     namespace: union
+
 ---
-# Source: dataplane/templates/common/rbac.yaml
+# Source: dataplane/templates/operator/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
-  name: union-proxy-work-ns-cluster-read
+  name: operator-system
+  labels:
+    app.kubernetes.io/name: union-operator
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-proxy-work-ns-cluster-read
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-webhook-work-ns-cluster-read
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-webhook-work-ns-cluster-read
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-operator-cluster-read
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-operator-cluster-read
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-knative-controller-cluster-read
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-knative-controller-cluster-read
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-knative-webhook-cluster-read
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-knative-webhook-cluster-read
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-knative-autoscaler-cluster-read
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-knative-autoscaler-cluster-read
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-knative-activator-cluster-read
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-knative-activator-cluster-read
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-knative-kourier-cluster-read
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-knative-kourier-cluster-read
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-knative-webhook-cluster-write
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-knative-webhook-cluster-write
+  kind: Role
+  name: operator-system
 subjects:
   - kind: ServiceAccount
     name: union-system
@@ -7186,15 +7831,11 @@ subjects:
 ---
 # Source: dataplane/templates/prometheus/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
   name: union-operator-prometheus-rbac
+  namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
-    app.kubernetes.io/name: release-name-dataplane
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.9.6"
-    app.kubernetes.io/managed-by: Helm
     release: release-name
 subjects:
   - kind: ServiceAccount
@@ -7202,556 +7843,39 @@ subjects:
     namespace: union
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
+  kind: Role
   name: union-operator-prometheus-rbac
 ---
 # Source: dataplane/templates/prometheus/rbac.yaml
+# kube-state-metrics service account RoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
-  name: release-name-kube-state-metrics
+  name: release-name-prometheus-kube-state-metrics
+  namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
-    app.kubernetes.io/name: release-name-dataplane
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.9.6"
-    app.kubernetes.io/managed-by: Helm
     release: release-name
 subjects:
   - kind: ServiceAccount
-    name: release-name-kube-state-metrics
+    name: release-name-prometheus-kube-state-metrics
     namespace: union
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: release-name-kube-state-metrics
+  kind: Role
+  name: union-operator-prometheus-rbac
 
 ---
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: union-leaseworker-comp-ns-read
-  namespace: union
-rules:
-  - apiGroups:
-    - ""
-    resources:
-    - endpoints
-    verbs:
-    - get
-    - list
-    - watch
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: union-operator-comp-ns-read
-  namespace: union
-rules:
-  - apiGroups:
-    - ""
-    resourceNames:
-    - union-operator
-    resources:
-    - configmaps
-    verbs:
-    - get
-    - list
-    - watch
-  - apiGroups:
-    - ""
-    resources:
-    - secrets
-    verbs:
-    - list
-    - watch
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: union-knative-controller-comp-ns-read
-  namespace: union
-rules:
-  - apiGroups:
-    - ""
-    resources:
-    - configmaps
-    verbs:
-    - get
-    - list
-    - watch
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: union-knative-webhook-comp-ns-read
-  namespace: union
-rules:
-  - apiGroups:
-    - ""
-    resources:
-    - configmaps
-    verbs:
-    - get
-    - list
-    - watch
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: union-knative-autoscaler-comp-ns-read
-  namespace: union
-rules:
-  - apiGroups:
-    - ""
-    resources:
-    - configmaps
-    verbs:
-    - get
-    - list
-    - watch
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: union-knative-activator-comp-ns-read
-  namespace: union
-rules:
-  - apiGroups:
-    - ""
-    resources:
-    - configmaps
-    - secrets
-    verbs:
-    - get
-    - list
-    - watch
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: union-knative-kourier-comp-ns-read
-  namespace: union
-rules:
-  - apiGroups:
-    - ""
-    resources:
-    - configmaps
-    verbs:
-    - get
-    - list
-    - watch
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: union-operator-comp-ns-write
-  namespace: union
-rules:
-  - apiGroups:
-    - apps
-    resourceNames:
-    - union-operator-proxy
-    resources:
-    - deployments
-    verbs:
-    - get
-    - update
-  - apiGroups:
-    - ""
-    resourceNames:
-    - union-secret-auth
-    resources:
-    - secrets
-    verbs:
-    - get
-    - update
-  - apiGroups:
-    - ""
-    resources:
-    - secrets
-    verbs:
-    - create
-  - apiGroups:
-    - ""
-    resourceNames:
-    - union-operator-apikey-state
-    resources:
-    - secrets
-    verbs:
-    - get
-    - update
-  - apiGroups:
-    - ""
-    resourceNames:
-    - connector-config
-    resources:
-    - configmaps
-    verbs:
-    - update
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: union-knative-controller-comp-ns-write
-  namespace: union
-rules:
-  - apiGroups:
-    - coordination.k8s.io
-    resources:
-    - leases
-    verbs:
-    - get
-    - list
-    - watch
-    - create
-    - update
-    - patch
-    - delete
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: union-knative-webhook-comp-ns-write
-  namespace: union
-rules:
-  - apiGroups:
-    - ""
-    resources:
-    - secrets
-    verbs:
-    - get
-    - list
-    - watch
-    - create
-    - update
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: union-knative-autoscaler-comp-ns-write
-  namespace: union
-rules:
-  - apiGroups:
-    - coordination.k8s.io
-    resources:
-    - leases
-    verbs:
-    - get
-    - list
-    - watch
-    - create
-    - update
-    - patch
-    - delete
-  - apiGroups:
-    - ""
-    resources:
-    - services
-    verbs:
-    - get
-    - list
-    - watch
-    - create
-    - update
-    - patch
-    - delete
-  - apiGroups:
-    - discovery.k8s.io
-    resources:
-    - endpointslices
-    verbs:
-    - get
-    - list
-    - watch
-    - create
-    - update
-  - apiGroups:
-    - discovery.k8s.io
-    resources:
-    - endpointslices/restricted
-    verbs:
-    - create
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: union-knative-kourier-comp-ns-write
-  namespace: union
-rules:
-  - apiGroups:
-    - coordination.k8s.io
-    resources:
-    - leases
-    verbs:
-    - get
-    - list
-    - watch
-    - create
-    - update
-    - patch
-    - delete
----
-# Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: union-system-secret
-  namespace: union
-  labels:
-    app.kubernetes.io/name: operator-proxy
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-
-rules:
-  - apiGroups:
-      - ""
-    resources:
-      - secrets
-    verbs:
-      - get
-      - list
-      - create
-      - update
-      - delete
----
-# Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: union-secret-read
-  namespace: union
-rules:
-  - apiGroups:
-      - ""
-    resources:
-      - secrets
-    verbs:
-      - get
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
+# Source: dataplane/templates/webhook/serviceaccount.yaml
+# Create a binding from Role -> ServiceAccount
 kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
 metadata:
-  name: union-leaseworker-comp-ns-read
+  name: union-webhook-binding
   namespace: union
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: union-leaseworker-comp-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-operator-comp-ns-read
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-operator-comp-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-knative-controller-comp-ns-read
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-knative-controller-comp-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-knative-webhook-comp-ns-read
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-knative-webhook-comp-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-knative-autoscaler-comp-ns-read
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-knative-autoscaler-comp-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-knative-activator-comp-ns-read
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-knative-activator-comp-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-knative-kourier-comp-ns-read
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-knative-kourier-comp-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-operator-comp-ns-write
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-operator-comp-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-knative-controller-comp-ns-write
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-knative-controller-comp-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-knative-webhook-comp-ns-write
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-knative-webhook-comp-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-knative-autoscaler-comp-ns-write
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-knative-autoscaler-comp-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-knative-kourier-comp-ns-write
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-knative-kourier-comp-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-system-secret
-  namespace: union
-  labels:
-    app.kubernetes.io/name: operator-proxy
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-system-secret
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-secret-read
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-secret-read
+  name: union-webhook-role
 subjects:
   - kind: ServiceAccount
     name: union-system
@@ -7822,6 +7946,7 @@ metadata:
     app.kubernetes.io/version: v2.55.1
     helm.sh/chart: prometheus-25.30.2
     app.kubernetes.io/part-of: prometheus
+    platform.union.ai/component: prometheus
   name: union-operator-prometheus
   namespace: union
 spec:
@@ -7923,7 +8048,7 @@ metadata:
   name: activator-service
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -7958,7 +8083,7 @@ apiVersion: v1
 kind: Service
 metadata:
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -7985,7 +8110,7 @@ apiVersion: v1
 kind: Service
 metadata:
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -8015,7 +8140,7 @@ apiVersion: v1
 kind: Service
 metadata:
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -8045,7 +8170,7 @@ metadata:
   namespace: union
   labels:
     app: gateway
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
 spec:
@@ -8074,7 +8199,7 @@ metadata:
   namespace: union
   labels:
     app: gateway
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
 spec:
@@ -8098,7 +8223,7 @@ metadata:
   name: net-kourier-controller
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -8125,7 +8250,7 @@ apiVersion: v1
 kind: Service
 metadata:
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -8310,6 +8435,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "3.2.8"
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: logging
 spec:
   selector:
     matchLabels:
@@ -8320,6 +8446,7 @@ spec:
       labels:
         app.kubernetes.io/name: fluentbit
         app.kubernetes.io/instance: release-name
+        platform.union.ai/component: logging
       annotations:
         checksum/config: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
     spec:
@@ -8376,6 +8503,145 @@ spec:
         - operator: Exists
 
 ---
+# Source: dataplane/templates/uvol-broker/daemonset.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: union-uvol-broker
+  labels:
+    app.kubernetes.io/name: uvol-broker
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: uvol-broker
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: uvol-broker
+      app.kubernetes.io/instance: release-name
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+  template:
+    metadata:
+      annotations:
+        configChecksum: "07b7507eb2797c90b2f72e5946a2c4136f77a843c43ffb3c95072c102df0692"
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "10254"
+        prometheus.io/path: /metrics
+        
+      labels:
+        platform.union.ai/zone: "dataplane"
+        app.kubernetes.io/name: uvol-broker
+        app.kubernetes.io/instance: release-name
+        platform.union.ai/component: uvol-broker
+    spec:
+      # No ServiceAccount and no token: the broker never calls the Kubernetes
+      # API. A privileged (host root + CAP_SYS_ADMIN) container with no API
+      # credential cannot be turned into a confused deputy for the cluster.
+      automountServiceAccountToken: false
+      priorityClassName: release-name-uvol-broker
+      tolerations:
+        - operator: Exists
+      volumes:
+        - name: config
+          configMap:
+            name: union-uvol-broker
+        - name: kubelet-dir
+          hostPath:
+            path: /var/lib/kubelet
+            type: Directory
+        - name: uvol-sockets
+          hostPath:
+            path: /run/uvol
+            type: DirectoryOrCreate
+        - name: uvol-state
+          hostPath:
+            path: /var/lib/uvol/state
+            type: DirectoryOrCreate
+        - name: dev-fuse
+          hostPath:
+            path: /dev/fuse
+            type: CharDevice
+        # The node-shared chunk cache root. Task pods never mount this
+        # themselves: the broker bind-mounts a per-namespace subtree into the
+        # pod's CSI target (kind=node-cache), so the privilege stays here.
+        - name: uvol-node-cache
+          hostPath:
+            path: /var/lib/uvol/node-cache
+            type: DirectoryOrCreate
+      containers:
+        # Privileged (mount(2), /dev/fuse, backing-registration ioctl) so task
+        # pods don't have to be — they run restricted-PSS and collect a
+        # connected fd over a per-volume socket. Holds no object storage
+        # credentials: the data plane runs in-pod under pod IAM.
+        # In-place upgrade safe: kernel mounts and pod-held fds survive
+        # restarts; the state journal + client fd re-registration resume the rest.
+        - name: uvol-mount-broker
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
+          imagePullPolicy: IfNotPresent
+          terminationMessagePolicy: FallbackToLogsOnError
+          args:
+            - nodeobserver
+            - broker
+            - --config
+            - /etc/union/broker.yaml
+          securityContext:
+            privileged: true
+            runAsUser: 0
+          ports:
+            - name: metrics
+              containerPort: 10254
+              protocol: TCP
+          # Ready means kubelet has acknowledged the CSI registration — not
+          # merely that the process is up. An unregistered driver fails every
+          # NodePublish, so this is the signal a node-readiness gate needs.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            failureThreshold: 3
+          resources:
+            limits:
+              memory: 256Mi
+            requests:
+              cpu: 30m
+              memory: 32Mi
+          # Deliberately NOT global.podEnvVars: that block injects control-plane
+          # service URLs and a cluster-name secretKeyRef. The broker never talks
+          # to the control plane or the Kubernetes API, and giving a privileged
+          # container credentials it cannot use is exactly the confused-deputy
+          # surface the no-ServiceAccount design above exists to avoid. It also
+          # would make this DaemonSet fail to start on a secret it never reads.
+          env:
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: LOG_LEVEL
+              value: "4"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/union
+            - name: kubelet-dir
+              mountPath: /var/lib/kubelet
+              # Broker premounts FUSE inside kubelet-owned publish targets;
+              # those mounts must propagate back to the host mount ns (and
+              # from there into task pods via kubelet's container rbind).
+              mountPropagation: Bidirectional
+            - name: uvol-sockets
+              mountPath: /run/uvol
+            - name: uvol-state
+              mountPath: /var/lib/uvol/state
+            - name: dev-fuse
+              mountPath: /dev/fuse
+            - name: uvol-node-cache
+              mountPath: /var/lib/uvol/node-cache
+
+---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -8424,7 +8690,7 @@ spec:
       - name: kube-state-metrics
         args:
         - --port=8080
-        - --resources=pods,deployments,daemonsets,resourcequotas
+        - --resources=certificatesigningrequests,configmaps,cronjobs,daemonsets,deployments,endpoints,horizontalpodautoscalers,ingresses,jobs,leases,limitranges,mutatingwebhookconfigurations,namespaces,networkpolicies,nodes,persistentvolumeclaims,persistentvolumes,poddisruptionbudgets,pods,replicasets,replicationcontrollers,resourcequotas,secrets,services,statefulsets,storageclasses,validatingwebhookconfigurations,volumeattachments
         - --namespaces=union
         imagePullPolicy: IfNotPresent
         image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.14.0
@@ -8474,6 +8740,7 @@ metadata:
     app.kubernetes.io/version: v2.55.1
     helm.sh/chart: prometheus-25.30.2
     app.kubernetes.io/part-of: prometheus
+    platform.union.ai/component: prometheus
   name: union-operator-prometheus
   namespace: union
 spec:
@@ -8499,6 +8766,7 @@ spec:
         app.kubernetes.io/version: v2.55.1
         helm.sh/chart: prometheus-25.30.2
         app.kubernetes.io/part-of: prometheus
+        platform.union.ai/component: prometheus
     spec:
       enableServiceLinks: true
       serviceAccountName: union-operator-prometheus
@@ -8547,6 +8815,7 @@ spec:
             - --web.console.templates=/etc/prometheus/consoles
             - --web.enable-lifecycle
             - --enable-feature=expand-external-labels
+            - --enable-feature=auto-gomemlimit
             - --web.route-prefix=/prometheus
             - --web.external-url=/prometheus/
           ports:
@@ -8617,6 +8886,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: dataproxy
 spec:
   replicas: 1
   selector:
@@ -8626,7 +8896,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "77465f2c38009098d6cedd2f95d078dc2a91d5da044563111d1dc57e0d4995d"
+        configChecksum: "0e1c9adb90c2db580e1b2186ae417237305039e1cd28782127a4f3d83c57ecc9"
         
       labels:
         
@@ -8634,6 +8904,7 @@ spec:
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
+        platform.union.ai/component: dataproxy
     spec:
       serviceAccountName: union-system
       securityContext:
@@ -8649,7 +8920,7 @@ spec:
         - name: dataproxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.6"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -8725,6 +8996,7 @@ metadata:
     app.kubernetes.io/name: flyteconnector
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: connector-service
 spec:
   replicas: 2
   selector:
@@ -8740,6 +9012,7 @@ spec:
         app.kubernetes.io/name: flyteconnector
         app.kubernetes.io/instance: release-name
         app.kubernetes.io/managed-by: Helm
+        platform.union.ai/component: connector-service
     spec:
       containers:
         - command:
@@ -8776,7 +9049,7 @@ spec:
               cpu: 100m
               ephemeral-storage: 100Mi
               memory: 384Mi
-      serviceAccountName: flyteconnector
+      serviceAccountName: union-system
 
 ---
 # Source: dataplane/templates/gateway/activator.yaml
@@ -8801,12 +9074,13 @@ metadata:
   name: activator
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
     app.kubernetes.io/version: "1.23.0"
     app.kubernetes.io/component: activator
+    platform.union.ai/component: knative-activator
 spec:
   selector:
     matchLabels:
@@ -8820,6 +9094,7 @@ spec:
         app.kubernetes.io/component: activator
         app.kubernetes.io/name: knative-serving
         app.kubernetes.io/version: "1.23.0"
+        platform.union.ai/component: knative-activator
     spec:
       affinity:
         podAntiAffinity:
@@ -8833,7 +9108,7 @@ spec:
                   - activator
               topologyKey: topology.kubernetes.io/zone
             weight: 100
-      serviceAccountName: union-system
+      serviceAccountName: activator
       containers:
         - name: activator
           # This is the Go import path for the binary that is containerized
@@ -8932,13 +9207,14 @@ metadata:
   name: autoscaler-hpa
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
     app.kubernetes.io/version: "1.23.0"
     app.kubernetes.io/component: autoscaler-hpa
     autoscaling.knative.dev/autoscaler-provider: hpa
+    platform.union.ai/component: knative-autoscaler-hpa
 spec:
   replicas: 2
   selector:
@@ -8951,6 +9227,7 @@ spec:
         app.kubernetes.io/component: autoscaler-hpa
         app.kubernetes.io/name: knative-serving
         app.kubernetes.io/version: "1.23.0"
+        platform.union.ai/component: knative-autoscaler-hpa
     spec:
       affinity:
         podAntiAffinity:
@@ -8964,7 +9241,7 @@ spec:
                   - autoscaler-hpa
               topologyKey: topology.kubernetes.io/zone
             weight: 100
-      serviceAccountName: union-system
+      serviceAccountName: controller
       containers:
         - name: autoscaler-hpa
           image: gcr.io/knative-releases/knative.dev/serving/cmd/autoscaler-hpa@sha256:e2494132a71c23587ac8dd25bc5288f70261e592285487e1d19f8dea1f896133
@@ -9038,12 +9315,13 @@ metadata:
   name: autoscaler
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
     app.kubernetes.io/version: "1.23.0"
     app.kubernetes.io/component: autoscaler
+    platform.union.ai/component: knative-autoscaler
 spec:
   replicas: 2
   selector:
@@ -9060,6 +9338,7 @@ spec:
         app.kubernetes.io/component: autoscaler
         app.kubernetes.io/name: knative-serving
         app.kubernetes.io/version: "1.23.0"
+        platform.union.ai/component: knative-autoscaler
     spec:
       affinity:
         podAntiAffinity:
@@ -9073,7 +9352,7 @@ spec:
                   - autoscaler
               topologyKey: topology.kubernetes.io/zone
             weight: 100
-      serviceAccountName: union-system
+      serviceAccountName: controller
       containers:
         - name: autoscaler
           # This is the Go import path for the binary that is containerized
@@ -9153,12 +9432,13 @@ metadata:
   name: controller
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
     app.kubernetes.io/version: "1.23.0"
     app.kubernetes.io/component: controller
+    platform.union.ai/component: knative-controller
 spec:
   replicas: 2
   selector:
@@ -9171,6 +9451,7 @@ spec:
         app.kubernetes.io/component: controller
         app.kubernetes.io/name: knative-serving
         app.kubernetes.io/version: "1.23.0"
+        platform.union.ai/component: knative-controller
     spec:
       affinity:
         podAntiAffinity:
@@ -9184,7 +9465,7 @@ spec:
                   - controller
               topologyKey: topology.kubernetes.io/zone
             weight: 100
-      serviceAccountName: union-system
+      serviceAccountName: controller
       containers:
         - name: controller
           # This is the Go import path for the binary that is containerized
@@ -9254,9 +9535,10 @@ metadata:
   namespace: union
   labels:
     app: gateway
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
+    platform.union.ai/component: gateway
 spec:
   selector:
     matchLabels:
@@ -9270,9 +9552,10 @@ spec:
     metadata:
       labels:
         app: gateway
-        helm.sh/chart: dataplane-2026.9.6
+        helm.sh/chart: dataplane-2026.10.1
         app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/instance: release-name
+        platform.union.ai/component: gateway
       annotations:
         # Envoy's xDS dynamic config is delivered by net-kourier-controller,
         # but the bootstrap file (gateway.host, auth URLs, extra routes/
@@ -9281,14 +9564,14 @@ spec:
         # makes the pod-template hash drift when the configmap content
         # does. Mirrors the legacy serving/knative-serving.yaml workload-
         # block at .annotations.checksum/bootstrap-config.
-        checksum/bootstrap-config: f5b297d22f2356f4af5645d391838c54e240eba66e5106e0ee4443f6a5a405b0
+        checksum/bootstrap-config: 65568ad5353ec426c12b80d69a588dee7ddceb30d8dae6ee709cf6cdef41116c
         prometheus.io/scrape: "true"
         prometheus.io/port: "9000"
         prometheus.io/path: "/stats/prometheus"
     spec:
       containers:
         - name: kourier-gateway
-          image: public.ecr.aws/p0i0a9q8/envoy:2026.9.6
+          image: public.ecr.aws/p0i0a9q8/envoy:2026.10.0
           args:
             - --base-id 1
             - -c /tmp/config/envoy-bootstrap.yaml
@@ -9397,13 +9680,14 @@ metadata:
   name: net-kourier-controller
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
     app.kubernetes.io/version: "1.23.0"
     networking.knative.dev/ingress-provider: kourier
     app.kubernetes.io/component: net-kourier
+    platform.union.ai/component: kourier
 spec:
   strategy:
     type: RollingUpdate
@@ -9422,16 +9706,17 @@ spec:
         prometheus.io/path: "/metrics"
       labels:
         app: net-kourier-controller
-        helm.sh/chart: dataplane-2026.9.6
+        helm.sh/chart: dataplane-2026.10.1
         app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/instance: release-name
         app.kubernetes.io/name: knative-serving
         app.kubernetes.io/version: "1.23.0"
         networking.knative.dev/ingress-provider: kourier
+        platform.union.ai/component: kourier
     spec:
       containers:
         - name: controller
-          image: public.ecr.aws/p0i0a9q8/unionoperator:2026.9.6
+          image: public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0
           command:
             - /bin/kourier
           env:
@@ -9494,7 +9779,7 @@ spec:
               cpu: 500m
               memory: 1Gi
       restartPolicy: Always
-      serviceAccountName: union-system
+      serviceAccountName: net-kourier
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -9529,12 +9814,13 @@ metadata:
   name: webhook
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
     app.kubernetes.io/version: "1.23.0"
     app.kubernetes.io/component: webhook
+    platform.union.ai/component: knative-webhook
 spec:
   selector:
     matchLabels:
@@ -9548,6 +9834,7 @@ spec:
         app.kubernetes.io/component: webhook
         app.kubernetes.io/version: "1.23.0"
         app.kubernetes.io/name: knative-serving
+        platform.union.ai/component: knative-webhook
     spec:
       affinity:
         podAntiAffinity:
@@ -9561,7 +9848,7 @@ spec:
                   - webhook
               topologyKey: topology.kubernetes.io/zone
             weight: 100
-      serviceAccountName: union-system
+      serviceAccountName: controller
       containers:
         - name: webhook
           # This is the Go import path for the binary that is containerized
@@ -9638,6 +9925,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: image-builder
 spec:
   strategy:
     type: Recreate
@@ -9652,6 +9940,7 @@ spec:
         platform.union.ai/zone: "dataplane"
         app.kubernetes.io/name: imagebuilder-buildkit
         app.kubernetes.io/instance: release-name
+        platform.union.ai/component: image-builder
     spec:
       serviceAccountName: "union-system"
       containers:
@@ -9748,6 +10037,7 @@ metadata:
   namespace: union
   labels:
     app: leaseworker
+    platform.union.ai/component: leaseworker
 spec:
   replicas: 1
   strategy:
@@ -9758,7 +10048,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "02a849041ca897e833b1c1dd034873061ec121e343311961bf88d3497f2f532"
+        configChecksum: "98fdd61208a4f212d62bf9062f73d78483c2e4f7cbe5c4e8c49b48a28382f4c9"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -9766,11 +10056,11 @@ spec:
         app: leaseworker
         app.kubernetes.io/instance: 'release-name'
         app.kubernetes.io/name: leaseworker
+        platform.union.ai/component: leaseworker
     spec:
       securityContext:
         fsGroup: 1337
       serviceAccountName: union-system
-      priorityClassName: union-leaseworker
       terminationGracePeriodSeconds: 75
       volumes:
         - name: config-volume
@@ -9784,7 +10074,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: leaseworker
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.6"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           command:
             - leaseworker
@@ -9856,6 +10146,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: proxy
 spec:
   replicas: 1
   selector:
@@ -9865,7 +10156,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "77465f2c38009098d6cedd2f95d078dc2a91d5da044563111d1dc57e0d4995d"
+        configChecksum: "0e1c9adb90c2db580e1b2186ae417237305039e1cd28782127a4f3d83c57ecc9"
         karpenter.sh/do-not-disrupt: "true"
         
       labels:
@@ -9874,6 +10165,7 @@ spec:
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
+        platform.union.ai/component: proxy
     spec:
       volumes:
         - name: config-volume
@@ -9891,7 +10183,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.6"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -9959,7 +10251,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.6"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -9996,6 +10288,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: operator
 spec:
   selector:
     matchLabels:
@@ -10004,7 +10297,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "77465f2c38009098d6cedd2f95d078dc2a91d5da044563111d1dc57e0d4995d"
+        configChecksum: "0e1c9adb90c2db580e1b2186ae417237305039e1cd28782127a4f3d83c57ecc9"
         
       labels:
         
@@ -10012,6 +10305,7 @@ spec:
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
+        platform.union.ai/component: operator
     spec:
       serviceAccountName: union-system
       securityContext:
@@ -10023,11 +10317,20 @@ spec:
         - name: secret-volume
           secret:
             secretName: union-secret-auth
+        # connector-config holds the connector apps' endpoints, written by the apps
+        # controller at runtime; the cluster snapshot reads it from this mount. Optional
+        # because this chart does not ship the ConfigMap: the mount stays empty until
+        # something creates it, and the operator reads an empty directory as no apps.
+        # Mounted whole (no subPath) so the kubelet refreshes it as the controller writes.
+        - name: connector-config-volume
+          configMap:
+            name: connector-config
+            optional: true
       containers:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.6"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -10042,11 +10345,14 @@ spec:
               name: config-volume
             - mountPath: /etc/union/secret
               name: secret-volume
+            - mountPath: "/etc/union/connector-config"
+              name: connector-config-volume
+              readOnly: true
           env:
             - name: HELM_CHART_VERSION
-              value: "2026.9.6"
+              value: "2026.10.1"
             - name: HELM_APP_VERSION
-              value: "2026.9.6"
+              value: "2026.10.0"
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -10114,6 +10420,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: webhook
 spec:
   replicas: 1
   selector:
@@ -10129,8 +10436,9 @@ spec:
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
+        platform.union.ai/component: webhook
       annotations:
-        configChecksum: "02a849041ca897e833b1c1dd034873061ec121e343311961bf88d3497f2f532"
+        configChecksum: "98fdd61208a4f212d62bf9062f73d78483c2e4f7cbe5c4e8c49b48a28382f4c9"
         
     spec:
       securityContext:
@@ -10141,7 +10449,7 @@ spec:
       serviceAccountName: union-system
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.6"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -10262,7 +10570,7 @@ metadata:
   name: activator
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -10297,7 +10605,7 @@ metadata:
   namespace: union
   labels:
     app: gateway
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
 spec:
@@ -10342,7 +10650,7 @@ metadata:
   name: webhook
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -10389,7 +10697,7 @@ kind: MutatingWebhookConfiguration
 metadata:
   name: webhook.serving.knative.dev
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -10404,6 +10712,22 @@ webhooks:
     failurePolicy: Fail
     sideEffects: None
     name: webhook.serving.knative.dev
+    # Exempt ONLY the bootstrap Certificate (routing-serving-certs) from this
+    # fail-closed webhook. It is created in the same release as the webhook's
+    # backend, so on a cold zero-trust install the webhook Service has no Ready
+    # endpoints / no caBundle yet and a fail-closed admission call deadlocks the
+    # install -- the cert's admission depends on the very webhook it bootstraps.
+    #
+    # matchConditions (CEL) keys on the object's immutable identity, NOT a label,
+    # so it is not tenant-bypassable. The Knative serving webhook reconciler
+    # rebuilds .rules/.namespaceSelector/.caBundle on every reconcile but never
+    # touches .matchConditions, so this survives reconciliation (verified against
+    # knative.dev/pkg and empirically on-cluster). matchConditions is GA in k8s
+    # 1.30+ and beta/default-on in 1.28-1.29 (this chart's kubeVersion floor is
+    # 1.28).
+    matchConditions:
+      - name: exclude-bootstrap-routing-cert
+        expression: "!(request.resource.group == 'networking.internal.knative.dev' && request.resource.resource == 'certificates' && request.namespace == 'union' && request.name == 'routing-serving-certs')"
     timeoutSeconds: 10
     rules:
       - apiGroups:
@@ -10580,7 +10904,7 @@ kind: ValidatingWebhookConfiguration
 metadata:
   name: config.webhook.serving.knative.dev
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -10625,7 +10949,7 @@ kind: ValidatingWebhookConfiguration
 metadata:
   name: validation.webhook.serving.knative.dev
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -10640,6 +10964,11 @@ webhooks:
     failurePolicy: Fail
     sideEffects: None
     name: validation.webhook.serving.knative.dev
+    # Exempt ONLY the bootstrap Certificate (routing-serving-certs). See the
+    # matching note on webhook.serving.knative.dev above for the full rationale.
+    matchConditions:
+      - name: exclude-bootstrap-routing-cert
+        expression: "!(request.resource.group == 'networking.internal.knative.dev' && request.resource.resource == 'certificates' && request.namespace == 'union' && request.name == 'routing-serving-certs')"
     timeoutSeconds: 10
     rules:
       - apiGroups:
@@ -10764,6 +11093,54 @@ webhooks:
         scope: "*"
 
 ---
+# Source: dataplane/templates/propeller/serviceaccount.yaml
+---
+
+---
+# Source: dataplane/templates/uvol-broker/csidriver.yaml
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: volumes.union.ai
+  labels:
+    app.kubernetes.io/name: uvol-broker
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  # Node-local ephemeral inline volumes only: the driver premounts a FUSE
+  # channel per pod and hands the fd to the pod's unprivileged client. No
+  # controller service, no attach/provision, no per-volume secrets — the
+  # data plane authenticates in-pod with the pod's own identity.
+  volumeLifecycleModes:
+    - Ephemeral
+  attachRequired: false
+  podInfoOnMount: true
+  storageCapacity: false
+  fsGroupPolicy: None
+
+---
+# Source: dataplane/templates/gateway/misc.yaml
+apiVersion: networking.internal.knative.dev/v1alpha1
+kind: Certificate
+metadata:
+  annotations:
+    networking.knative.dev/certificate.class: cert-manager.certificate.networking.knative.dev
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.23.0"
+    networking.knative.dev/certificate-type: system-internal
+  name: routing-serving-certs
+  namespace: union
+spec:
+  dnsNames:
+    - kn-routing
+    - data-plane.knative.dev # for reverse-compatibility with net-* implementations that do not work with multi-SANs
+  secretName: routing-serving-certs
+---
 # Source: dataplane/templates/gateway/misc.yaml
 # Copyright 2018 The Knative Authors
 #
@@ -10785,7 +11162,7 @@ metadata:
   name: queue-proxy
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.6
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -10795,6 +11172,20 @@ spec:
   # This is the Go import path for the binary that is containerized
   # and substituted here.
   image: gcr.io/knative-releases/knative.dev/serving/cmd/queue@sha256:a3cc71ce80dbc6df8781f15eac2cf3531a4c9815271799afd8776bef9e6aeaf2
+
+---
+# Source: dataplane/templates/common/task-podtemplate.yaml
+apiVersion: v1
+kind: PodTemplate
+metadata:
+  name: task-template
+  namespace: union
+template:
+  spec:
+    serviceAccountName: union
+    containers:
+      - name: default
+        image: docker.io/rwgrim/docker-noop
 ---
 # Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
 apiVersion: v1
@@ -10819,8 +11210,12 @@ metadata:
 rules:
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["mutatingwebhookconfigurations"]
-    resourceNames:
-      - flyte-pod-webhook
+    verbs: ["get", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
     verbs: ["get", "delete"]
 ---
 # Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
@@ -10835,48 +11230,6 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: flyte-webhook-cleanup-union
-subjects:
-  - kind: ServiceAccount
-    name: flyte-webhook-cleanup
-    namespace: union
----
-# Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: flyte-webhook-cleanup-union
-  namespace: union
-  annotations:
-    helm.sh/hook: pre-upgrade
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
-    helm.sh/hook-weight: "-5"
-rules:
-  - apiGroups: ["apps"]
-    resources: ["deployments"]
-    resourceNames:
-      - flytepropeller-webhook
-      - union-operator-prometheus
-    verbs: ["get", "delete"]
-  - apiGroups: [""]
-    resources: ["secrets"]
-    resourceNames:
-      - flyte-pod-webhook
-    verbs: ["get", "delete"]
----
-# Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: flyte-webhook-cleanup-union
-  namespace: union
-  annotations:
-    helm.sh/hook: pre-upgrade
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
-    helm.sh/hook-weight: "-5"
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
   name: flyte-webhook-cleanup-union
 subjects:
   - kind: ServiceAccount

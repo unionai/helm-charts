@@ -1,15 +1,16 @@
+{{- define "imagebuilder.buildkit.hpa" -}}
 {{- if and (include "imagebuilder.buildkit.enabled" .) .Values.imageBuilder.buildkit.autoscaling.enabled }}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {{ include "imagebuilder.buildkit.fullname" . }}
+  name: {{ include "imagebuilder.buildkit.workloadName" . }}
   labels:
-    {{- include "imagebuilder.buildkit.labels" . | nindent 4 }}
+    {{- include "imagebuilder.buildkit.workloadLabels" . | nindent 4 }}
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: {{ include "imagebuilder.buildkit.fullname" . }}
+    name: {{ include "imagebuilder.buildkit.workloadName" . }}
   minReplicas: {{ .Values.imageBuilder.buildkit.autoscaling.minReplicas }}
   maxReplicas: {{ .Values.imageBuilder.buildkit.autoscaling.maxReplicas }}
   metrics:
@@ -30,3 +31,13 @@ spec:
           averageUtilization: {{ .Values.imageBuilder.buildkit.autoscaling.targetMemoryUtilizationPercentage }}
     {{- end }}
 {{- end }}
+{{- end -}}
+
+{{- include "imagebuilder.buildkit.hpa" . }}
+{{- if and (include "imagebuilder.buildkit.enabled" .) (.Values.imageBuilder.buildkit.arm | default dict).enabled }}
+{{- $arm := include "imagebuilder.buildkit.hpa" (merge (dict "buildkitArm" true) .) }}
+{{- if $arm }}
+---
+{{ $arm }}
+{{- end }}
+{{- end -}}
