@@ -2755,6 +2755,40 @@ expect-rule "multi-namespace: events.k8s.io events, list and watch" present \
 expect-manifest "singleNamespace: no leaseworker cluster read at all" \
   absent "name: union-leaseworker-work-ns-cluster-read"
 
+# The cluster health snapshot's capacity report reads nodes, plus pods cluster-wide with
+# clusterWidePods. Both are independent of the informer's gate, of disableClusterPermissions
+# and of scope, so they are pinned in both scope modes, including with the informer's grant
+# off. They share the operator's cluster-read role: the capacity read adds get to the one
+# nodes rule rather than rendering a role of its own.
+echo "- node-capacity reporting reads nodes, and pods with clusterWidePods, in both scope modes"
+CAP=(--set config.operator.clusterHealth.nodeCapacity.enabled=true)
+PODS=(--set config.operator.clusterHealth.nodeCapacity.clusterWidePods=true)
+NO_INFORMER=(--set config.operator.billing.model=None --set config.operator.collectUsages.enabled=false
+  --set config.operator.disableClusterPermissions=true)
+for scope in "singleNamespace=true" "singleNamespace=false"; do
+  expect-rule "${scope}: the informer's nodes rule carries no get without capacity reporting" present \
+    union-operator-cluster-read "core nodes list,watch -" --set "${scope}"
+  expect-rule "${scope}: capacity reporting adds get to the nodes rule" present \
+    union-operator-cluster-read "core nodes get,list,watch -" --set "${scope}" "${CAP[@]}"
+  expect-rule "${scope}: and grants it with the informer's gate off" present \
+    union-operator-cluster-read "core nodes get,list,watch -" \
+    --set "${scope}" "${CAP[@]}" "${NO_INFORMER[@]}"
+  expect-rule "${scope}: and reads no pods without clusterWidePods" absent \
+    union-operator-cluster-read "core pods get,list,watch -" --set "${scope}" "${CAP[@]}"
+  expect-rule "${scope}: clusterWidePods adds a cluster-wide pod read" present \
+    union-operator-cluster-read "core pods get,list,watch -" --set "${scope}" "${CAP[@]}" "${PODS[@]}"
+  expect-rule "${scope}: also with the informer's gate off" present \
+    union-operator-cluster-read "core pods get,list,watch -" \
+    --set "${scope}" "${CAP[@]}" "${PODS[@]}" "${NO_INFORMER[@]}"
+  expect-verb-resources "${scope}: and nothing else, with the informer's gate off" \
+    union-operator-cluster-read list "nodes,pods" \
+    --set "${scope}" "${CAP[@]}" "${PODS[@]}" "${NO_INFORMER[@]}"
+  expect-rule "${scope}: clusterWidePods alone grants no pod read" absent \
+    union-operator-cluster-read "core pods get,list,watch -" --set "${scope}" "${PODS[@]}"
+  expect-manifest "${scope}: and no standalone node-capacity ClusterRole renders" \
+    absent "name: union-operator-system-node-capacity" --set "${scope}" "${CAP[@]}" "${PODS[@]}"
+done
+
 echo
 echo "- release-namespace calls are granted to the component that makes them"
 
@@ -2913,6 +2947,12 @@ cat > "${SCOPE_ALLOWLIST}" <<'EOF'
 # syncs. It backs the Legacy/Shadow billing collector and GPU attribution by node label.
 # Nodes are cluster-scoped, so limit-namespace cannot confine it.
 union-operator-cluster-read read core nodes list,watch
+# The cluster health snapshot's capacity report (config.operator.clusterHealth.nodeCapacity),
+# off by default. It reads node shapes, so it adds get to the informer's nodes rule, and with
+# clusterWidePods it reads pods cluster-wide for per-pool usage, which a namespace-limited
+# operator's pod cache cannot see.
+union-operator-cluster-read read core nodes get
+union-operator-cluster-read read core pods get,list,watch
 
 # nodeobserver (cloud nodeobserver/), off by default. It reads the node it runs on and lists
 # that node's pods with an empty namespace and a spec.nodeName field selector, which the API
@@ -2968,6 +3008,8 @@ max_features=(
   --set flytepropellerwebhook.certificate.provider=legacy
   --set 'taskPluginClusterReadRules[0].apiGroups={ray.io}'
   --set 'taskPluginClusterReadRules[0].resources={rayjobs,rayclusters}'
+  --set config.operator.clusterHealth.nodeCapacity.enabled=true
+  --set config.operator.clusterHealth.nodeCapacity.clusterWidePods=true
 )
 MAX_APPS="${WORK_DIR}/max-apps.yaml"
 MAX_ZT="${WORK_DIR}/max-zero-trust.yaml"
