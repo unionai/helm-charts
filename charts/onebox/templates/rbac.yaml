@@ -60,3 +60,52 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "onebox.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
+{{- if .Values.secureNamespaces.enabled }}
+---
+# Secure namespaces: onebox creates their namespaces and Cilium policies, runs
+# bound project-domains' task pods there, gives each namespace its default
+# service account's annotations and copies in the secrets it may read.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ printf "%s-%s-secure-namespaces" .Release.Namespace (include "onebox.fullname" .) }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [cilium.io]
+    resources: [ciliumnetworkpolicies]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  - apiGroups: [""]
+    resources: [pods/log, podtemplates, resourcequotas]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [serviceaccounts, secrets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: ["", events.k8s.io]
+    resources: [events]
+    verbs: [get, list, watch, create, update, patch]
+  {{- with .Values.rbac.extraRules }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ printf "%s-%s-secure-namespaces" .Release.Namespace (include "onebox.fullname" .) }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ printf "%s-%s-secure-namespaces" .Release.Namespace (include "onebox.fullname" .) }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "onebox.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
