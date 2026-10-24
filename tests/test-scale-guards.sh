@@ -300,5 +300,14 @@ expect policy 'cidr: 160.79.104.0/23'
 expect policy 'cidr: 198.51.100.7/32'
 must_fail "egress needs anthropicCIDRs or model rules" -f "$tmp/agent-base.yaml" -f "$tmp/egress.yaml" --set "scale.agent.networkPolicy.egress.anthropicCIDRs=null"
 
+# "Keep Scale warm": the proxy prices one replica from the agent's requests, and minScale 1 or more
+# wins over the console's setting.
+must_render -f "$tmp/agent-base.yaml" -f "$tmp/anthropic.yaml"
+expect proxyconfig 'minScale: 0'
+expect proxyconfig 'cpu: 100m'
+expect proxyconfig 'memory: 512Mi'
+must_render -f "$tmp/agent-base.yaml" -f "$tmp/anthropic.yaml" --set scale.agent.minScale=1
+expect proxyconfig 'minScale: 1'
+
 if [ "$failures" -gt 0 ]; then echo "$failures Scale guard check(s) failed"; exit 1; fi
 echo "Scale guards OK"

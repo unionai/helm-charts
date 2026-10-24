@@ -77,6 +77,14 @@ agent:
   {{- /* The agent's model and key as people save them in the console, read from this cluster's
          secret store; see templates/scale/_agent.tpl. */}}
   modelFromSecret: {{ include "scale.agent.modelFromConsole" . | eq "true" }}
+  {{- /* "Keep Scale warm": minScale 1 or more wins over the console's setting; the requests
+         price one running replica. */}}
+  minScale: {{ $s.agent.minScale | default 0 | int }}
+  {{- with ($s.agent.resources | default dict).requests }}
+  requests:
+    cpu: {{ .cpu | default "" | quote }}
+    memory: {{ .memory | default "" | quote }}
+  {{- end }}
 {{- end }}
 {{- end -}}
 
