@@ -147,7 +147,7 @@ Off by default: every request is allowed.
 authz:
   enabled: true
   adminUsers: [alice@example.com]   # subjects as the proxy reports them
-  defaultRole: viewer               # admin, contributor or viewer
+  defaultRole: viewer               # admin, contributor, viewer or none
 ```
 
 On:
