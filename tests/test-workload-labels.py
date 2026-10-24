@@ -67,6 +67,9 @@ ALLOWLIST = {
     "monitoring-operator",
     "monitoring-kube-state-metrics",
     "release-name-grafana",
+    # Scale (opt-in, scale.enabled): not yet a component the operator's cluster snapshot
+    # reports. Label it once "scale" is in componentIDs in unionai/cloud operator/pkg/components.go.
+    "scale",
 }
 
 

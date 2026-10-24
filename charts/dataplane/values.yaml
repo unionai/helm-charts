@@ -3460,3 +3460,326 @@ dataproxy:
   additionalVolumes: []
   # -- Appends additional volume mounts to the main container's spec. May include template values.
   additionalVolumeMounts: []
+
+# -- Scale (templates/scale): a per-project helper that watches runs in this dataplane, groups
+# repeated failures and waste into issues, and explains them in the Union console. Off by default.
+# Customer data stays in this dataplane: issues, feedback and the agent's memory are stored in this
+# cluster's bucket, and the control plane only relays requests to the operator proxy. The guards in
+# templates/scale/_scale.tpl fail the render for any unsafe combination. Mirrors the union-operator
+# chart in unionai/cloud (operator/deploy/helm/templates/scale), whose scale/README.md documents
+# each setting.
+scale:
+  enabled: false
+  # -- Keys merged into the scale config section (unionai/cloud scale/config/config.go), e.g.
+  # projects, shadow. Put notification settings under scale.notify and code change settings under
+  # scale.git, not here. Fixes are under config.fix (scale/config/fix.go): off, and for no org,
+  # unless set. detectors.cost.cloud (the cloud issues are priced for) comes from provider, or gcp
+  # with GCS storage, unless set here; the usage price table (detectors.cost.priceTable: usage)
+  # applies on aws only.
+  config:
+    shadow: true
+    # -- How long Scale keeps what it stores in the cluster's bucket (unionai/cloud scale/README.md,
+    # Retention). Open issues, instructions, fixes in progress and month-end reports are always
+    # kept. 0 keeps closed issues or conversations always. The operator proxy gets the same
+    # conversation retention.
+    retention:
+      # -- A resolved or dismissed issue, with what belongs to it, after it closed. 1 year.
+      closedIssues: 8760h
+      # -- An Ask Scale conversation after its last message. 90 days.
+      conversations: 2160h
+  # -- Notifications and tracker filing (scale/config/notify.go). Off by default, and silent
+  # while scale.config.shadow is true whatever is set here. Every call goes out from this cluster
+  # with the customer's own credentials; nothing passes through Union's control plane.
+  notify:
+    enabled: false
+    # -- Console base URL for issue links. Empty uses https://<control plane host>.
+    consoleURL: ""
+    # -- Least time between two notifications about one issue.
+    window: 24h
+    # -- Occurrence counts that notify again about an open issue, besides its open and reopen.
+    occurrenceSteps: [5, 10, 25, 50, 100]
+    # -- Adds the last error line to messages. Off, so raw error text stays out of Slack and tickets.
+    includeErrorSummary: false
+    slack:
+      enabled: false
+      # -- Project name to a file holding that project's own webhook URL (a key of secretName,
+      # e.g. /etc/scale/notify/slack-webhook-url-churn).
+      projectWebhookURLPaths: {}
+      # -- Projects that also post to the shared slack-webhook-url. A project in neither list gets
+      # no Slack message, so one channel never receives every project's issues.
+      projects: []
+    # -- A weekly summary per project, sent to the project's Slack webhook. In shadow mode it is
+    # only logged.
+    digest:
+      enabled: false
+      weekday: Monday
+      hourUTC: 9
+    # -- Files a ticket per issue, only for the listed projects.
+    tracker:
+      # -- linear or jira; empty files nothing.
+      kind: ""
+      projects: []
+      linear:
+        teamID: ""
+        labelIDs: []
+      jira:
+        # -- e.g. https://acme.atlassian.net
+        baseURL: ""
+        projectKey: ""
+        issueType: Bug
+        labels: []
+    # -- Kubernetes secret in the release namespace with the customer's credentials, mounted at
+    # /etc/scale/notify. Keys: slack-webhook-url, linear-api-key, jira-email (Jira Cloud only),
+    # jira-api-token. Empty mounts nothing.
+    secretName: ""
+  # -- Scale's development-only writer app for fixes. When secretName is set, the secret is
+  # mounted at /etc/union/scale-fix-writer; point config.fix.writer.clientSecretLocation at the
+  # file in it and set config.fix.writer.clientId.
+  fixWriter:
+    secretName: ""
+  # -- Scale's own service account, with no Kubernetes token. Give it cloud IAM for Scale's bucket
+  # only, e.g. eks.amazonaws.com/role-arn (IRSA) or iam.gke.io/gcp-service-account (Workload
+  # Identity). Required for fixes and pushes.
+  serviceAccount:
+    create: false
+    annotations: {}
+  # -- With serviceAccount.create off: the service account to run as. Defaults to the operator's,
+  # which is acceptable in shadow mode only. Its Kubernetes token is never mounted either way.
+  serviceAccountName: ""
+  # -- The key Scale's objects are signed with, shared by the Scale runtime and the operator proxy,
+  # so a task pod that can write the bucket cannot forge an approval, a decision or a change.
+  # Required for fixes, pushes and the agent. At least 32 bytes.
+  signing:
+    secretName: ""
+    key: signing-key
+    # -- RFC 3339 time until which objects written before the key was turned on are still read;
+    # Scale signs each on its next write. Needs storageContainer. Fixes and pushes stay off until
+    # it passes and is unset.
+    acceptUnsignedUntil: ""
+  # -- The key the dataproxy signs who the caller is with, mounted in the operator proxy and, under
+  # zero trust, the dataplane's own dataproxy. The proxy has no authorizer of its own: with this
+  # key it serves a Scale request only for the RPC, org, project, domain and cluster the dataproxy
+  # authorized. Without it the proxy serves reads only: no feedback, instructions, fixes or pushes.
+  # The proxy mounts it as optional: a missing secret leaves the proxy up and refusing Scale's calls.
+  callerAuth:
+    secretName: ""
+    key: caller-key
+    # -- Refuse a caller assertion whose digest of the request body is missing or does not match.
+    # Each assertion binds the body it was signed for, so with this on a captured one cannot be
+    # replayed with another (another fix to approve). Off, both are served with a warning only. Turn
+    # it on once every dataproxy that calls this cluster signs digests and runs the same IDL as
+    # this cluster (unionai/cloud scale/README.md, Who is calling).
+    requireDigest: false
+  # -- A NetworkPolicy on the operator proxy: only pods in the release namespace, and the peers in
+  # from, reach it, plus metrics from anywhere. It covers the whole proxy, so list every other
+  # in-cluster caller. Traffic through the tunnel is not affected. Required for fixes and pushes.
+  proxyNetworkPolicy:
+    enabled: false
+    # -- Extra NetworkPolicyPeers allowed to reach the proxy.
+    from: []
+  # -- A bucket for Scale's objects that user task roles cannot reach (the metadata bucket is
+  # writable from tasks). Empty keeps them in the metadata bucket: fine for shadow mode. Required
+  # for fixes and pushes.
+  storageContainer: ""
+  # -- The identity Scale calls the control plane as. With appId empty it uses the dataplane's
+  # admin app (secrets.admin). Set appId to the cluster's Scale app, which can only view runs and
+  # tasks. Required for fixes, pushes and the agent.
+  auth:
+    # -- Client id of the cluster's Scale app. Empty uses the dataplane's admin app.
+    appId: ""
+    # -- Secret holding the Scale app's client secret, read only when appId is set.
+    secretName: union-scale
+    # -- Key of the client secret in secretName.
+    secretKey: app_secret
+  podLabels: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    # Secrets are mounted 0440 and root-owned; fsGroup makes them readable by the container's
+    # user (the image's 65532) and no one else.
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: [ALL]
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  # -- No GPUs. Sized for one stream plus a lookup per failed run.
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
+  # -- Code changes. Scale prepares a commit on branch scale/<issue> inside the dataplane and
+  # pushes it only when a person clicks Push in the console. It never opens or merges pull
+  # requests. Needs a GitHub App with Contents read and write on the repositories, and egress from
+  # the Scale pod to the GitHub API.
+  git:
+    enabled: false
+    # -- Secret in the release namespace holding the GitHub App's PEM private key. Created by the
+    # customer in their dataplane; it never goes to the control plane.
+    privateKeySecret:
+      name: scale-github-app
+      key: private-key.pem
+    github:
+      appId: 0
+      # -- 0 looks the installation up for each repository.
+      installationId: 0
+      apiUrl: https://api.github.com
+      webUrl: https://github.com
+    # -- Where each project's code lives, e.g.
+    # [{project: churn, repo: acme/pipelines, defaultBranch: main, sourceRoot: pipelines}].
+    sources: []
+  # -- Scale's agent: answers people's questions about a project in the console and diagnoses new
+  # issues. It runs as a cluster-local Knative service that scales to zero when idle, so only the
+  # operator proxy and the Scale runtime in this cluster reach it. It reads with the cluster's
+  # view-only Scale app (scale.auth.appId) and writes only diagnoses and pending proposals, through
+  # the operator proxy, with short-lived tokens signed with scale.signing. It never applies a
+  # change. It ships only Union's public-docs skill pack. Needs app serving (apps.enabled).
+  agent:
+    enabled: false
+    image:
+      repository: public.ecr.aws/p0i0a9q8/scale-agent
+      # -- Empty uses image.union.tag, so the agent ships with the operator.
+      tag: ""
+      pullPolicy: IfNotPresent
+    # -- How long the agent stays up after its last request before it scales to zero.
+    scaleDownDelay: 10m
+    # -- Replicas Knative keeps running when the agent is idle: 0 to maxScale. 0 scales to zero,
+    # so the first question after scaleDownDelay waits for the agent to wake (a few seconds on a
+    # node that has the image). 1 keeps one replica warm, so nobody waits; it reserves the pod's
+    # requests (resources below: about 0.1 vCPU and 512 MiB, roughly $5/month at Scale's prices).
+    # An org admin can also keep it warm in Scale > Settings > Agent ("Keep Scale warm"); 1 or
+    # more here wins over that setting being off.
+    minScale: 0
+    # -- Longest one request may take, waking included.
+    timeoutSeconds: 600
+    # -- Agent runs at once in each replica. Knative holds further requests in its queue.
+    concurrency: 4
+    # -- Most replicas Knative may run. 1 suits a small org; raise it when people wait in the
+    # queue. The daily budgets (dailyDiagnoses, dailyQuestions) cap the model cost either way.
+    maxScale: 1
+    # -- The model. provider is anthropic (Claude through the Anthropic API, with the API key in
+    # apiKeySecret) or openai (any OpenAI-compatible chat completions endpoint at baseURL: OpenAI,
+    # Union's LLM gateway, vLLM or Ollama). Run data the agent reads goes to that provider; see
+    # unionai/cloud scale/agent/README.md (Model).
+    #
+    # When the proxy has a secret store (proxy.secretManager.enabled, on by default) and neither
+    # apiKeySecret nor headersSecret is set, people set the provider, model, base URL and key in
+    # the console (Scale > Settings > Agent). The operator proxy saves them in this cluster's
+    # secret store as scale__<org>__agent-model, a name tasks cannot mount, and they replace
+    # provider, name, baseURL and the key here. Set apiKeySecret (or headersSecret) to decide here
+    # instead; the console's settings are then not used.
+    model:
+      provider: openai
+      # -- Claude Opus 5.5 by default; any model the provider serves.
+      name: claude-opus-5-5
+      # -- Required for openai, e.g. https://llm-gateway.example.com/v1, or
+      # http://ollama.ollama.svc.cluster.local:11434/v1. For anthropic, leave empty (the Anthropic
+      # API) unless a proxy fronts it.
+      baseURL: ""
+      # -- Secret in the release namespace with the model API key, mounted 0440. Set, it overrides
+      # what people save in the console. Without a secret store it is required for anthropic; for
+      # openai, empty sends no key (a local endpoint).
+      apiKeySecret:
+        name: ""
+        key: api-key
+      # -- Secret with extra request headers for a gateway, one "Name: value" per line, mounted
+      # 0440. Empty sends none.
+      headersSecret:
+        name: ""
+        key: headers
+      # -- anthropic only: how much Claude thinks per reply (low, medium, high, xhigh, max).
+      # medium suits the agent's multistep tool use; empty leaves the model's default.
+      effort: medium
+      # -- anthropic only: when Claude declines, let the API retry on the fallback model it picks
+      # for that kind of refusal. Turn off for a model that does not support it.
+      refusalFallback: true
+    # -- Let the agent read run logs when the error alone does not explain a failure. Log lines
+    # are sent to the model.
+    readLogs: true
+    # -- Issues per project and day the runtime asks the agent to diagnose.
+    dailyDiagnoses: 20
+    # -- Questions per project and day through the console.
+    dailyQuestions: 200
+    # -- Runs per project and day people ask Scale to track and diagnose.
+    dailyTrackedRuns: 20
+    # -- Only Knative's activator, internal gateway and autoscaler may open connections to the
+    # agent's pod. Callers reach it through the gateway, and the agent does no work for a request
+    # without a token the operator proxy accepts.
+    networkPolicy:
+      enabled: true
+      # -- Namespace of Knative's serving pods. Empty is the release namespace, where this chart
+      # runs them.
+      knativeNamespace: ""
+      # -- Values of the app label of the Knative pods allowed in. Empty is activator, autoscaler
+      # and the internal gateway of the serving path in use (gateway, or 3scale-kourier-gateway
+      # with the knative-operator).
+      knativeApps: []
+      # -- Where the agent's pod may connect. Off by default, because the agent reads runs from
+      # the control plane (global.CONTROLPLANE_HOST), whose addresses the chart cannot know. When
+      # on, the pod may reach only: DNS, the operator proxy, controlPlaneCIDRs on 443, the model
+      # provider (anthropicCIDRs on 443 for anthropic; the rules in model for openai or a proxy),
+      # and nothing else.
+      egress:
+        enabled: false
+        # -- Peers that serve DNS (ports 53 UDP and TCP).
+        dns:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: kube-system
+        # -- CIDRs that the control plane host resolves to, reached on 443 for Flyte's read APIs
+        # and the Scale app's token. Required when egress is on.
+        controlPlaneCIDRs: []
+        # -- The Anthropic API's published inbound addresses
+        # (https://platform.claude.com/docs/en/api/ip-addresses), reached on 443 when provider is
+        # anthropic and baseURL is empty.
+        anthropicCIDRs:
+          - 160.79.104.0/23
+          - 2607:6bc0::/48
+        # -- NetworkPolicy egress rules for the model endpoint when provider is openai, or when a
+        # proxy at baseURL fronts the Anthropic API, e.g. the gateway's CIDR on 443 or a
+        # namespaceSelector for an in-cluster vLLM. Required in those cases when egress is on.
+        model: []
+    serviceAccount:
+      annotations: {}
+    podLabels: {}
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 65532
+      runAsGroup: 65532
+      # Secrets are mounted 0440 and root-owned; fsGroup makes them readable by the agent only.
+      fsGroup: 65532
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: [ALL]
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+    # -- No GPU: the model runs behind the endpoint above.
+    resources:
+      limits:
+        cpu: "1"
+        memory: 1Gi
+      requests:
+        cpu: 100m
+        memory: 512Mi
+  # -- Scale's jobs: one run of Claude Code or Codex in a project's development domain, for work
+  # that needs the code or a shell (reproduce, fix in code, profile, find the version). A job runs
+  # as the Flyte task scale-job.scale_job, which the Scale runtime registers in
+  # <project>/development with this image. It never gets Scale's own model key, and it cannot
+  # push, deploy or touch production. See unionai/cloud scale/job/README.md.
+  jobs:
+    image:
+      repository: public.ecr.aws/p0i0a9q8/scale-job
+      # -- Empty uses image.union.tag, so the job task ships with the operator.
+      tag: ""

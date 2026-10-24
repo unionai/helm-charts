@@ -1,0 +1,66 @@
+# helm-values: values.aws.yaml, examples/values-test-certs.yaml
+# Scale with every guard satisfied: its own app, service account, bucket, signing and caller keys
+# and proxy NetworkPolicy, so fixes, code pushes and the agent render. Under zero trust, so the
+# dataplane's dataproxy signs caller assertions too.
+
+global:
+  UNION_CONTROL_PLANE_HOST: "test-controlplane-host"
+  CLUSTER_NAME: "test-cluster-name"
+  ORG_NAME: "test-org-name"
+  CLIENT_ID: "test-client-id"
+  AUTH_CLIENT_ID: "test-auth-client-id"
+  METADATA_BUCKET: "test-metadata-bucket"
+  FAST_REGISTRATION_BUCKET: "test-fast-registration-bucket"
+  AWS_REGION: "test-region"
+  BACKEND_IAM_ROLE_ARN: "test-backend-iam-role-arn"
+  WORKER_IAM_ROLE_ARN: "test-worker-iam-role-arn"
+
+secrets:
+  admin:
+    clientSecret: "test-not-real-secret"
+
+zero_trust:
+  enabled: true
+
+knative-operator:
+  enabled: false
+
+apps:
+  enabled: true
+
+scale:
+  enabled: true
+  config:
+    shadow: false
+    projects: [scale-demo]
+    fix:
+      enabled: true
+  auth:
+    appId: test-cluster-name-scale
+  serviceAccount:
+    create: true
+    annotations:
+      eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/test-scale"
+  storageContainer: test-scale-bucket
+  signing:
+    secretName: scale-signing
+  callerAuth:
+    secretName: scale-caller
+  proxyNetworkPolicy:
+    enabled: true
+  fixWriter:
+    secretName: union-scale-fix-writer
+  git:
+    enabled: true
+    github:
+      appId: 12345
+    sources:
+      - project: scale-demo
+        repo: acme/pipelines
+        defaultBranch: main
+  agent:
+    enabled: true
+    model:
+      baseURL: "http://llm-gateway.union.svc.cluster.local/v1"
+      apiKeySecret:
+        name: scale-agent-model

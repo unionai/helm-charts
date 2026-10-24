@@ -1,0 +1,166 @@
+{{- include "scale.guards" . }}
+{{- if .Values.scale.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scale
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "scale.labels" . | nindent 4 }}
+spec:
+  # One watcher per cluster: a second replica would count every failure twice.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "scale.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        configChecksum: {{ include (print .Template.BasePath "/scale/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+      labels:
+        {{- include "scale.labels" . | nindent 8 }}
+        {{- with .Values.scale.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- /* Scale needs no Kubernetes API access, only its bucket: its own service account, with
+             cloud IAM for that bucket only, and no Kubernetes token. */}}
+      {{- if .Values.scale.serviceAccount.create }}
+      serviceAccountName: scale
+      {{- else }}
+      serviceAccountName: {{ .Values.scale.serviceAccountName | default (include "operator.serviceAccountName" .) }}
+      {{- end }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.scale.podSecurityContext | nindent 8 }}
+      {{- with .Values.scale.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scale.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scale.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: config-volume
+          configMap:
+            name: scale
+        {{- if .Values.scale.auth.appId }}
+        {{- /* Only the Scale app's secret, at the path the config reads. */}}
+        - name: secret-volume
+          secret:
+            secretName: {{ .Values.scale.auth.secretName }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.scale.auth.secretKey }}
+                path: app_secret
+        {{- else if .Values.secrets.admin.enable }}
+        - name: secret-volume
+          secret:
+            secretName: {{ .Values.operator.secretName }}
+            defaultMode: 0440
+            items:
+              - key: client_secret
+                path: app_secret
+        {{- end }}
+        {{- with .Values.scale.signing.secretName }}
+        {{- /* The key Scale's objects are signed with, shared with the operator proxy. */}}
+        - name: signing
+          secret:
+            secretName: {{ . }}
+            defaultMode: 0440
+            items:
+              - key: {{ $.Values.scale.signing.key }}
+                path: {{ $.Values.scale.signing.key }}
+        {{- end }}
+        - name: tmp
+          emptyDir: {}
+        {{- with .Values.scale.notify.secretName }}
+        {{- /* The customer's Slack, Linear or Jira credentials; read only by this pod. */}}
+        - name: notify-secret
+          secret:
+            secretName: {{ . }}
+            defaultMode: 0440
+        {{- end }}
+        {{- with .Values.scale.fixWriter.secretName }}
+        {{- /* Scale's development-only writer app (unionai/cloud scale/fix/README.md). */}}
+        - name: fix-writer-secret
+          secret:
+            secretName: {{ . }}
+            defaultMode: 0440
+        {{- end }}
+        {{- if (.Values.scale.git | default dict).enabled }}
+        {{- /* The GitHub App's private key, from the customer's own secret in the dataplane. */}}
+        - name: github-app
+          secret:
+            secretName: {{ .Values.scale.git.privateKeySecret.name }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.scale.git.privateKeySecret.key }}
+                path: {{ .Values.scale.git.privateKeySecret.key }}
+        {{- end }}
+      containers:
+        - name: scale
+          image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.union.pullPolicy }}
+          terminationMessagePolicy: FallbackToLogsOnError
+          securityContext:
+            {{- toYaml .Values.scale.securityContext | nindent 12 }}
+          command:
+            - scale
+            - run
+            - --config
+            - /etc/config/*.yaml
+          env:
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
+            {{- with .Values.scale.signing.acceptUnsignedUntil }}
+            {{- /* Shared with the operator proxy (templates/operator/deployment-proxy.yaml). */}}
+            - name: SCALE_SIGNING_ACCEPT_UNSIGNED_UNTIL
+              value: {{ . | quote }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.scale.resources | nindent 12 }}
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/config
+            {{- if or .Values.scale.auth.appId .Values.secrets.admin.enable }}
+            - name: secret-volume
+              mountPath: /etc/union/secret
+              readOnly: true
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.scale.signing.secretName }}
+            - name: signing
+              mountPath: /etc/scale/signing
+              readOnly: true
+            {{- end }}
+            {{- if .Values.scale.notify.secretName }}
+            - name: notify-secret
+              mountPath: /etc/scale/notify
+              readOnly: true
+            {{- end }}
+            {{- if .Values.scale.fixWriter.secretName }}
+            - name: fix-writer-secret
+              mountPath: /etc/union/scale-fix-writer
+              readOnly: true
+            {{- end }}
+            {{- if (.Values.scale.git | default dict).enabled }}
+            - name: github-app
+              mountPath: /etc/scale/github
+              readOnly: true
+            {{- end }}
+{{- end }}

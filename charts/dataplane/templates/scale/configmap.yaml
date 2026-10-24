@@ -1,0 +1,89 @@
+{{- if .Values.scale.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scale
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "scale.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    scale:
+      organization: {{ include "scale.org" . | quote }}
+      cluster: {{ include "getClusterName" . | quote }}
+      {{- /* Shared with the operator proxy (templates/operator/configmap.yaml, proxy.scale). */}}
+      storageContainer: {{ .Values.scale.storageContainer | quote }}
+      {{- with .Values.scale.signing.secretName }}
+      signingKeyPath: /etc/scale/signing/{{ $.Values.scale.signing.key }}
+      {{- end }}
+      {{- with .Values.scale.notify }}
+      {{- $notify := omit . "secretName" }}
+      {{- if not $notify.consoleURL }}
+      {{- $_ := set $notify "consoleURL" (printf "https://%s" (include "dataplane.cp.host" $)) }}
+      {{- end }}
+      notify:
+        {{- toYaml $notify | nindent 8 }}
+      {{- end }}
+      {{- if .Values.scale.agent.enabled }}
+      {{- /* Wake the agent to diagnose new and reopened issues. */}}
+      agent:
+        enabled: true
+        url: {{ include "scale-agent.url" . }}
+        dailyDiagnoses: {{ .Values.scale.agent.dailyDiagnoses | int }}
+        timeout: {{ printf "%ds" (.Values.scale.agent.timeoutSeconds | int) }}
+      {{- end }}
+      {{- /* The image Scale's jobs run in (scale.jobs.image in the runtime), with the operator's tag. */}}
+      {{- $jobs := .Values.scale.jobs | default dict }}
+      {{- with ($jobs.image | default dict).repository }}
+      jobs:
+        image: {{ printf "%s:%s" . ($jobs.image.tag | default $.Values.image.union.tag | default $.Chart.AppVersion) | quote }}
+      {{- end }}
+      {{- /*
+      The usage price table holds AWS prices only, and an empty detectors.cost.cloud means it
+      applies, so a GCP or Azure cluster gets the cluster's cloud here unless the values set one.
+      */}}
+      {{- $config := deepCopy (.Values.scale.config | default dict) }}
+      {{- $detectors := get $config "detectors" | default dict }}
+      {{- $cost := get $detectors "cost" | default dict }}
+      {{- $cloud := include "scale.cloud" . }}
+      {{- if and $cloud (not (get $cost "cloud")) }}
+      {{- $_ := set $cost "cloud" $cloud }}
+      {{- $_ := set $detectors "cost" $cost }}
+      {{- $_ := set $config "detectors" $detectors }}
+      {{- end }}
+      {{- with $config }}
+      {{- tpl (toYaml .) $ | nindent 6 }}
+      {{- end }}
+      {{- $git := .Values.scale.git | default dict }}
+      {{- if $git.enabled }}
+      git:
+        enabled: true
+        github:
+          appId: {{ $git.github.appId | int64 }}
+          installationId: {{ $git.github.installationId | default 0 | int64 }}
+          apiUrl: {{ $git.github.apiUrl | quote }}
+          webUrl: {{ $git.github.webUrl | quote }}
+          privateKeyPath: /etc/scale/github/{{ $git.privateKeySecret.key }}
+        {{- with $git.sources }}
+        sources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      {{- end }}
+    union:
+      connection:
+        {{- tpl (toYaml .Values.config.union.connection) $ | nindent 8 }}
+      auth:
+        type: ClientSecret
+        {{- /* Scale's own view-only app when configured, else the operator's. */}}
+        clientId: {{ tpl (.Values.scale.auth.appId | default .Values.secrets.admin.clientId) $ | quote }}
+        clientSecretLocation: /etc/union/secret/app_secret
+        authorizationMetadataKey: "flyte-authorization"
+        tokenRefreshWindow: 5m
+    logger:
+      {{- tpl (omit .Values.logging "pythonLevel" | toYaml) $ | nindent 6 }}
+    sharedService:
+      metrics:
+        scope: "scale:"
+  {{- /* The same store the operator proxy reads issues from. */}}
+  storage.yaml: | {{ tpl (include "storage" .) $ | nindent 4 }}
+{{- end }}
