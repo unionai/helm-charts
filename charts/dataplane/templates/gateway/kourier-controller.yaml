@@ -1,4 +1,4 @@
-{{- if include "serving.useVendoredGateway" . }}
+{{- if include "serving.renderKourier" . }}
 # Copyright 2020 The Knative Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,7 +27,7 @@ metadata:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: net-kourier
+  name: {{ include "serving.kourierRBACName" . }}
   labels:
     {{- include "gateway.labels" . | nindent 4 }}
     {{- include "gateway.knativeLabels" . | nindent 4 }}
@@ -38,7 +38,12 @@ rules:
     resources: ["events"]
     verbs: ["create", "update", "patch"]
   - apiGroups: [""]
+    {{- if include "serving.externalKnative" . }}
+    # Shared cluster: no TLS certificates are served here, so no cluster-wide Secret read.
+    resources: ["pods", "endpoints", "services"]
+    {{- else }}
     resources: ["pods", "endpoints", "services", "secrets"]
+    {{- end }}
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["configmaps"]
@@ -56,7 +61,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: net-kourier
+  name: {{ include "serving.kourierRBACName" . }}
   labels:
     {{- include "gateway.labels" . | nindent 4 }}
     {{- include "gateway.knativeLabels" . | nindent 4 }}
@@ -65,7 +70,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: net-kourier
+  name: {{ include "serving.kourierRBACName" . }}
 subjects:
   - kind: ServiceAccount
     name: net-kourier
@@ -178,6 +183,10 @@ spec:
               value: "200"
             - name: KUBE_API_QPS
               value: "200"
+            {{- if include "serving.externalKnative" . }}
+            - name: KOURIER_INGRESS_CLASS
+              value: {{ include "serving.ingressClass" . | quote }}
+            {{- end }}
             {{- if .Values.gateway.auth.enable }}
             - name: KOURIER_UNION_APPS_ENABLED
               value: "true"

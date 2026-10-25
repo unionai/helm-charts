@@ -1,5 +1,20 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+### Several releases can share one Knative Serving (`apps.external`)
+
+New `apps.external.enabled` (default `false`, unchanged behaviour). With it the
+release renders none of the Knative core (controller, webhook, activator,
+autoscaler, their cluster RBAC and webhook configurations), which is installed
+once per cluster instead; it keeps its own Kourier controller and Envoy gateway,
+bound to its own ingress class (`apps.external.ingressClass`, default
+`kourier-<namespace>.ingress.networking.knative.dev`, passed as
+`KOURIER_INGRESS_CLASS`), and the operator stamps that class on every app
+KService so only this release's Kourier serves its apps. The Kourier
+ClusterRole/Binding get release-unique names and no cluster-wide Secret read.
+Requires a unionoperator image whose Kourier honours `KOURIER_INGRESS_CLASS`.
+
 ## 2026.10.1
 
 `version` moves `2026.10.0` → `2026.10.1`. `appVersion` stays `2026.10.0`: this is
