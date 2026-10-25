@@ -2487,11 +2487,6 @@ data:
       namespace-template: union
       organization: 'union'
       refreshInterval: 10s
-      sts:
-        bindingKeysFile: /etc/union/sts-binding/keys.json
-        enabled: true
-        endpoint: http://union-operator-sts.union.svc.cluster.local:8095/oauth2/token
-        tokenFile: /var/run/secrets/union.ai/sts/token
       task_resources:
         defaults:
           cpu: 100m
@@ -2504,6 +2499,9 @@ data:
         injectSecret: true
         secretName: EAGER_API_KEY
       workerName: 'union-test-cluster-name-worker1'
+      workloadIdentity:
+        enabled: true
+        tokenFile: /var/run/secrets/union.ai/workload/token
     union:
       connection:
         host: 'dns:///test-controlplane-host'
@@ -5574,10 +5572,8 @@ data:
           union.ai/namespace-type: flyte
         referenceConfigmapName: union-operator
         targetConfigMapName: "build-image-config"
-      sts:
+      workloadIdentity:
         enabled: true
-        listenAddress: ":8095"
-        tokenLifetime: "10m"
       apiKey:
         enabled: true
     proxy:
@@ -8589,31 +8585,6 @@ spec:
     app.kubernetes.io/instance: release-name
 
 ---
-# Source: dataplane/templates/operator/sts.yaml
-# The dataplane STS token endpoint task pods exchange their projected
-# service-account token at (see sts in values.yaml).
-apiVersion: v1
-kind: Service
-metadata:
-  name: union-operator-sts
-  namespace: union
-  labels:
-    app.kubernetes.io/name: union-operator
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-spec:
-  type: ClusterIP
-  ports:
-    - port: 8095
-      targetPort: sts
-      protocol: TCP
-      name: sts
-  selector:
-    app.kubernetes.io/name: union-operator
-    app.kubernetes.io/instance: release-name
-
----
 # Source: dataplane/templates/webhook/service.yaml
 apiVersion: v1
 kind: Service
@@ -9395,7 +9366,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "c1abd03b0672f8e25851a9b5fb62c80e696b9580740d2d1f0dcb1cdcc93b83da"
+        configChecksum: "3cb30fed1e3e6c116200ebd65a1c2f45819990eb5198beac3afcfbbd1fad8205"
         
       labels:
         
@@ -10547,7 +10518,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "b0a87ea8da732bf6f08c738f7705836fd24e69ff45c0c76e50d4274c97bc9c3e"
+        configChecksum: "c059b08f4d361da78d97fa2d0be434f973d0abf059cb5591bd2866f3c58edf8e"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -10571,17 +10542,6 @@ spec:
         - name: auth
           secret:
             secretName: union-secret-auth
-        # Binding keys the operator's STS creates and rotates: the leaseworker
-        # stamps every task pod with a binding under them. Optional because the
-        # operator creates the Secret after its first start; until it exists
-        # pods get no binding (and so no STS token), never a failed launch.
-        - name: sts-binding
-          secret:
-            secretName: union-sts-binding
-            optional: true
-            items:
-              - key: keys.json
-                path: keys.json
       containers:
         - name: leaseworker
           image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
@@ -10641,9 +10601,6 @@ spec:
               mountPath: /etc/union/secret
             - name: auth
               mountPath: /etc/secrets/
-            - name: sts-binding
-              mountPath: /etc/union/sts-binding
-              readOnly: true
       
       
 
@@ -10669,7 +10626,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "c1abd03b0672f8e25851a9b5fb62c80e696b9580740d2d1f0dcb1cdcc93b83da"
+        configChecksum: "3cb30fed1e3e6c116200ebd65a1c2f45819990eb5198beac3afcfbbd1fad8205"
         karpenter.sh/do-not-disrupt: "true"
         
       labels:
@@ -10810,7 +10767,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "c1abd03b0672f8e25851a9b5fb62c80e696b9580740d2d1f0dcb1cdcc93b83da"
+        configChecksum: "3cb30fed1e3e6c116200ebd65a1c2f45819990eb5198beac3afcfbbd1fad8205"
         
       labels:
         
@@ -10916,9 +10873,6 @@ spec:
             - name: debug
               containerPort: 10254
               protocol: TCP
-            - name: sts
-              containerPort: 8095
-              protocol: TCP
       
       
 
@@ -10954,7 +10908,7 @@ spec:
         app.kubernetes.io/managed-by: Helm
         platform.union.ai/component: webhook
       annotations:
-        configChecksum: "b0a87ea8da732bf6f08c738f7705836fd24e69ff45c0c76e50d4274c97bc9c3e"
+        configChecksum: "c059b08f4d361da78d97fa2d0be434f973d0abf059cb5591bd2866f3c58edf8e"
         
     spec:
       securityContext:
@@ -11731,23 +11685,23 @@ metadata:
 template:
   spec:
     serviceAccountName: union
-    # The dataplane STS: a token bound to this pod, for audience union-sts only
-    # (it is no good against the Kubernetes API), rotated by the kubelet. The
-    # pod exchanges it at the STS for a short-lived Union token.
+    # Workload identity: a token bound to this pod, for audience
+    # union-control-plane only (it is no good against the Kubernetes API),
+    # rotated by the kubelet. The pod presents it to the control plane.
     volumes:
-      - name: union-sts-token
+      - name: union-workload-token
         projected:
           sources:
             - serviceAccountToken:
-                audience: union-sts
+                audience: union-control-plane
                 expirationSeconds: 3600
                 path: token
     containers:
       - name: default
         image: docker.io/rwgrim/docker-noop
         volumeMounts:
-          - name: union-sts-token
-            mountPath: /var/run/secrets/union.ai/sts
+          - name: union-workload-token
+            mountPath: /var/run/secrets/union.ai/workload
             readOnly: true
 ---
 # Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
