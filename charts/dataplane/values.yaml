@@ -3460,3 +3460,21 @@ dataproxy:
   additionalVolumes: []
   # -- Appends additional volume mounts to the main container's spec. May include template values.
   additionalVolumeMounts: []
+
+# -- Workload identity: task pods authenticate to the control plane with their
+# own projected service-account token, acting as their run's creator (within
+# the run's project and domain), instead of with EAGER_API_KEY. The operator
+# publishes the cluster's service-account issuer keys to the control plane; the
+# leaseworker tells each task pod which attempt it runs and reports the pod it
+# created; task pods get the token through the task-template PodTemplate.
+# Turn on the control plane's side first (cluster workloadIdentity.enabled and
+# the edge's workloadTokenVerifyURL): a task pod told to authenticate as itself
+# stops using EAGER_API_KEY, so its control plane calls fail if the control
+# plane does not accept them yet.
+workloadIdentity:
+  # -- Publish the issuer keys and have task pods authenticate as themselves.
+  enabled: false
+  # -- Where task pods get the projected service-account token (audience union-control-plane).
+  tokenMountPath: /var/run/secrets/union.ai/workload
+  # -- Lifetime the kubelet requests for the projected token; it rotates it before expiry.
+  projectedTokenExpirationSeconds: 3600

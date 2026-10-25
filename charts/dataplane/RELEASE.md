@@ -1,5 +1,32 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+### Workload identity (opt-in): task pods without EAGER_API_KEY
+
+`workloadIdentity.enabled: true` lets task pods authenticate to the control
+plane with their own projected service-account token, acting as the run's
+creator and held to the run's project and domain, in place of the long-lived
+EAGER_API_KEY. Off by default; nothing renders differently while it is off.
+
+With it on:
+
+- the operator publishes the cluster's service-account issuer and its public
+  keys on every status report. It reads them from the API server's OIDC
+  discovery, which every service account may read by default, so it adds no
+  RBAC;
+- the leaseworker tells each task pod which attempt it runs, and reports the
+  UID of the pod it created on its lease heartbeats;
+- the `task-template` PodTemplate gives task pods a projected service-account
+  token (audience `union-control-plane`) at `workloadIdentity.tokenMountPath`.
+
+**Turn on the control plane side first** (the cluster service's
+`workloadIdentity.enabled` and the edge's `workloadTokenVerifyURL`). A task pod
+told to authenticate as itself stops using EAGER_API_KEY, so its control-plane
+calls fail if the control plane does not accept them yet. Needs Union images
+with workload identity (unionai/cloud `haytham/dataplane-sts`) and an SDK with
+the `WorkloadToken` authenticator.
+
 ## 2026.10.1
 
 `version` moves `2026.10.0` → `2026.10.1`. `appVersion` stays `2026.10.0`: this is
