@@ -3549,13 +3549,22 @@ scale:
     # it on once every dataproxy that calls this cluster signs digests and runs the same IDL as
     # this cluster (unionai/cloud scale/README.md, Who is calling).
     requireDigest: false
-  # -- A NetworkPolicy on the operator proxy: only pods in the release namespace, and the peers in
-  # from, reach it, plus metrics from anywhere. It covers the whole proxy, so list every other
-  # in-cluster caller. Traffic through the tunnel is not affected. Required for fixes and pushes.
+  # -- A NetworkPolicy on the operator proxy (templates/scale/networkpolicy-proxy.yaml), rendered
+  # only with scale.enabled: only pods in the release namespace, and the peers in from, reach it;
+  # its debug port (metrics and the profiler) only from the release namespace and metricsFrom. It
+  # covers the whole proxy, so list every other in-cluster caller (e.g. an ingress controller's
+  # namespace for zero-trust access). Traffic through the tunnel is not affected. On by default,
+  # so task pods cannot reach Scale's reads; required for fixes, pushes and jobs, and for Scale at
+  # all without callerAuth.
   proxyNetworkPolicy:
-    enabled: false
+    enabled: true
     # -- Extra NetworkPolicyPeers allowed to reach the proxy.
     from: []
+    # -- NetworkPolicyPeers allowed to scrape the debug port besides the release namespace.
+    metricsFrom:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: monitoring
   # -- A bucket for Scale's objects that user task roles cannot reach (the metadata bucket is
   # writable from tasks). Empty keeps them in the metadata bucket: fine for shadow mode. Required
   # for fixes and pushes.

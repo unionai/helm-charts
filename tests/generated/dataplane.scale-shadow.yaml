@@ -14,6 +14,40 @@ globalDefault: false
 description: "Priority for the Union uvol mount broker (a node-critical CSI DaemonSet on the task Volume-mount path) so it schedules ahead of task pods and a node's broker is not evicted out from under pods that depend on it to mount Volumes. Uses a custom class rather than a reserved system class (e.g. system-node-critical), which GKE restricts to kube-system."
 
 ---
+# Source: dataplane/templates/scale/networkpolicy-proxy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: union-operator-proxy-scale
+  namespace: union
+  labels:
+    app: scale
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: operator-proxy
+      app.kubernetes.io/instance: release-name
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: union
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: union
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: debug
+          protocol: TCP
+
+---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount

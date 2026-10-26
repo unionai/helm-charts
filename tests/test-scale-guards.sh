@@ -149,7 +149,16 @@ must_render -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true
 must_render -f "$tmp/secure.yaml" --set scale.git.enabled=true --set scale.git.github.appId=1
 
 # Scale needs a caller key or the proxy NetworkPolicy, whatever else is on.
-must_fail "callerAuth.secretName or scale.proxyNetworkPolicy.enabled" --set scale.enabled=true --set scale.callerAuth.secretName=
+must_fail "callerAuth.secretName or scale.proxyNetworkPolicy.enabled" --set scale.enabled=true --set scale.callerAuth.secretName= --set scale.proxyNetworkPolicy.enabled=false
+# The proxy NetworkPolicy is on by default, so Scale with defaults keeps task pods off the proxy,
+# and its debug port (the profiler) is open only to the release namespace and metricsFrom: both
+# ingress rules name who may connect.
+proxypolicy() { source_of templates/scale/networkpolicy-proxy.yaml; }
+must_render --set scale.enabled=true --set scale.callerAuth.secretName=
+expect proxypolicy "kind: NetworkPolicy"
+expect proxypolicy "kubernetes.io/metadata.name: monitoring"
+froms=$(proxypolicy | grep -c -- "- from:" || true)
+if [ "$froms" != 2 ]; then echo "FAIL: the proxy NetworkPolicy has $froms from rules, want 2"; failures=$((failures + 1)); fi
 must_render --set scale.enabled=true --set scale.callerAuth.secretName= --set scale.proxyNetworkPolicy.enabled=true
 must_fail "callerAuth.secretName or scale.proxyNetworkPolicy.enabled" -f "$tmp/secure.yaml" \
   --set scale.callerAuth.secretName= --set scale.proxyNetworkPolicy.enabled=false
