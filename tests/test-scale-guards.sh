@@ -218,6 +218,17 @@ for spelling in scale.config.Fix.enabled scale.config.FIX.enabled scale.config.f
   must_fail "only read lowercase" -f "$tmp/secure.yaml" --set "$spelling=true"
 done
 
+# Writes stay off on GCP and Azure unless the values say the bucket deny is in place.
+for cloud in gcp azure; do
+  for on in scale.config.fix.enabled=true scale.jobs.image.repository=scale-job; do
+    must_fail "not available on $cloud yet" -f "$tmp/secure.yaml" --set "$on" --set provider=$cloud
+    must_render -f "$tmp/secure.yaml" --set "$on" --set provider=$cloud --set scale.storageDenyConfigured=true
+  done
+done
+must_fail "not available on gcp yet" -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true --set storage.provider=gcs --set storage.gcp.projectId=p
+must_render -f "$tmp/secure.yaml" --set provider=gcp
+must_render -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true --set provider=aws
+
 # Each requirement on its own.
 must_fail "proxyNetworkPolicy" -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true --set scale.proxyNetworkPolicy.enabled=false
 must_fail "callerAuth" -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true --set scale.callerAuth.secretName=

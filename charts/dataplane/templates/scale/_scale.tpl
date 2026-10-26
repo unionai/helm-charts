@@ -230,6 +230,14 @@ for (unionai/cloud scale/README.md, Security).
 {{- fail "scale: Scale needs scale.callerAuth.secretName or scale.proxyNetworkPolicy.enabled, so a pod that reaches the operator proxy cannot read every project's issues" }}
 {{- end }}
 {{- if include "scale.writes" . }}
+{{- /* Only AWS has a deny on Scale's bucket for every other identity and a role of its own for
+       job pods. Elsewhere a later broad grant to a task identity would reach Scale's objects,
+       so writes stay off unless the values say the deny in scale/README.md (Scale's bucket,
+       step 4) is in place. */}}
+{{- $cloud := include "scale.cloud" . }}
+{{- if and (has $cloud (list "gcp" "azure")) (not .Values.scale.storageDenyConfigured) }}
+{{- fail (printf "scale: fixes, pushes and jobs are not available on %s yet: Scale's bucket has no deny for other identities. Set the deny in scale/README.md (Scale's bucket) and scale.storageDenyConfigured, or leave them off" $cloud) }}
+{{- end }}
 {{- if not .Values.scale.auth.appId }}
 {{- fail "scale: fixes, pushes and jobs need scale.auth.appId (the cluster's Scale app), not the operator's app" }}
 {{- end }}
