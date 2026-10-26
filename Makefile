@@ -151,4 +151,5 @@ generate-metrics-manifest:
 
 .PHONY: apps-external-test
 apps-external-test: requirements
+	helm dependency update $(CHART_DIR)
 	uv run python tests/test-apps-external.py
