@@ -8,7 +8,50 @@ serving to the vendored path. Emits "" when false so callers gate with
 `{{- if include ... }}` (the string "false" is truthy in Helm).
 */}}
 {{- define "serving.useVendoredGateway" -}}
+{{- if and (include "serving.renderKourier" .) (not (include "serving.externalKnative" .)) -}}true{{- end -}}
+{{- end }}
+
+{{/*
+serving.renderKourier: this release runs its own Kourier controller + Envoy
+gateway for apps (vendored Knative, or apps.external with a shared Knative core).
+*/}}
+{{- define "serving.renderKourier" -}}
 {{- if and (include "apps.enabled" .) .Values.gateway.enabled -}}true{{- end -}}
+{{- end }}
+
+{{/*
+serving.externalKnative: the Knative core is shared and installed outside the release.
+*/}}
+{{- define "serving.externalKnative" -}}
+{{- if and (include "apps.enabled" .) (dig "external" "enabled" false (.Values.apps | default dict)) -}}true{{- end -}}
+{{- end }}
+
+{{/*
+serving.ingressClass: the Kourier ingress class this release serves.
+*/}}
+{{- define "serving.ingressClass" -}}
+{{- if include "serving.externalKnative" . -}}
+{{- dig "external" "ingressClass" "" (.Values.apps | default dict) | default (printf "kourier-%s.ingress.networking.knative.dev" .Release.Namespace) -}}
+{{- else -}}
+kourier.ingress.networking.knative.dev
+{{- end -}}
+{{- end }}
+
+{{/*
+serving.kourierRBACName: net-kourier, or release-unique when several releases
+share a cluster (cluster-scoped names would collide).
+*/}}
+{{- define "serving.kourierRBACName" -}}
+{{- if include "serving.externalKnative" . -}}
+{{- $name := printf "%s-%s-net-kourier" .Release.Name .Release.Namespace -}}
+{{- if gt (len $name) 63 -}}
+{{- printf "%s-%s" ($name | trunc 54 | trimSuffix "-") ($name | sha256sum | trunc 8) -}}
+{{- else -}}
+{{- $name -}}
+{{- end -}}
+{{- else -}}
+net-kourier
+{{- end -}}
 {{- end }}
 
 {{/*

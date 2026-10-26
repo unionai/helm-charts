@@ -1,4 +1,4 @@
-{{- if include "serving.useVendoredGateway" . }}
+{{- if include "serving.renderKourier" . }}
 # Copyright 2020 The Knative Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,13 +27,23 @@ metadata:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: net-kourier
+  name: {{ include "serving.kourierRBACName" . }}
   labels:
     {{- include "gateway.labels" . | nindent 4 }}
     {{- include "gateway.knativeLabels" . | nindent 4 }}
     networking.knative.dev/ingress-provider: kourier
     app.kubernetes.io/component: net-kourier
 rules:
+  {{- if include "serving.externalKnative" . }}
+  # Informers discover endpoints (including shared activator endpoints) cluster-wide.
+  # All mutations and config access are restricted by the namespaced Role below.
+  - apiGroups: [""]
+    resources: ["pods", "endpoints", "services"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.internal.knative.dev"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+  {{- else }}
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "update", "patch"]
@@ -52,11 +62,12 @@ rules:
   - apiGroups: ["networking.internal.knative.dev"]
     resources: ["ingresses/status"]
     verbs: ["update"]
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: net-kourier
+  name: {{ include "serving.kourierRBACName" . }}
   labels:
     {{- include "gateway.labels" . | nindent 4 }}
     {{- include "gateway.knativeLabels" . | nindent 4 }}
@@ -65,11 +76,56 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: net-kourier
+  name: {{ include "serving.kourierRBACName" . }}
 subjects:
   - kind: ServiceAccount
     name: net-kourier
     namespace: {{ .Release.Namespace }}
+{{- if include "serving.externalKnative" . }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "serving.kourierRBACName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: net-kourier
+rules:
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
+  - apiGroups: ["networking.internal.knative.dev"]
+    resources: ["ingresses"]
+    verbs: ["patch"]
+  - apiGroups: ["networking.internal.knative.dev"]
+    resources: ["ingresses/status"]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "serving.kourierRBACName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: net-kourier
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "serving.kourierRBACName" . }}
+subjects:
+  - kind: ServiceAccount
+    name: net-kourier
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+
 ---
 # Copyright 2020 The Knative Authors
 #
@@ -178,6 +234,12 @@ spec:
               value: "200"
             - name: KUBE_API_QPS
               value: "200"
+            {{- if include "serving.externalKnative" . }}
+            - name: KOURIER_INGRESS_CLASS
+              value: {{ include "serving.ingressClass" . | quote }}
+            - name: KOURIER_INGRESS_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            {{- end }}
             {{- if .Values.gateway.auth.enable }}
             - name: KOURIER_UNION_APPS_ENABLED
               value: "true"

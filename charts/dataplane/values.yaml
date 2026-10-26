@@ -2443,6 +2443,17 @@ storage:
     accessKeyIdKey: access_key_id
     # -- Key in the secret that holds the secret key.
     secretKeyKey: secret_key
+    # -- How the keys reach the components. "lookup" (default): resolved with a
+    # Helm lookup at render time and written into the storage ConfigMaps (and the
+    # task pods' default env) in plaintext; nothing is rendered under
+    # `helm template`/Argo CD. "env": nothing is rendered into any ConfigMap; the
+    # stow config uses the AWS default credential chain (auth_type iam) and every
+    # dataplane component plus every task pod (via the task-template PodTemplate)
+    # reads AWS_* / FLYTE_AWS_* from this Secret with secretKeyRef, so key
+    # rotation is a Secret update plus a pod restart, not a re-render. "env"
+    # requires the Secret in the release namespace and single-namespace mode
+    # (task pods must be able to reference it).
+    mode: lookup
   # -- Injects the object storage access information into the pod environment variables.  Needed for providers that only support access and secret key based authentication.
   injectPodEnvVars: true
   # -- Define GCP specific configuration for object storage.
@@ -2469,6 +2480,19 @@ tunnelService:
 # that off too on the non-zero-trust path.
 apps:
   enabled: null
+  # -- Share one Knative Serving between several releases on one cluster (e.g.
+  # one dataplane release per customer namespace on a Union Serverless cluster).
+  # The Knative core (controller, webhook, activator, autoscaler, CRDs, their
+  # cluster RBAC and webhooks) is installed once outside the release; this
+  # release keeps only its own Kourier controller + Envoy gateway, bound to its
+  # own ingress class, and the operator stamps that class on every app KService
+  # (networking.knative.dev/ingress.class) so no other release's Kourier serves
+  # this release's apps. Requires a unionoperator image whose Kourier honours
+  # KOURIER_INGRESS_CLASS.
+  external:
+    enabled: false
+    # -- Ingress class of this release's Kourier. Empty: kourier-<release namespace>.ingress.networking.knative.dev.
+    ingressClass: ""
 
 # -- Configure app serving and knative.
 serving:

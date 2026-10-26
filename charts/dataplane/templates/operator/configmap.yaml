@@ -67,7 +67,7 @@ data:
         {{- if include "apps.enabled" . }}
         {{- if .Values.tunnelService.apps.originURL }}
         appIngressOriginURL: {{ .Values.tunnelService.apps.originURL | quote }}
-        {{- else if include "serving.useVendoredGateway" . }}
+        {{- else if include "serving.renderKourier" . }}
         appIngressOriginURL: "http://{{ include "gateway.fullname" . }}:{{ .Values.gateway.service.httpAppsPort }}"
         {{- else }}
         appIngressOriginURL: "http://kourier-internal"
@@ -91,7 +91,13 @@ data:
       {{- else if .Values.low_privilege }}
       disableClusterPermissions: true
       {{- end }}
-    {{- with .Values.config.operator.apps }}
+    {{- $operatorApps := deepCopy (.Values.config.operator.apps | default dict) }}
+    {{- if include "serving.externalKnative" . }}
+    {{- $appsController := deepCopy (get $operatorApps "controller" | default dict) }}
+    {{- $_ := set $appsController "ingressClass" (include "serving.ingressClass" .) }}
+    {{- $_ := set $operatorApps "controller" $appsController }}
+    {{- end }}
+    {{- with $operatorApps }}
       apps:
         {{- tpl (toYaml .) $ | nindent 8 }}
     {{- end }}

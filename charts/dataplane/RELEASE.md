@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Several releases can share one Knative Serving (`apps.external`)
+
+New `apps.external.enabled` (default `false`, unchanged behaviour). With it the
+release renders none of the Knative core (controller, webhook, activator,
+autoscaler, their cluster RBAC and webhook configurations), which is installed
+once per cluster instead; it keeps its own Kourier controller and Envoy gateway,
+bound to its own ingress class (`apps.external.ingressClass`, default
+`kourier-<namespace>.ingress.networking.knative.dev`, passed as
+`KOURIER_INGRESS_CLASS`), and the operator stamps that class on every app
+KService so only this release's Kourier serves its apps. The Kourier
+ClusterRole/Binding get release-unique names and no cluster-wide Secret read.
+Requires a unionoperator image whose Kourier honours `KOURIER_INGRESS_CLASS`.
+
+### Storage keys from a Secret without writing them into ConfigMaps
+
+New `storage.credentialsSecretRef.mode: env` (default `lookup`, unchanged).
+With `env`, the storage keys are never rendered into a ConfigMap (operator
+`storage.yaml` / `fast_registration_storage.yaml` / `k8s.yaml`, the leaseworker
+config, `build-image-config`): the stow config uses the AWS default credential
+chain (`auth_type: iam`), every dataplane component reads `AWS_*` /
+`FLYTE_AWS_*` from the Secret with `secretKeyRef`, and task pods get them from
+the `task-template` PodTemplate. ConfigMaps are readable in more places than
+Secrets (including the console's cluster Config view), and `lookup` renders
+nothing under `helm template` / Argo CD. Rotating keys becomes a Secret update
+plus a pod restart. Requires the Secret in the release namespace and
+single-namespace mode.
+
 ### Nydus lazy image pulls (opt-in)
 
 Self-managed dataplanes can now pull images lazily with Nydus, as the managed
@@ -29,6 +56,17 @@ Both images default to the appVersion tag, which releases publish from
 unionai/cloud#19504 onward; earlier releases have no such tag, so set
 `nodeBootstrap.image.tag` / `imageBuilder.buildkit.nydus.image.tag` to a commit
 SHA to try this on one.
+
+### Helm hook Jobs follow the global `scheduling` values
+
+The `pre-upgrade` hook Job (`<release>-pre-upgrade`) and the legacy
+`flyte-webhook-cleanup` hook Job now get `scheduling.nodeSelector`,
+`scheduling.tolerations` and `scheduling.affinity`, like every other dataplane
+pod. Before, they ignored them, so a cluster that only admits pods pinned to
+specific nodes (tainted node groups, or an admission policy that rejects
+unpinned pods) blocked every `helm upgrade` with
+`pre-upgrade hooks failed: timed out waiting for the condition`.
+No change for installs that leave `scheduling` empty.
 
 ## 2026.10.1
 
