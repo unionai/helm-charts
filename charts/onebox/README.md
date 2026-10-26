@@ -186,7 +186,7 @@ Off by default: every request is allowed.
 authz:
   enabled: true
   adminUsers: [alice@example.com]   # subjects as the proxy reports them
-  defaultRole: viewer               # admin, contributor or viewer
+  defaultRole: viewer               # admin, contributor, viewer or none
 ```
 
 On:
@@ -231,6 +231,14 @@ can land on; by default it tolerates every taint. Block Volumes are allowed in
 the release namespace (`nodeAgent.block.allow`). Turn it off with
 `nodeAgent.enabled=false`, and do not install it on a cluster that already
 runs a dataplane broker: both register the `volumes.union.ai` CSI driver.
+
+With `nodeAgent.startupTaint.enabled`, worker nodes are tainted as they
+register, as on a Union data plane, until the node agent on them is serving, so
+no task lands on a node whose Volumes broker isn't up yet. The node agent's
+readiness component removes the taint; it then gets an API token allowed to get
+and update nodes. `nodeAgent.startupTaint.nodeLabels` picks the nodes (default
+`flyte.org/node-role: worker`). The node webhook fails closed, like a data
+plane's: while onebox is down, matching nodes cannot register.
 
 ## Not included (yet)
 

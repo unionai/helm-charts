@@ -86,4 +86,36 @@ webhooks:
         scope: "*"
     sideEffects: NoneOnDryRun
     timeoutSeconds: 30
+  {{- if .Values.nodeAgent.startupTaint.enabled }}
+  # Taints worker nodes as they register, until the node agent on them is
+  # serving (nodeAgent.startupTaint). Cluster-wide, as nodes are, and failing
+  # closed like a Union data plane's: matching nodes cannot register while
+  # onebox is down.
+  - name: node-startup-taints-webhook.union.ai
+    admissionReviewVersions: [v1, v1beta1]
+    clientConfig:
+      caBundle: {{ $ca }}
+      service:
+        name: {{ $name }}
+        namespace: {{ $ns }}
+        path: /mutate--v1-node/node-startup-taints
+        port: 9443
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    objectSelector:
+      matchLabels:
+        {{- toYaml (.Values.nodeAgent.startupTaint.nodeLabels | default (dict "flyte.org/node-role" "worker")) | nindent 8 }}
+    reinvocationPolicy: Never
+    rules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [nodes]
+        scope: "*"
+    sideEffects: NoneOnDryRun
+    timeoutSeconds: 30
+  {{- end }}
+{{- end }}
+{{- if and .Values.nodeAgent.startupTaint.enabled (not (and .Values.webhook.enabled .Values.nodeAgent.enabled)) }}
+{{- fail "nodeAgent.startupTaint needs webhook.enabled (it applies the taint) and nodeAgent.enabled (it removes it)" }}
 {{- end }}
