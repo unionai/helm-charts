@@ -26,6 +26,21 @@ def rbac(docs):
 
 
 class ExternalRBAC(unittest.TestCase):
+    def test_external_controller_cannot_mutate_other_tenants(self):
+        docs = render("acme")
+        cluster_role = next(d for d in rbac(docs) if d["kind"] == "ClusterRole")
+        for rule in cluster_role["rules"]:
+            self.assertLessEqual(set(rule["verbs"]), {"get", "list", "watch"})
+            self.assertFalse({"secrets", "configmaps"} & set(rule["resources"]))
+        role = next(d for d in docs if d["kind"] == "Role" and
+                    d["metadata"].get("labels", {}).get("app.kubernetes.io/component") == "net-kourier")
+        self.assertEqual(role["metadata"]["namespace"], "acme")
+        self.assertTrue(any(r["resources"] == ["ingresses"] and "patch" in r["verbs"] for r in role["rules"]))
+        binding = next(d for d in docs if d["kind"] == "RoleBinding" and d["metadata"]["name"] == role["metadata"]["name"])
+        self.assertEqual(binding["metadata"]["namespace"], "acme")
+        self.assertEqual(binding["roleRef"]["kind"], "Role")
+        self.assertEqual(binding["subjects"][0]["namespace"], "acme")
+
     def test_same_release_name_different_namespaces(self):
         first, second = rbac(render("acme")), rbac(render("globex"))
         self.assertEqual(len(first), 2)

@@ -5814,25 +5814,14 @@ metadata:
     networking.knative.dev/ingress-provider: kourier
     app.kubernetes.io/component: net-kourier
 rules:
+  # Informers discover endpoints (including shared activator endpoints) cluster-wide.
+  # All mutations and config access are restricted by the namespaced Role below.
   - apiGroups: [""]
-    resources: ["events"]
-    verbs: ["create", "update", "patch"]
-  - apiGroups: [""]
-    # Shared cluster: no TLS certificates are served here, so no cluster-wide Secret read.
     resources: ["pods", "endpoints", "services"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
   - apiGroups: ["networking.internal.knative.dev"]
     resources: ["ingresses"]
-    verbs: ["get", "list", "watch", "patch"]
-  - apiGroups: ["networking.internal.knative.dev"]
-    resources: ["ingresses/status"]
-    verbs: ["update"]
+    verbs: ["get", "list", "watch"]
 ---
 # Source: dataplane/charts/fluentbit/templates/clusterrolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -5875,6 +5864,34 @@ subjects:
   - kind: ServiceAccount
     name: net-kourier
     namespace: union
+---
+# Source: dataplane/templates/gateway/kourier-controller.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: release-name-union-net-kourier
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: net-kourier
+rules:
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
+  - apiGroups: ["networking.internal.knative.dev"]
+    resources: ["ingresses"]
+    verbs: ["patch"]
+  - apiGroups: ["networking.internal.knative.dev"]
+    resources: ["ingresses/status"]
+    verbs: ["update"]
 ---
 # Source: dataplane/templates/leaseworker/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6205,6 +6222,26 @@ rules:
       - patch
       - list
       - watch
+---
+# Source: dataplane/templates/gateway/kourier-controller.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: release-name-union-net-kourier
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: net-kourier
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: release-name-union-net-kourier
+subjects:
+  - kind: ServiceAccount
+    name: net-kourier
+    namespace: union
 ---
 # Source: dataplane/templates/leaseworker/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -8152,7 +8189,7 @@ spec:
         fsGroupChangePolicy: Always
         runAsNonRoot: true
         runAsUser: 1001
-      serviceAccountName: union-system
+        serviceAccountName: union-system
       containers:
         - name: webhook
           image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
@@ -8221,9 +8258,6 @@ spec:
         - name: webhook-certs
           secret:
             secretName: union-pod-webhook
-      
-      
-
 ---
 # Source: dataplane/templates/flyteconnector/hpa.yaml
 apiVersion: autoscaling/v2
@@ -8334,7 +8368,6 @@ webhooks:
 ---
 # Source: dataplane/templates/propeller/serviceaccount.yaml
 ---
-
 ---
 # Source: dataplane/templates/uvol-broker/csidriver.yaml
 apiVersion: storage.k8s.io/v1
