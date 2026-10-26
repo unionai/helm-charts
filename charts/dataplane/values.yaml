@@ -1733,6 +1733,51 @@ uvolMountBroker:
     limits:
       memory: 256Mi
 
+# -- Node bootstrap: installs the Nydus snapshotter on each node so pods lazily
+# pull images the image builder exported in Nydus format (see
+# imageBuilder.enableImageOptimization). Privileged, hostPID, writes to the
+# host's /etc and /home/kubernetes and starts systemd units. Supports aws, gcp
+# and azure node images with systemd and a writable /etc (EKS AL2023, GKE COS,
+# AKS Ubuntu); not Bottlerocket.
+nodeBootstrap:
+  # -- Enable the node-bootstrap DaemonSet.
+  enabled: false
+  # -- aws, gcp or azure. Empty uses the top-level `provider`.
+  cloudProvider: ""
+  image:
+    repository: public.ecr.aws/unionai/node-bootstrap
+    # -- Defaults to the chart appVersion.
+    tag: ""
+    pullPolicy: IfNotPresent
+  # -- Startup taint union-node-readiness removes once the snapshotter runs.
+  # Add it to the worker nodepools as a startup taint so nothing schedules onto
+  # a node that cannot pull Nydus images yet. Empty: no taint handling, and the
+  # ServiceAccount gets no API access.
+  startupTaintKey: startup-taint.cluster-autoscaler.kubernetes.io/unionai-node-not-ready
+  # -- Restrict to the nodes that run task pods; empty means every node.
+  nodeSelector: {}
+  # -- Must tolerate the startup taint above and any worker taints.
+  tolerations:
+    - operator: Exists
+  affinity: {}
+  priorityClassName: system-node-critical
+  # -- A ResourceQuota scoped to that priority class. GKE rejects
+  # system-*-critical pods outside kube-system without one; elsewhere the
+  # quota never binds. Turn off if the namespace already has one.
+  priorityClassQuota:
+    create: true
+    pods: "5000"
+  podLabels: {}
+  podAnnotations: {}
+  resources: {}
+  # -- Sidecar that streams the snapshotter's journal to the pod log.
+  fluentBit:
+    image:
+      repository: cr.fluentbit.io/fluent/fluent-bit
+      tag: "3.2.8"
+      pullPolicy: IfNotPresent
+    resources: {}
+
 nodeobserver:
   # -- Enable or disable nodeobserver
   enabled: false
@@ -2513,6 +2558,16 @@ imageBuilder:
   # -- Mutually exclusive with imageBuilder.buildkit.arm.enabled.
   buildkitUriArm: ""
 
+  # -- Build every image in Nydus format, for lazy pulls. Applies to EVERY image
+  # the dataplane builds, not only some: they become Nydus-only, so they run
+  # only on nodes with the snapshotter. Requires nodeBootstrap.enabled, and
+  # every node a task pod can land on must be covered by
+  # nodeBootstrap.nodeSelector. Images pulled anywhere else (CI, a laptop, a
+  # cluster without nodeBootstrap) will not run. Switches the in-chart BuildKit
+  # (and its ARM builder) to imageBuilder.buildkit.nydus.image; an external
+  # buildkitUri / buildkitUriArm must already bundle nydus-image.
+  enableImageOptimization: false
+
   # -- The default container image repository for user-built images.
   # -- When empty, auto-generated from storage.provider, storage.region, storage.gcp.projectId,
   # -- and imageBuilder.registryName:
@@ -2605,6 +2660,17 @@ imageBuilder:
       # -- Image tag. When rootless mode is enabled, "-rootless" is appended automatically
       # -- (e.g. "buildx-stable-1" becomes "buildx-stable-1-rootless") unless the tag already contains "rootless".
       tag: "buildx-stable-1"
+
+    # -- Run Union's BuildKit image, which bundles nydus-image, instead of
+    # buildkit.image. imageBuilder.enableImageOptimization turns this on by
+    # itself; set it alone to roll the builder image out first.
+    nydus:
+      enabled: false
+      image:
+        repository: public.ecr.aws/unionai/buildkit
+        # -- Defaults to the chart appVersion. "-rootless" is appended in
+        # rootless mode, as for buildkit.image.
+        tag: ""
 
     # -- Run buildkit in rootless mode (non-privileged). Uses the moby/buildkit rootless
     # -- image variant which bundles RootlessKit to set up user namespaces. Requires
