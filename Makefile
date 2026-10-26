@@ -151,4 +151,5 @@ generate-metrics-manifest:
 
 .PHONY: storage-env-test
 storage-env-test: requirements
+	helm dependency update $(CHART_DIR)
 	uv run python tests/test-storage-env.py
