@@ -28,6 +28,9 @@ def rbac(docs):
 class ExternalRBAC(unittest.TestCase):
     def test_external_controller_cannot_mutate_other_tenants(self):
         docs = render("acme")
+        controller = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "net-kourier-controller")
+        env = {e["name"]: e.get("value") for e in controller["spec"]["template"]["spec"]["containers"][0]["env"]}
+        self.assertEqual(env["KOURIER_INGRESS_NAMESPACE"], "acme")
         cluster_role = next(d for d in rbac(docs) if d["kind"] == "ClusterRole")
         for rule in cluster_role["rules"]:
             self.assertLessEqual(set(rule["verbs"]), {"get", "list", "watch"})
