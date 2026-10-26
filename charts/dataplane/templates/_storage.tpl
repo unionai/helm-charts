@@ -9,7 +9,14 @@ storage.credentialsFromEnv: "true" when storage keys come from credentialsSecret
 as env (secretKeyRef) instead of being rendered into ConfigMaps.
 */}}
 {{- define "storage.credentialsFromEnv" -}}
-{{- if and .Values.storage.credentialsSecretRef.name (eq (.Values.storage.credentialsSecretRef.mode | default "lookup") "env") -}}
+{{- $mode := .Values.storage.credentialsSecretRef.mode | default "lookup" -}}
+{{- if not (has $mode (list "lookup" "env")) -}}
+{{- fail "storage.credentialsSecretRef.mode must be lookup or env" -}}
+{{- end -}}
+{{- if eq $mode "env" -}}
+{{- if not .Values.storage.credentialsSecretRef.name -}}
+{{- fail "storage.credentialsSecretRef.mode=env requires a Secret name" -}}
+{{- end -}}
 {{- if and .Values.storage.credentialsSecretRef.namespace (ne .Values.storage.credentialsSecretRef.namespace .Release.Namespace) -}}
 {{- fail "storage.credentialsSecretRef.mode=env needs the Secret in the release namespace (secretKeyRef cannot cross namespaces)" -}}
 {{- end -}}
