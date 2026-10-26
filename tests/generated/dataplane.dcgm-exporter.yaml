@@ -10508,6 +10508,13 @@ spec:
         - name: secret-volume
           secret:
             secretName: union-secret-auth
+        - name: tunnel-token
+          secret:
+            secretName: union-secret-auth
+            optional: true
+            items:
+              - key: tunnel_token
+                path: token
       serviceAccountName: union-system
       securityContext:
         {}
@@ -10586,19 +10593,20 @@ spec:
           image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           args:
+            - operator
+            - tunnel
+            - --
             - cloudflared
             - tunnel
             - --no-autoupdate
             - run
-            - --token
-            - $(TUNNEL_TOKEN)
           env:
-            - name: TUNNEL_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: union-secret-auth
-                  key: tunnel_token
-                  optional: true
+            - name: TUNNEL_TOKEN_FILE
+              value: /etc/union/tunnel/token
+          volumeMounts:
+            - name: tunnel-token
+              mountPath: /etc/union/tunnel
+              readOnly: true
           resources:
             limits:
               cpu: "3"

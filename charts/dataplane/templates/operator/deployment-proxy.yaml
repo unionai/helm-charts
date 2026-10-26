@@ -40,7 +40,7 @@ spec:
           secret:
             secretName: {{ .Values.operator.secretName }}
         {{- end }}
-        {{- if and .Values.operator.enableTunnelService .Values.proxy.tunnel.waitForToken }}
+        {{- if .Values.operator.enableTunnelService }}
         - name: tunnel-token
           secret:
             secretName: {{ .Values.operator.secretName }}
@@ -110,7 +110,6 @@ spec:
               {{- toYaml .Values.operator.securityContext | nindent 12 }}
           image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.union.pullPolicy }}
-          {{- if .Values.proxy.tunnel.waitForToken }}
           args:
             - operator
             - tunnel
@@ -126,22 +125,6 @@ spec:
             - name: tunnel-token
               mountPath: /etc/union/tunnel
               readOnly: true
-          {{- else }}
-          args:
-            - cloudflared
-            - tunnel
-            - --no-autoupdate
-            - run
-            - --token
-            - $(TUNNEL_TOKEN)
-          env:
-            - name: TUNNEL_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.operator.secretName }}
-                  key: tunnel_token
-                  optional: true
-          {{- end }}
           resources: {{- toYaml .Values.proxy.tunnel_resources | nindent 12 }}
         {{- end }}
       {{- include "proxy.scheduling" . | nindent 6 }}
