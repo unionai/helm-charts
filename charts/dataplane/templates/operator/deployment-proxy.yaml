@@ -40,6 +40,15 @@ spec:
           secret:
             secretName: {{ .Values.operator.secretName }}
         {{- end }}
+        {{- if .Values.operator.enableTunnelService }}
+        - name: tunnel-token
+          secret:
+            secretName: {{ .Values.operator.secretName }}
+            optional: true
+            items:
+              - key: tunnel_token
+                path: token
+        {{- end }}
       {{- with .Values.proxy.additionalVolumes -}}
       {{ tpl (toYaml .) $ | nindent 8 }}
       {{- end }}
@@ -102,19 +111,20 @@ spec:
           image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.union.pullPolicy }}
           args:
+            - operator
+            - tunnel
+            - --
             - cloudflared
             - tunnel
             - --no-autoupdate
             - run
-            - --token
-            - $(TUNNEL_TOKEN)
           env:
-            - name: TUNNEL_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.operator.secretName }}
-                  key: tunnel_token
-                  optional: true
+            - name: TUNNEL_TOKEN_FILE
+              value: /etc/union/tunnel/token
+          volumeMounts:
+            - name: tunnel-token
+              mountPath: /etc/union/tunnel
+              readOnly: true
           resources: {{- toYaml .Values.proxy.tunnel_resources | nindent 12 }}
         {{- end }}
       {{- include "proxy.scheduling" . | nindent 6 }}
