@@ -829,8 +829,9 @@ access the storage is injected.
 union-operator-prometheus
 {{- end -}}
 
+{{- /* Prometheus serves every route, its health check too, under prometheus.server.prefixURL. */ -}}
 {{- define "prometheus.health.url" -}}
-http://{{ include "prometheus.service.name" . }}:80/-/healthy
+http://{{ include "prometheus.service.name" . }}:80{{ trimSuffix "/" (dig "server" "prefixURL" "" (.Values.prometheus | default dict)) }}/-/healthy
 {{- end -}}
 
 {{- define "prometheus.service.url" -}}
