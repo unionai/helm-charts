@@ -60,7 +60,7 @@ check-vendored-crds:
 	exit $${fail}
 
 .PHONY: helm-test
-helm-test: $(TMP_DIR) snapshot-generator-test k3d-storage-test billing-test buildkit-arm-test workload-labels-test
+helm-test: apps-external-test $(TMP_DIR) snapshot-generator-test k3d-storage-test billing-test buildkit-arm-test workload-labels-test
 	./tests/run.sh helm
 
 # Every Union workload the dataplane chart renders carries the component label the
@@ -148,3 +148,7 @@ lint-sandbox:
 .PHONY: generate-metrics-manifest
 generate-metrics-manifest:
 	python3 scripts/extract-metrics.py > metrics-manifest.yaml
+
+.PHONY: apps-external-test
+apps-external-test: requirements
+	uv run python tests/test-apps-external.py

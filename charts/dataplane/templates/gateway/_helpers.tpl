@@ -43,7 +43,12 @@ share a cluster (cluster-scoped names would collide).
 */}}
 {{- define "serving.kourierRBACName" -}}
 {{- if include "serving.externalKnative" . -}}
-{{- printf "%s-net-kourier" .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- $name := printf "%s-%s-net-kourier" .Release.Name .Release.Namespace -}}
+{{- if gt (len $name) 63 -}}
+{{- printf "%s-%s" ($name | trunc 54 | trimSuffix "-") ($name | sha256sum | trunc 8) -}}
+{{- else -}}
+{{- $name -}}
+{{- end -}}
 {{- else -}}
 net-kourier
 {{- end -}}
