@@ -16,6 +16,34 @@ nothing under `helm template` / Argo CD. Rotating keys becomes a Secret update
 plus a pod restart. Requires the Secret in the release namespace and
 single-namespace mode.
 
+### Nydus lazy image pulls (opt-in)
+
+Self-managed dataplanes can now pull images lazily with Nydus, as the managed
+BYOC dataplanes already do. Two switches, both off by default, turned on in
+this order:
+
+- `nodeBootstrap.enabled` deploys the `union-node-bootstrap` DaemonSet, which
+  installs the Nydus snapshotter on each node and restarts containerd and
+  kubelet there. It is privileged, uses `hostPID`/`hostNetwork` and writes to
+  the host's `/etc` and `/home/kubernetes`. It needs an aws, gcp or azure node
+  image with systemd and a writable `/etc` (not Bottlerocket). Put
+  `nodeBootstrap.startupTaintKey` on worker nodepools as a startup taint. On
+  GKE it also needs the `union-node-bootstrap-critical` ResourceQuota the chart
+  now creates (`nodeBootstrap.priorityClassQuota`), and GKE image streaming off
+  on those nodepools.
+- `imageBuilder.enableImageOptimization` then builds **every** image the
+  dataplane builds in Nydus format, and switches the in-chart BuildKit (and its
+  ARM builder) to Union's image that bundles `nydus-image`. It refuses to render
+  without `nodeBootstrap.enabled`. Those images run only on nodes with the
+  snapshotter: keep every nodepool a task pod can land on inside
+  `nodeBootstrap.nodeSelector`, and expect them not to run where they are
+  pulled elsewhere (CI, a laptop, another cluster).
+
+Both images default to the appVersion tag, which releases publish from
+unionai/cloud#19504 onward; earlier releases have no such tag, so set
+`nodeBootstrap.image.tag` / `imageBuilder.buildkit.nydus.image.tag` to a commit
+SHA to try this on one.
+
 ## 2026.10.1
 
 `version` moves `2026.10.0` → `2026.10.1`. `appVersion` stays `2026.10.0`: this is
