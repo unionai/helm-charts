@@ -156,7 +156,12 @@ data:
       apiKey:
         {{- tpl (toYaml .Values.config.operator.apiKey) $ | nindent 8 }}
       {{- end }}
-  {{- with .Values.config.proxy }}
+  {{- $proxyConfig := deepCopy (.Values.config.proxy | default dict) }}
+  {{- if include "scale.proxyConfig.enabled" . }}
+  {{- /* Scale's settings for the operator proxy (templates/scale/_scale.tpl). */}}
+  {{- $_ := set $proxyConfig "scale" (include "scale.proxyConfig" . | fromYaml) }}
+  {{- end }}
+  {{- with $proxyConfig }}
     proxy:
       {{- tpl (toYaml .) $ | nindent 6 }}
     {{- end }}
@@ -165,6 +170,11 @@ data:
       clusterSelector:
         type: local
       secureTunnelTenantURLPattern: "http://{{ include "union-operator.fullname" . }}-proxy:8080"
+    {{- if .Values.scale.enabled }}
+      # Serve this cluster's Scale issues to zero-trust callers.
+      scale:
+        {{- include "scale.dataproxyConfig" . | nindent 8 }}
+    {{- end }}
     {{- with .Values.dataproxy.taskMetrics }}
       taskMetrics:
         {{- tpl (toYaml .) $ | nindent 8 }}

@@ -60,7 +60,7 @@ check-vendored-crds:
 	exit $${fail}
 
 .PHONY: helm-test
-helm-test: $(TMP_DIR) snapshot-generator-test k3d-storage-test billing-test buildkit-arm-test workload-labels-test
+helm-test: $(TMP_DIR) snapshot-generator-test k3d-storage-test billing-test buildkit-arm-test workload-labels-test scale-guards-test
 	./tests/run.sh helm
 
 # Every Union workload the dataplane chart renders carries the component label the
@@ -68,6 +68,13 @@ helm-test: $(TMP_DIR) snapshot-generator-test k3d-storage-test billing-test buil
 .PHONY: workload-labels-test
 workload-labels-test: requirements
 	uv run python tests/test-workload-labels.py
+
+# Scale's guards (charts/dataplane/templates/scale/_scale.tpl) fail every unsafe combination
+# of settings, and Scale renders nothing while it is off.
+.PHONY: scale-guards-test
+scale-guards-test:
+	helm dependency update $(CHART_DIR)
+	./tests/test-scale-guards.sh
 
 .PHONY: k3d-storage-test
 k3d-storage-test:
