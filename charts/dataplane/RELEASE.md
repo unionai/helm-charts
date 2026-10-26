@@ -1,6 +1,15 @@
 # dataplane — Release Notes
 
-## Unreleased
+## 2026.10.2
+
+`version` moves `2026.10.1` → `2026.10.2`. `appVersion` moves `2026.10.0` → `2026.10.3`.
+
+### The tunnel container waits for its token
+
+The proxy's `tunnel` container now runs `operator tunnel`, which waits for the operator
+to write `tunnel_token` and then starts cloudflared. Before, the container crash-looped
+until the token existed; now the pod stays Ready while it waits. It needs operator
+2026.10.3, which is this release's `appVersion`.
 
 ### Nydus lazy image pulls (opt-in)
 
@@ -25,10 +34,9 @@ this order:
   `nodeBootstrap.nodeSelector`, and expect them not to run where they are
   pulled elsewhere (CI, a laptop, another cluster).
 
-Both images default to the appVersion tag, which releases publish from
-unionai/cloud#19504 onward; earlier releases have no such tag, so set
-`nodeBootstrap.image.tag` / `imageBuilder.buildkit.nydus.image.tag` to a commit
-SHA to try this on one.
+Both images default to the appVersion tag, which releases publish from 2026.10.2
+onward; earlier releases have no such tag, so set `nodeBootstrap.image.tag` /
+`imageBuilder.buildkit.nydus.image.tag` to a commit SHA to try this on one.
 
 ## 2026.10.1
 
