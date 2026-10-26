@@ -223,9 +223,10 @@ for (unionai/cloud scale/README.md, Security).
 {{- if and .Values.scale.storageContainer (not .Values.storage.enableMultiContainer) }}
 {{- fail "scale: scale.storageContainer needs storage.enableMultiContainer, or Scale cannot reach its bucket" }}
 {{- end }}
-{{- /* Without a caller key the operator proxy believes no claim and serves reads to anything that
-       reaches it, for any org and project; the proxy NetworkPolicy at least keeps out pods outside
-       the release namespace. Scale needs one of the two, whatever else is on. */}}
+{{- /* Without a caller key the operator proxy refuses every call but its agent's, so Scale's pages
+       show it as not set up; a cluster whose key comes on a later sync still renders. The proxy
+       NetworkPolicy keeps out pods outside the release namespace. Scale needs one of the two,
+       whatever else is on. */}}
 {{- if and (not .Values.scale.callerAuth.secretName) (not (include "scale.proxyNetworkPolicy.rendered" .)) }}
 {{- fail "scale: Scale needs scale.callerAuth.secretName or scale.proxyNetworkPolicy.enabled, so a pod that reaches the operator proxy cannot read every project's issues" }}
 {{- end }}
