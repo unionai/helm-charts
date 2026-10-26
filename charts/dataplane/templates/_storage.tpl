@@ -4,12 +4,60 @@ Storage helpers.  This migrates all of the storage configurations to
 the stow based options to provide additional configuration flexibility.
 */}}
 
+{{/*
+storage.credentialsFromEnv: "true" when storage keys come from credentialsSecretRef
+as env (secretKeyRef) instead of being rendered into ConfigMaps.
+*/}}
+{{- define "storage.credentialsFromEnv" -}}
+{{- $mode := .Values.storage.credentialsSecretRef.mode | default "lookup" -}}
+{{- if not (has $mode (list "lookup" "env")) -}}
+{{- fail "storage.credentialsSecretRef.mode must be lookup or env" -}}
+{{- end -}}
+{{- if eq $mode "env" -}}
+{{- if not .Values.storage.credentialsSecretRef.name -}}
+{{- fail "storage.credentialsSecretRef.mode=env requires a Secret name" -}}
+{{- end -}}
+{{- if and .Values.storage.credentialsSecretRef.namespace (ne .Values.storage.credentialsSecretRef.namespace .Release.Namespace) -}}
+{{- fail "storage.credentialsSecretRef.mode=env needs the Secret in the release namespace (secretKeyRef cannot cross namespaces)" -}}
+{{- end -}}
+{{- if not (include "singleNamespace" .) -}}
+{{- fail "storage.credentialsSecretRef.mode=env requires single-namespace mode (task pods reference the Secret from the release namespace)" -}}
+{{- end -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/*
+storage.credentialEnvs: env entries that source the storage keys from
+credentialsSecretRef (mode=env). Both the AWS default-chain names (Go
+components, stow auth_type iam) and the FLYTE_AWS_* names (the Python SDK).
+*/}}
+{{- define "storage.credentialEnvs" -}}
+{{- if include "storage.credentialsFromEnv" . }}
+{{- $ref := .Values.storage.credentialsSecretRef }}
+{{- range $name, $key := dict "AWS_ACCESS_KEY_ID" ($ref.accessKeyIdKey | default "access_key_id") "AWS_SECRET_ACCESS_KEY" ($ref.secretKeyKey | default "secret_key") "FLYTE_AWS_ACCESS_KEY_ID" ($ref.accessKeyIdKey | default "access_key_id") "FLYTE_AWS_SECRET_ACCESS_KEY" ($ref.secretKeyKey | default "secret_key") }}
+- name: {{ $name }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ $ref.name }}
+      key: {{ $key }}
+{{- end }}
+{{- with $.Values.storage.region }}
+- name: AWS_REGION
+  value: {{ . | quote }}
+{{- end }}
+{{- end }}
+{{- end -}}
+
 {{- define "storage.base" -}}
 {{- if or (eq .Values.storage.provider "compat") (eq .Values.storage.provider "oci") }}
   type: stow
   stow:
     kind: s3
     config:
+      {{- if include "storage.credentialsFromEnv" . }}
+      auth_type: iam
+      {{- else }}
       auth_type: accesskey
       {{- if .Values.storage.credentialsSecretRef.name }}
       {{- $secret := lookup "v1" "Secret" (.Values.storage.credentialsSecretRef.namespace | default .Release.Namespace) .Values.storage.credentialsSecretRef.name }}
@@ -20,6 +68,7 @@ the stow based options to provide additional configuration flexibility.
       {{- else }}
       access_key_id: {{ .Values.storage.accessKey }}
       secret_key: {{ .Values.storage.secretKey }}
+      {{- end }}
       {{- end }}
       disable_ssl: {{ .Values.storage.disableSSL }}
       endpoint: {{ .Values.storage.endpoint }}
@@ -34,9 +83,9 @@ the stow based options to provide additional configuration flexibility.
   stow:
     kind: s3
     config:
-      auth_type: {{ .Values.storage.authType }}
+      auth_type: {{ ternary "iam" .Values.storage.authType (eq (include "storage.credentialsFromEnv" .) "true") }}
       region: {{ .Values.storage.region }}
-      {{- if eq .Values.storage.authType "accesskey" }}
+      {{- if and (eq .Values.storage.authType "accesskey") (not (include "storage.credentialsFromEnv" .)) }}
       {{- if .Values.storage.credentialsSecretRef.name }}
       {{- $secret := lookup "v1" "Secret" (.Values.storage.credentialsSecretRef.namespace | default .Release.Namespace) .Values.storage.credentialsSecretRef.name }}
       {{- if $secret }}
@@ -63,7 +112,12 @@ the stow based options to provide additional configuration flexibility.
   {{- $stowKind := default "" $stow.kind -}}
   {{- $stowConfig := default dict $stow.config -}}
 
-  {{- if and .Values.storage.credentialsSecretRef.name (eq $customType "stow") (eq $stowKind "s3") -}}
+  {{- if and (include "storage.credentialsFromEnv" .) (eq $customType "stow") (eq $stowKind "s3") -}}
+    {{- $envStowConfig := omit (deepCopy $stowConfig) "access_key_id" "secret_key" -}}
+    {{- $_ := set $envStowConfig "auth_type" "iam" -}}
+    {{- $_ := set $stow "config" $envStowConfig -}}
+    {{- $_ := set $custom "stow" $stow -}}
+  {{- else if and .Values.storage.credentialsSecretRef.name (eq $customType "stow") (eq $stowKind "s3") -}}
     {{- $secret := lookup "v1" "Secret" (.Values.storage.credentialsSecretRef.namespace | default .Release.Namespace) .Values.storage.credentialsSecretRef.name -}}
     {{- if $secret -}}
       {{- $secretCreds := dict

@@ -15,6 +15,20 @@ KService so only this release's Kourier serves its apps. The Kourier
 ClusterRole/Binding get release-unique names and no cluster-wide Secret read.
 Requires a unionoperator image whose Kourier honours `KOURIER_INGRESS_CLASS`.
 
+### Storage keys from a Secret without writing them into ConfigMaps
+
+New `storage.credentialsSecretRef.mode: env` (default `lookup`, unchanged).
+With `env`, the storage keys are never rendered into a ConfigMap (operator
+`storage.yaml` / `fast_registration_storage.yaml` / `k8s.yaml`, the leaseworker
+config, `build-image-config`): the stow config uses the AWS default credential
+chain (`auth_type: iam`), every dataplane component reads `AWS_*` /
+`FLYTE_AWS_*` from the Secret with `secretKeyRef`, and task pods get them from
+the `task-template` PodTemplate. ConfigMaps are readable in more places than
+Secrets (including the console's cluster Config view), and `lookup` renders
+nothing under `helm template` / Argo CD. Rotating keys becomes a Secret update
+plus a pod restart. Requires the Secret in the release namespace and
+single-namespace mode.
+
 ### Nydus lazy image pulls (opt-in)
 
 Self-managed dataplanes can now pull images lazily with Nydus, as the managed
