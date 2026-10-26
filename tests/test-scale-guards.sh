@@ -191,6 +191,35 @@ expect scaleconfig "readLogs: true"
 must_render -f "$tmp/secure.yaml" --set scale.jobs.image.repository=scale-job --set scale.jobs.autoStart=true --set scale.agent.readLogs=false
 expect scaleconfig "autoStart: true"
 expect scaleconfig "readLogs: false"
+# Job pods run as the scale-job service account with the job identity, never the task role, and
+# behind the scale-job NetworkPolicy: in the release namespace when tasks run there, else in every
+# task namespace through the cluster resource sync.
+jobs=(-f "$tmp/secure.yaml" --set scale.jobs.image.repository=scale-job
+  --set-string 'scale.jobs.serviceAccount.annotations.eks\.amazonaws\.com/role-arn=arn:aws:iam::1:role/job')
+jobresources() { source_of templates/scale/job-resources.yaml; }
+crsconfig() { source_of templates/clusterresourcesync/configmap.yaml; }
+crsrole() { source_of templates/clusterresourcesync/serviceaccount.yaml; }
+must_render "${jobs[@]}" --set namespaces.enabled=false
+expect jobresources "name: scale-job"
+expect jobresources "namespace: union"
+expect jobresources "eks.amazonaws.com/role-arn: arn:aws:iam::1:role/job"
+expect jobresources "automountServiceAccountToken: false"
+expect jobresources 'union.ai/scale-job: "true"'
+expect jobresources "169.254.0.0/16"
+expect jobresources "port: 443"
+multi=(--set namespaces.enabled=true --set low_privilege=false)
+must_fail "jobs need clusterresourcesync.enabled" "${jobs[@]}" "${multi[@]}" --set clusterresourcesync.enabled=false
+must_render "${jobs[@]}" "${multi[@]}" --set clusterresourcesync.enabled=true
+expect crsconfig "d_scale_job_service_account.yaml"
+expect crsconfig "namespace: {{ namespace }}"
+expect crsconfig "e_scale_job_network_policy.yaml"
+expect crsrole "networkpolicies"
+expect_not jobresources "scale-job"
+must_render -f "$tmp/secure.yaml" "${multi[@]}" --set clusterresourcesync.enabled=true
+expect_not crsconfig "scale_job"
+expect_not crsrole "networkpolicies"
+must_fail "networkPolicy.egress" "${jobs[@]}" --set namespaces.enabled=false --set scale.jobs.networkPolicy.egress=null
+
 # useRuntimeCredentials stands in for the writer only in the dogfood org.
 must_fail "dogfood org only" -f "$tmp/secure.yaml" --set scale.fixWriter.secretName= --set scale.config.fix.enabled=true \
   --set scale.config.fix.writer.useRuntimeCredentials=true

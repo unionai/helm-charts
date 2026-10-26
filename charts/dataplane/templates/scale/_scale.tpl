@@ -229,6 +229,15 @@ for (unionai/cloud scale/README.md, Security).
 {{- if and (not .Values.scale.callerAuth.secretName) (not (include "scale.proxyNetworkPolicy.rendered" .)) }}
 {{- fail "scale: Scale needs scale.callerAuth.secretName or scale.proxyNetworkPolicy.enabled, so a pod that reaches the operator proxy cannot read every project's issues" }}
 {{- end }}
+{{- /* Job pods run as the scale-job service account, which the cluster resource sync puts in
+       every task namespace (templates/clusterresourcesync/configmap.yaml), or this chart in the
+       release namespace when tasks run there. */}}
+{{- if and (include "scale.jobs" .) (not (include "singleNamespace" .)) (not .Values.clusterresourcesync.enabled) }}
+{{- fail "scale: jobs need clusterresourcesync.enabled, which gives every task namespace the scale-job service account and NetworkPolicy" }}
+{{- end }}
+{{- if and (include "scale.jobs" .) (not .Values.scale.jobs.networkPolicy.egress) }}
+{{- fail "scale: jobs need scale.jobs.networkPolicy.egress, the places a job pod may reach" }}
+{{- end }}
 {{- if include "scale.writes" . }}
 {{- /* Only AWS has a deny on Scale's bucket for every other identity and a role of its own for
        job pods. Elsewhere a later broad grant to a task identity would reach Scale's objects,
@@ -285,4 +294,56 @@ for (unionai/cloud scale/README.md, Security).
 {{- end }}
 {{- end }}
 {{- end }}
+{{- end -}}
+
+{{/*
+The service account Scale's job pods run as (the job task's pod template names it), in one task
+namespace. It holds the job identity from scale.jobs.serviceAccount.annotations, never the task
+role, and mounts no token unless a pod asks; the job pod asks for none. Arguments: root, namespace
+(a name, or "{{ namespace }}" for the cluster-resource templates).
+*/}}
+{{- define "scale.jobs.serviceAccount" -}}
+{{- $root := .root -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: scale-job
+  namespace: {{ .namespace }}
+  {{- with $root.Values.scale.jobs.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+automountServiceAccountToken: false
+{{- end -}}
+
+{{/*
+The NetworkPolicy on Scale's job pods (the label the job task's pod template sets) in one task
+namespace: no ingress, and egress to DNS and scale.jobs.networkPolicy.egress only (by default
+public addresses on 443: the model provider, the git host, object storage and the control plane;
+never cluster or private addresses or the instance metadata service). Arguments as above.
+*/}}
+{{- define "scale.jobs.networkPolicy" -}}
+{{- $np := .root.Values.scale.jobs.networkPolicy -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: scale-job
+  namespace: {{ .namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      union.ai/scale-job: "true"
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    - to:
+        {{- toYaml $np.dns | nindent 8 }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- toYaml $np.egress | nindent 4 }}
 {{- end -}}

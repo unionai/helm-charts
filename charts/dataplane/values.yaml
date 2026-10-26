@@ -3792,3 +3792,30 @@ scale:
     # -- Let Scale start jobs by itself where a project admin listed a kind in auto_start. Off in
     # phase 1: a person always clicks Start.
     autoStart: false
+    # -- The scale-job service account job pods run as, in every task namespace. Annotate it with a
+    # cloud identity that reaches only scale-jobs/ in Scale's bucket and the job runs' Flyte files
+    # (unionai/cloud scale/README.md, Scale's bucket), e.g. eks.amazonaws.com/role-arn. Never the
+    # task role.
+    serviceAccount:
+      annotations: {}
+    # -- The NetworkPolicy on job pods (label union.ai/scale-job: "true"): no ingress; egress to
+    # dns on port 53 and to the rules in egress. A NetworkPolicy cannot name hosts; narrow egress
+    # to the model provider's, git host's and object store's addresses where they are known.
+    networkPolicy:
+      dns:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      egress:
+        - to:
+            - ipBlock:
+                cidr: 0.0.0.0/0
+                except:
+                  - 10.0.0.0/8
+                  - 100.64.0.0/10
+                  - 169.254.0.0/16
+                  - 172.16.0.0/12
+                  - 192.168.0.0/16
+          ports:
+            - protocol: TCP
+              port: 443
