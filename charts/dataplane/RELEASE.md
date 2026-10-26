@@ -26,6 +26,15 @@ are untangled. Several of these changes are breaking: read the sections below, e
   pod at `singleNamespace: false`. `low_privilege` still works as the alias. The template used
   to read `low_privilege` directly. `values.yaml` no longer sets that key, so the old template
   would have turned block mode on for every pod on a default install.
+- **node-bootstrap's taint removal is granted through its own cluster slots** (#646). With
+  `nodeBootstrap.enabled` and a `startupTaintKey`, `union-node-readiness` holds `nodes` `get`
+  in `<release-ns>-node-bootstrap-cluster-read` and `nodes` `update` in
+  `<release-ns>-node-bootstrap-cluster-write`, in both scope modes. That replaces the
+  standalone `<release>-node-bootstrap` ClusterRole main renders. The ClusterRole is now
+  named after the release namespace, like every other slot role. The update cannot be
+  pinned to the node the pod runs on, so it is the second unpinned cluster-scoped write on
+  the single-namespace allowlist, after nodeobserver's. With no taint key the binary makes
+  no API call, and the ServiceAccount gets no RBAC and mounts no token, as on main.
 
 ### `singleNamespace` replaces `low_privilege`
 

@@ -2807,6 +2807,46 @@ for scope in "singleNamespace=true" "singleNamespace=false"; do
     absent "name: union-operator-system-node-capacity" --set "${scope}" "${CAP[@]}" "${PODS[@]}"
 done
 
+# node-bootstrap's union-node-readiness removes the startup taint from its own node: a Get of
+# the Node, then an Update. It talks to the API server only when given a taint key, so the
+# grant follows nodeBootstrap.startupTaintKey. Both rules are cluster slots in both scope
+# modes, since nodes are cluster-scoped, and the update cannot be pinned to the caller's own
+# node. Main rendered these as a standalone <release>-node-bootstrap ClusterRole; the slot
+# model replaces it.
+echo "- node-bootstrap removes its startup taint through its own cluster slots, in both scope modes"
+# node-bootstrap refuses to render without a cloud provider, and this harness sets none.
+NB=(--set nodeBootstrap.enabled=true --set nodeBootstrap.cloudProvider=aws)
+NB_NO_TAINT=("${NB[@]}" --set nodeBootstrap.startupTaintKey=)
+for scope in "singleNamespace=true" "singleNamespace=false"; do
+  expect-manifest "${scope}: no node-bootstrap read role without a taint key" \
+    absent "name: union-node-bootstrap-cluster-read" --set "${scope}" "${NB_NO_TAINT[@]}"
+  expect-manifest "${scope}: nor a write role" \
+    absent "name: union-node-bootstrap-cluster-write" --set "${scope}" "${NB_NO_TAINT[@]}"
+  expect-manifest "${scope}: and its ServiceAccount mounts no token" \
+    present "automountServiceAccountToken: false" --set "${scope}" "${NB_NO_TAINT[@]}" \
+    --set uvolMountBroker.enabled=false
+  expect-rule "${scope}: with a taint key it reads its node" present \
+    union-node-bootstrap-cluster-read "core nodes get -" --set "${scope}" "${NB[@]}"
+  expect-rule "${scope}: and updates it, unpinned" present \
+    union-node-bootstrap-cluster-write "core nodes update -" --set "${scope}" "${NB[@]}"
+  for v in get list watch create update patch delete deletecollection; do
+    want_read=""; want_write=""
+    [[ ${v} == get ]] && want_read="nodes"
+    [[ ${v} == update ]] && want_write="nodes"
+    expect-verb-resources "${scope}: the read role grants ${v} on exactly '${want_read}'" \
+      union-node-bootstrap-cluster-read "${v}" "${want_read}" --set "${scope}" "${NB[@]}"
+    expect-verb-resources "${scope}: the write role grants ${v} on exactly '${want_write}'" \
+      union-node-bootstrap-cluster-write "${v}" "${want_write}" --set "${scope}" "${NB[@]}"
+  done
+  expect-binding-subject "${scope}: the write role binds union-node-bootstrap alone" \
+    ClusterRoleBinding union-node-bootstrap-cluster-write union-node-bootstrap \
+    --set "${scope}" "${NB[@]}"
+  expect-manifest "${scope}: and no standalone ${RELEASE}-node-bootstrap ClusterRole renders" \
+    absent "name: ${RELEASE}-node-bootstrap$" --set "${scope}" "${NB[@]}"
+done
+expect-manifest "nothing renders with node-bootstrap off" \
+  absent "name: union-node-bootstrap-cluster-write"
+
 echo
 echo "- release-namespace calls are granted to the component that makes them"
 
@@ -2982,6 +3022,13 @@ union-nodeobserver-cluster-read read core pods list
 # time, so resourceNames cannot pin it.
 union-nodeobserver-cluster-write unpinned-write core nodes update
 
+# node-bootstrap (nodeBootstrap.enabled, off by default, with startupTaintKey set). Its
+# union-node-readiness Gets the node it runs on and Updates it to drop the startup taint
+# (cloud operator/deploy/node-bootstrap/internal/k8s/node). Like nodeobserver's, the update
+# cannot be pinned: RBAC cannot name the caller's own node.
+union-node-bootstrap-cluster-read read core nodes get
+union-node-bootstrap-cluster-write unpinned-write core nodes update
+
 # ingress-nginx with its RBAC scoped to the release namespace (templates/ingress-nginx/
 # ingressclass-rbac.yaml). IngressClass is cluster-scoped; without the read the controller
 # ignores every Ingress that sets spec.ingressClassName.
@@ -3028,6 +3075,8 @@ max_features=(
   --set 'taskPluginClusterReadRules[0].resources={rayjobs,rayclusters}'
   --set config.operator.clusterHealth.nodeCapacity.enabled=true
   --set config.operator.clusterHealth.nodeCapacity.clusterWidePods=true
+  --set nodeBootstrap.enabled=true --set nodeBootstrap.cloudProvider=aws
+  --set nodeBootstrap.startupTaintKey=example.com/node-bootstrap-not-ready
 )
 MAX_APPS="${WORK_DIR}/max-apps.yaml"
 MAX_ZT="${WORK_DIR}/max-zero-trust.yaml"

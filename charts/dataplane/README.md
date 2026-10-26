@@ -452,13 +452,13 @@ Two documents cover this in full:
   that can be namespaced is — Union's own components, prometheus and kube-state-metrics
   alike. No namespaces are created.
 - Cluster-scoped reads come only from a fixed allowlist, each entry tied to the code that
-  needs it: today the operator's node informer, plus nodeobserver's and ingress-nginx's
-  reads when those are enabled. `tests/test-rbac-guards.sh` enforces the list;
+  needs it: today the operator's node informer, plus nodeobserver's, node-bootstrap's and
+  ingress-nginx's reads when those are enabled. `tests/test-rbac-guards.sh` enforces the list;
   [docs/rbac.md](docs/rbac.md#what-singlenamespace-still-reads-cluster-wide) explains each
   entry.
 - No cluster-scoped writes, except ones pinned to named objects — the pre-upgrade hook that
-  deletes the legacy `flyte-pod-webhook`. nodeobserver, off by default, is the one exception
-  (see the table below).
+  deletes the legacy `flyte-pod-webhook`. nodeobserver and node-bootstrap, both off by
+  default, are the exceptions: each removes a startup taint from its own node.
 
 It does not switch features off to avoid cluster-scoped reads: usage collection and the
 operator's node informer run in both modes. The cost of the mode is the reduced

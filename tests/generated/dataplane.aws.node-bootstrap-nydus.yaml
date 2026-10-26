@@ -5019,22 +5019,31 @@ rules:
     - list
     - watch
 ---
-# Source: dataplane/templates/node-bootstrap/serviceaccount.yaml
-# union-node-readiness removes nodeBootstrap.startupTaintKey from its own node
-# once bootstrap completes, and needs nothing else from the API.
+# Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: release-name-node-bootstrap
-  labels:
-    app.kubernetes.io/name: union-node-bootstrap
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
+  name: union-node-bootstrap-cluster-read
 rules:
-  - apiGroups: [""]
-    resources: ["nodes"]
-    verbs: ["get", "update"]
+  - apiGroups:
+    - ""
+    resources:
+    - nodes
+    verbs:
+    - get
+---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: union-node-bootstrap-cluster-write
+rules:
+  - apiGroups:
+    - ""
+    resources:
+    - nodes
+    verbs:
+    - update
 ---
 # Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -5050,25 +5059,33 @@ subjects:
     name: union-system
     namespace: union
 ---
-# Source: dataplane/templates/node-bootstrap/serviceaccount.yaml
+# Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: release-name-node-bootstrap
-  labels:
-    app.kubernetes.io/name: union-node-bootstrap
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
+  name: union-node-bootstrap-cluster-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-node-bootstrap-cluster-read
 subjects:
   - kind: ServiceAccount
     name: union-node-bootstrap
     namespace: union
+---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: union-node-bootstrap-cluster-write
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: release-name-node-bootstrap
-
+  name: union-node-bootstrap-cluster-write
+subjects:
+  - kind: ServiceAccount
+    name: union-node-bootstrap
+    namespace: union
 ---
 # Source: dataplane/charts/dcgm-exporter/templates/role.yaml
 apiVersion: rbac.authorization.k8s.io/v1

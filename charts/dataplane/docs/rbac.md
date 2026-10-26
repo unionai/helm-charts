@@ -116,13 +116,15 @@ ClusterRole bound by a ClusterRoleBinding grants anything not on it.
 | `<ns>-operator-cluster-read` | `nodes` list, watch | on by default | The operator's node informer (`operator/cmd/root.go`). It runs unless `config.operator.disableClusterPermissions` is set, whenever any usage collector does, and startup blocks until it syncs. It backs the Legacy/Shadow billing collector and attributes a GPU to the node's accelerator label when the pod spec names none. Nodes are cluster-scoped, so `limitNamespace` cannot confine it. |
 | `<ns>-operator-cluster-read` | `nodes` get, list, watch; `pods` get, list, watch with `clusterWidePods` | `config.operator.clusterHealth.nodeCapacity.enabled` | The cluster health snapshot's capacity report reads node shapes and allocatable resources, and with `clusterWidePods` the pods scheduled on them for per-pool usage, which a namespace-limited operator's own pod cache cannot see. Independent of `disableClusterPermissions` and of the informer's gate; it adds `get` to the same `nodes` rule. |
 | `<ns>-nodeobserver-cluster-read` | `nodes` get, `pods` list | `nodeobserver.enabled` | nodeobserver reads the node it runs on, and lists that node's pods with an empty namespace and a `spec.nodeName` field selector — a cluster-scope request. |
+| `<ns>-node-bootstrap-cluster-read` | `nodes` get | `nodeBootstrap.enabled` with `nodeBootstrap.startupTaintKey` set | union-node-readiness reads the node it runs on before removing the startup taint. With no taint key it never calls the API, and gets no RBAC. |
 | `dataplane-nginx-ingressclass` | `ingressclasses` get, list, watch | `ingress-nginx.enabled` | A scoped ingress-nginx controller still reads IngressClass, which is cluster-scoped; without it the controller ignores every Ingress this chart renders. |
 | `flyte-webhook-cleanup-<ns>` | `mutatingwebhookconfigurations` get, delete, on `flyte-pod-webhook` only | pre-upgrade hook | Deletes the webhook configuration chart versions before 2026.4.7 left behind. |
 
 Writes are held to a stricter rule: a cluster-scoped write must be pinned to named objects.
-The cleanup hook's `delete` above is the only pinned write. nodeobserver's `nodes` `update` —
-it removes its startup taint from the node it runs on — is the one unpinned exception, since
-node names are not known at render time; it is off by default.
+The cleanup hook's `delete` above is the only pinned write. Two `nodes` `update` grants are
+the unpinned exceptions, both off by default: nodeobserver's and node-bootstrap's
+(`<ns>-node-bootstrap-cluster-write`, with a taint key set). Each removes a startup taint from
+the node it runs on, and RBAC has no way to name the caller's own node.
 
 Some things single-namespace mode still withholds, because they are not on the list: the
 operator's `/metrics` scrape of the API server, which feeds its FlyteWorkflow-count and

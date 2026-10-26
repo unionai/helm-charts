@@ -18,7 +18,8 @@ ClusterRoles — and the new name says so. What `singleNamespace: true` promises
   needs it (`charts/dataplane/docs/rbac.md#what-singlenamespace-still-reads-cluster-wide`),
   enforced by `tests/test-rbac-guards.sh`.
 - No cluster-scoped writes, except ones pinned to named objects (the legacy webhook cleanup
-  hook). nodeobserver, off by default, is the one listed exception.
+  hook). nodeobserver and node-bootstrap, both off by default, are the listed exceptions:
+  each removes a startup taint from the node it runs on.
 
 **`low_privilege` still works, as an alias.** Nothing needs to change in an overlay that sets
 it: `low_privilege: true` and `low_privilege: false` resolve exactly as before. Both keys are

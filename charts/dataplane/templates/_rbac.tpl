@@ -63,6 +63,9 @@ have produced a wrong inventory in this file before.
 {{- if .Values.nodeobserver.enabled -}}
 {{- $components = append $components (dict "name" "nodeobserver" "sa" (include "nodeobserver.serviceAccountName" .)) -}}
 {{- end -}}
+{{- if .Values.nodeBootstrap.enabled -}}
+{{- $components = append $components (dict "name" "node-bootstrap" "sa" "union-node-bootstrap") -}}
+{{- end -}}
 {{/*
 The one entry whose gate is not just an enabled key: clusterresourcesync's own
 templates render only outside singleNamespace, so joining the registry under

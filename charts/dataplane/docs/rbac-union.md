@@ -345,8 +345,8 @@ one missing in the *release* namespace.
 
 Most of what this chart grants is namespaced. The cluster-scoped, state-mutating grants
 held by Union identities are these. Their conditions are compatible: a multi-namespace
-zero-trust install with `clusterresourcesync`, `nodeobserver` and an unmanaged pod-webhook
-config renders all five at once, so treat the whole table as the maximum surface rather
+zero-trust install with `clusterresourcesync`, `nodeobserver`, `nodeBootstrap` and an
+unmanaged pod-webhook config renders all six at once, so treat the whole table as the maximum surface rather
 than assuming some rows exclude others.
 
 | ClusterRole | Rendered when | Grant |
@@ -354,6 +354,7 @@ than assuming some rows exclude others.
 | `flyte-webhook-cleanup-<release-ns>` | always (upgrade hook) | `get`/`delete` on one named `MutatingWebhookConfiguration` |
 | `union-clusterresourcesync-cluster-write` | `singleNamespace: false` + `clusterresourcesync.enabled` | get/create/patch on `namespaces`, `serviceaccounts`, `resourcequotas`, `rolebindings`; `bind` on `<release-ns>-work-ns` |
 | `union-nodeobserver-cluster-write` | `nodeobserver.enabled` (either scope mode) | `update` on `nodes` |
+| `union-node-bootstrap-cluster-write` | `nodeBootstrap.enabled` with `nodeBootstrap.startupTaintKey` set (either scope mode) | `update` on `nodes`, to remove the startup taint from its own node |
 | `union-webhook-cluster-write` | `singleNamespace: false` + `flytepropellerwebhook.managedConfig: false` | `create` on `mutatingwebhookconfigurations`; `get`/`update` on the one it registers, named by `config.core.webhook.serviceName` |
 | `union-knative-webhook-cluster-write` | app serving under zero trust | `update` on three named webhook configurations, plus `namespaces/finalizers` on the release namespace |
 
@@ -407,9 +408,9 @@ Beyond this table and that key, every cluster-scoped grant held by a Union ident
 `system:auth-delegator`. That binding is gone: the controller serves only unauthenticated
 metrics and pprof and never makes a TokenReview or SubjectAccessReview.)
 
-Under `singleNamespace: true` only two rows of this table can render: the upgrade hook's,
-which is pinned to one name, and nodeobserver's, the one unpinned cluster-scoped write the
-mode allows. `tests/test-rbac-guards.sh` asserts exactly that.
+Under `singleNamespace: true` only three rows of this table can render: the upgrade hook's,
+which is pinned to one name, and nodeobserver's and node-bootstrap's, the two unpinned
+cluster-scoped writes the mode allows. RBAC cannot pin either to the node the pod runs on. `tests/test-rbac-guards.sh` asserts exactly that.
 
 `singleNamespace` is not a whole-chart namespace boundary in either direction: the
 upgrade hook's ClusterRole is created in both modes, as are opencost's and metrics-server's
@@ -446,9 +447,10 @@ authenticate** — an IRSA trust-policy subject on AWS, a `roles/iam.workloadIde
 member on GCP, or an Azure federated credential. Flipping the flag without doing that
 first leaves the pods running and unable to reach cloud storage.
 
-`nodeobserver`, `clusterresourcesync` and `flytepropeller` are unaffected by the flag —
-they always hold dedicated accounts (`nodeobserver-system`, `union-clustersync-system`,
-`flytepropeller-system`), in both settings.
+`nodeobserver`, `clusterresourcesync`, `flytepropeller` and `node-bootstrap` are unaffected
+by the flag — they always hold dedicated accounts (`nodeobserver-system`,
+`union-clustersync-system`, `flytepropeller-system`, `union-node-bootstrap`), in both
+settings.
 
 **`fluentbit` is the documented exception.** Its account name comes from the subchart key
 `fluentbit.serviceAccount.name`, which this chart pins to `union-system`. That pin wins
