@@ -1,28 +1,4 @@
 #!/usr/bin/env python3
-"""Audit single-namespace dataplane renders against the cluster-scope allowlist.
-
-tests/test-rbac-guards.sh owns the allowlist and calls this once. It renders every
-dataplane fixture whose values resolve to singleNamespace, audits each render plus the
-pre-rendered files passed with --render, and prints one `ok`/`FAILED` line per render in
-the guard script's format.
-
-What a render must satisfy:
-
-- Every ClusterRole bound by a ClusterRoleBinding is audited rule by rule. Each
-  (apiGroup, resource, verb, resourceName) tuple it grants must be on the allowlist
-  under that role's name. A role the render binds but does not define, or one built by
-  aggregation, cannot be audited and fails.
-- A write -- any verb other than get, list or watch -- must be pinned by resourceNames,
-  unless the allowlist marks that exact tuple as an unpinned exception.
-- Roles and RoleBindings sit in the release namespace, unless named in the allowlist's
-  `outside-namespace` lines.
-- Bindings rendered by a subchart named in a `subchart` line are skipped: their RBAC is
-  the subchart's own and singleNamespace does not govern it.
-
-Across all renders, every allowlist entry must be exercised at least once, so an entry
-whose grant has gone does not linger and quietly authorize its return.
-"""
-
 import argparse
 import re
 import shlex
@@ -68,7 +44,6 @@ def parse_allowlist(path):
 
 
 def documents(text):
-    """Yield (source template, document) for every top-level manifest in a render."""
     for chunk in re.split(r"^---\s*$", text, flags=re.M):
         doc = yaml.safe_load(chunk)
         if isinstance(doc, dict) and "kind" in doc:
@@ -150,8 +125,6 @@ def layered_flags(fixture, chart):
     for line in head:
         if line.startswith("# helm-args:"):
             extra = shlex.split(line.split(":", 1)[1])
-    # Scope is resolved from the values files alone, so a fixture that sets it through
-    # helm-args would be audited, or skipped, on the wrong answer.
     if any(key in arg for arg in extra for key in ("singleNamespace", "low_privilege")):
         sys.exit(
             f"{fixture.name} sets scope in # helm-args:, which this audit cannot resolve; set it in the values instead"
@@ -160,7 +133,6 @@ def layered_flags(fixture, chart):
 
 
 def single_namespace(files):
-    """Resolve scope the way the chart's singleNamespace define does, over layered files."""
     merged = {}
     for path in files:
         values = yaml.safe_load(Path(path).read_text()) or {}

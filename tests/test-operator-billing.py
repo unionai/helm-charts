@@ -397,9 +397,6 @@ data:
                 f"config.operator.billing.model={model}",
                 "--set",
                 "config.operator.collectUsages.enabled=false",
-                # The image builder's release-namespace informers also land in the
-                # operator's comp-ns-read, in every billing model. Off here, so that
-                # Role is present only when the billing model puts it there.
                 "--set",
                 "imageBuilder.enabled=false",
             )
@@ -419,11 +416,6 @@ data:
                     for resource in rule.get("resources") or []
                 }
             )
-        # The billing model changes no workload or config object. The one thing it
-        # does change is RBAC. With collectUsages off, only a model other than None
-        # starts the node informer, whose cluster-wide nodes read is all the
-        # operator's cluster-read role holds under singleNamespace, so that role
-        # appears with it.
         none, resource_usage = inventories
         self.assertEqual(
             {
@@ -433,10 +425,6 @@ data:
             resource_usage - none,
         )
         self.assertEqual(set(), none - resource_usage)
-        # Only a ResourceUsage or Shadow model starts the usage aggregator, which under
-        # singleNamespace lists pod metrics in the release namespace. The operator's
-        # comp-ns-read Role renders in every model, for the cluster snapshot's
-        # workload reads, so the difference is that one rule.
         none_rules, resource_usage_rules = comp_ns_read
         self.assertEqual({("metrics.k8s.io", "pods")}, resource_usage_rules - none_rules)
         self.assertEqual(set(), none_rules - resource_usage_rules)

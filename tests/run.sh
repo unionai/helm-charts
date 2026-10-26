@@ -12,7 +12,6 @@ CHARTS_DIR=${SCRIPT_DIR}/../charts
 
 source "${SCRIPT_DIR}/lib/atomic-render.sh"
 
-# Echo the --values flags a fixture needs, from its `# helm-values:` header.
 function layered_values_flags {
   local file=$1
   local chart=$2
@@ -28,7 +27,6 @@ function layered_values_flags {
       if [[ -f "${CHARTS_DIR}/${chart}/${name}" ]]; then
         flags="${flags} --values ${CHARTS_DIR}/${chart}/${name}"
       else
-        # stderr, not stdout: this function's stdout is the flag list itself.
         echo "ERROR: ${file} declares values file '${name}', which does not exist under ${CHARTS_DIR}/${chart}/" >&2
         return 1
       fi

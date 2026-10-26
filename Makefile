@@ -24,9 +24,6 @@ test: check-vendored-crds helm-test kubeconform-test check-image-paths rbac-guar
 snapshot-generator-test:
 	bash ./tests/test-atomic-render.sh
 
-# Renders the dataplane chart against values the RBAC guards should accept and
-# values they should refuse. helm-test only diffs renders that succeed, so it
-# cannot see a guard at all. Its single-namespace scope audit runs under uv.
 .PHONY: rbac-guard-test
 rbac-guard-test: requirements
 	bash ./tests/test-rbac-guards.sh
@@ -66,9 +63,6 @@ check-vendored-crds:
 	done; \
 	exit $${fail}
 
-# CI (.github/workflows/checks.yaml) runs helm-test, kubeconform-test and
-# check-image-paths individually rather than `make test`, so rbac-guard-test
-# hangs off helm-test to gate PRs.
 .PHONY: helm-test
 helm-test: $(TMP_DIR) snapshot-generator-test k3d-storage-test billing-test buildkit-arm-test workload-labels-test rbac-guard-test
 	./tests/run.sh helm

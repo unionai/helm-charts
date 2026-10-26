@@ -1,19 +1,4 @@
 #!/usr/bin/env python3
-"""Print RBAC rules from a rendered manifest, one normalized line per grant.
-
-tests/test-rbac-guards.sh calls this to pin a rule together with its resourceNames,
-which its awk helpers do not read. Two modes, both reading the render on stdin:
-
-  rules <role>     every rule of the Role or ClusterRole named <role>, one line per
-                   (apiGroup, resource) pair: `<group> <resource> <verbs> <names>`.
-                   group is `core` for "", verbs and names are sorted and
-                   comma-joined, and names is `-` when the rule has none. Prints
-                   `<NO-SUCH-ROLE>` when no role has that name.
-  wildcards        every rule outside the pooled work-ns role that names `*` in
-                   apiGroups or a resource containing `*`, one line per rule:
-                   `<kind>/<name> apiGroups=<...> resources=<...> verbs=<...>`.
-"""
-
 import sys
 
 import yaml

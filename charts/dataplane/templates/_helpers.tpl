@@ -732,37 +732,6 @@ Create the name of the service account to use
 {{- default .Release.Namespace .Values.proxy.secretManager.namespace }}
 {{- end }}
 
-{{/*
-The namespaces the secrets watcher is told to inspect, as a YAML list.
-
-Both the operator's config and the Roles backing it read this define, so a
-namespace cannot end up watched without being granted, or granted without being
-watched. The two drifted apart while each read its own condition.
-
-An explicit config.operator.secretsWatcher.namespaces wins, including an empty
-list, which the operator reads as "every namespace": it lists pods cluster-wide
-(operator/pkg/watcher/secret.go). `hasKey` rather than truthiness is what tells
-that case apart from "unset".
-
-At singleNamespace: false that list is authorized: the operator's
-work-ns-cluster-read always grants pods list and watch cluster-wide. What
-follows it is not, everywhere. For each matched pod the watcher Gets its
-ReplicaSet and the Secrets it mounts, watches Secrets, and Gets and Updates the
-owning Deployment, all in the pod's namespace. Those are granted in the release
-namespace and in each work namespace bound to work-ns, and nowhere else. No
-secrets-watcher Role is emitted for an empty list, not even for
-controlplaneNamespace, so a zone-labelled pod anywhere else -- a co-located
-control plane's, typically -- is refused, and the operator exits at startup.
-List the namespaces instead when one exists.
-
-Under singleNamespace an empty list is refused. No cluster-wide pod read is
-granted there, so the pod list itself is refused and the operator exits at
-startup.
-
-Unset, it resolves to the release namespace plus the control plane's when the two
-share a cluster. Those are the only namespaces holding pods with the zone label
-the watcher selects on; user task namespaces never carry it.
-*/}}
 {{- define "operator.secretsWatcher.namespaces" -}}
 {{- $sw := .Values.config.operator.secretsWatcher -}}
 {{- if hasKey $sw "namespaces" -}}
@@ -1235,11 +1204,6 @@ Both default to null so an explicit setting is distinguishable from the default;
 present in values.yaml, just null).
 Emits "true"/"" rather than "true"/"false" so callers can write
 `if include "apps.enabled" .` — the literal string "false" is truthy.
-
-Defaults to off, because singleNamespace is on by default and the vendored gateway
-refuses app serving under it (gateway/validate.yaml). Keep apps.enabled null in values.yaml rather than a
-literal false — a literal counts as set, so it would always win over the deprecated
-serving.enabled.
 */}}
 {{- define "apps.enabled" -}}
 {{- $apps := .Values.apps | default dict -}}
@@ -1414,20 +1378,6 @@ Get the webhook service name
 union-pod-webhook
 {{- end -}}
 
-{{/*
-The name the webhook binary gives the MutatingWebhookConfiguration it registers,
-which is the webhook.serviceName in whichever config the webhook Deployment
-mounts. With propeller enabled that is flyte-propeller-config, rendered from
-config.core.webhook through tpl; the binary falls back to its own default,
-flyte-pod-webhook, when the key is absent. Otherwise it is the minimal config
-from propeller.webhookConfigMinimal, which pins serviceName to
-flytepropellerwebhook.serviceName. The condition matches the configmap choice in
-webhook/deployment.yaml, where flyte-propeller-config wins over the other two.
-
-The RBAC that pins the webhook's get and update to that one object reads the
-name from here, so an override of config.core.webhook.serviceName moves the
-grant along with the object.
-*/}}
 {{- define "flytepropellerwebhook.registeredConfigName" -}}
 {{- if .Values.flytepropeller.enabled -}}
 {{- $webhook := (.Values.config.core | default dict).webhook | default dict -}}
@@ -1444,14 +1394,6 @@ Get the webhook secret name
 union-pod-webhook
 {{- end -}}
 
-{{/*
-The Secret the legacy provider's init-certs container writes: webhook.secretName
-in the config the webhook mounts. propeller.webhookConfigMinimal sets it to the
-name above for the leaseworker and webhook-only configs. With flytepropeller
-enabled the webhook mounts propeller's config instead, which sets it only if
-config.core.webhook.secretName does, and otherwise the binary's default applies
-(flytepropeller/pkg/secret/config/config.go).
-*/}}
 {{- define "flytepropellerwebhook.initCertsSecretName" -}}
 {{- if .Values.flytepropeller.enabled -}}
 {{- dig "secretName" "flyte-pod-webhook" (.Values.config.core.webhook | default dict) -}}
@@ -1550,13 +1492,6 @@ This returns the base64-encoded CA certificate based on the certificate provider
 {{- /* Return empty to signal that cainjector should handle it */ -}}
 {{- end -}}
 {{- end -}}
-{{/*
-Returns "true" when all components share one service account.
-
-Keyed on commonServiceAccount.enabled alone; sharing an identity is independent
-of privilege scope. It defaults to true because every per-component KSA needs a
-matching workload-identity binding on the cloud side.
-*/}}
 {{- define "useCommonServiceAccount" -}}
 {{- if .Values.commonServiceAccount.enabled -}}true{{- end -}}
 {{- end -}}
@@ -1616,23 +1551,6 @@ Returns the buildkit service account name, using the common SA when enabled.
 {{- end -}}
 {{- end -}}
 
-{{/*
-Service account names for the app-serving (Knative) binaries.
-
-Upstream Knative runs the controller, webhook and both autoscalers under a
-single `controller` ServiceAccount, and gives the activator and the Kourier
-controller one each. Naming every binary separately is what makes
-commonServiceAccount.enabled: false meaningful for app serving: without it,
-three binaries share one identity and no per-binary grant can be expressed.
-
-Each returns the common service account when that is enabled -- the chart
-default, so at stock values all five resolve to the same name and the
-app-serving workloads run as the shared identity like every other component.
-
-Kourier keeps the upstream name `net-kourier` rather than gaining a
-`knative-` prefix; it is a separate project and the name is what its own
-manifests, docs and issue reports use.
-*/}}
 {{- define "knative.controller.serviceAccountName" -}}
 {{- if include "useCommonServiceAccount" . -}}
 {{- include "common.serviceAccountName" . -}}
@@ -1745,41 +1663,6 @@ Otherwise, build it from imagebuilder.defaultRegistry plus the provider-specific
 {{- end -}}
 {{- end -}}
 
-{{/*
-Returns "true" when the release runs single-namespace, the empty string
-otherwise. Every template reads scope through this define, and it is the only
-place in the chart that reads either values key.
-
-singleNamespace: true means Union's workloads, tasks and apps included, run in
-the release namespace, and every grant that can be namespaced is. No namespaces
-are created, clusterresourcesync is not rendered, and the templates key their
-namespace-scoping config (limitNamespace, limit-namespace, namespace_mapping)
-and the choice of Role over ClusterRole off this define. It does not promise
-zero cluster-scoped access: the cluster-scoped reads that remain are a fixed
-list, enforced by tests/test-rbac-guards.sh.
-
-low_privilege is the older name for the same setting and is read as an alias,
-so an overlay that sets only low_privilege behaves exactly as it did. The
-resolution is:
-
-  neither set                  true
-  one set                      that value
-  both set, and they agree     that value
-  both set, and they disagree  the render fails
-
-"Set" means present and not null, which is why values.yaml leaves both keys
-out: a default there would count as set and could never be told apart from an
-overlay's choice.
-
-Each must be a YAML boolean. A quoted "false" is a non-empty string and would
-read as true under Go-template truthiness, so a string is refused rather than
-guessed at.
-
-namespaces.enabled is deliberately not read here: it pre-seeds a fixed list of
-work namespaces and says nothing about scope. Folding it in meant a default
-multi-namespace install looked single-namespace and suppressed
-clusterresourcesync.
-*/}}
 {{- define "singleNamespace" -}}
 {{- $set := dict -}}
 {{- range $key := list "singleNamespace" "low_privilege" -}}
@@ -1803,24 +1686,6 @@ clusterresourcesync.
 {{- if $single -}}true{{- end -}}
 {{- end -}}
 
-{{/*
-Reads a boolean the way the operator does, and returns "true" or the empty
-string.
-
-The operator decodes its config with mapstructure's WeaklyTypedInput, so a
-string goes through strconv.ParseBool, which accepts 1, t, T, TRUE, true and
-True (and the matching false forms), an empty string is false, and a number is
-true when it is not zero. An RBAC gate that compared the rendered string to
-"true" would read `"True"` as false while the operator read it as true, and
-withhold a grant the operator then waits on. A string outside those forms fails
-the operator's config load, so it fails the render here instead.
-
-A string is passed through tpl first, as the config templates do before the
-operator sees it. Null is false, which is the operator's default for every flag
-read through this define.
-
-Takes a dict: value, ctx (the root context), key (for the error message).
-*/}}
 {{- define "dataplane.parseBool" -}}
 {{- $v := .value -}}
 {{- if kindIs "bool" $v -}}

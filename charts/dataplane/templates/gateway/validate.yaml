@@ -1,14 +1,3 @@
-{{- /*
-This fails the install instead of simply skipping the gateway stack, because apps.enabled
-would stay true with nothing behind it: the operator would keep advertising app serving and
-keep its serving.knative.dev grant, while every Knative Service would sit unreconciled with
-nothing reporting why.
-
-The constraint outlived the vendored RBAC that first motivated it. App serving's grants are
-declared per binary now (gateway/serviceaccounts.yaml) and every one that can be namespaced
-is, but the cluster-scoped reads that remain are a property of the images, not of how the
-manifests are written -- so replacing the manifests did not remove the reason.
-*/ -}}
 {{- if and (include "serving.useVendoredGateway" .) (include "singleNamespace" .) }}
 {{- fail "App serving on the vendored gateway (gateway.enabled: true) requires singleNamespace: false. The Knative binaries take the shared, unfiltered informers from knative.dev/pkg and never scope them to a namespace, so their reads go out with an empty namespace and Kubernetes authorizes them as cluster-scope checks. Between them the binaries need cluster-wide list and watch on Deployments, Pods, Services, Endpoints, Namespaces, HorizontalPodAutoscalers, leases, both webhook-configuration kinds and the Knative API groups -- the requirement is collective, and every component's share of it is cluster-scoped. A namespaced Role cannot authorize any of them and the deployments take no watch-scope flag, so app serving reads every namespace in the cluster no matter how the RBAC is written. singleNamespace: true promises that Union's workloads, apps included, stay in the release namespace and that the only cluster-scoped reads are a short fixed list; Knative's reads are neither, and this chart will not render them behind a flag that promises otherwise. Set singleNamespace: false to run app serving, or apps.enabled: false to run the dataplane (under zero trust: Envoy gateway, dataproxy, tunnel ingress) without it. See charts/dataplane/docs/rbac.md#app-serving." }}
 {{- end }}

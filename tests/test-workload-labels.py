@@ -67,8 +67,6 @@ ALLOWLIST = {
     "monitoring-operator",
     "monitoring-kube-state-metrics",
     "release-name-grafana",
-    # Optional third-party subcharts, off by default, rendered by the fixtures that pin
-    # their RBAC. None is a Union component the operator reports.
     "dataplane-nginx-controller",
     "release-name-metrics-server",
     "release-name-opencost",
