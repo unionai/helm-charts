@@ -285,7 +285,8 @@ authz:
   enabled: false
   # -- Subjects (as the proxy reports them) granted the admin role.
   adminUsers: []
-  # -- admin, contributor or viewer.
+  # -- admin, contributor, viewer or none. none: users nobody granted a role
+  # can do nothing, use apps included, until an admin grants them one.
   defaultRole: viewer
   # -- Role of the built-in app task pods act as (to launch child actions and
   # read data). Every request on the in-cluster tasks port gets it, so keep
@@ -342,6 +343,17 @@ nodeAgent:
   nodeSelector: {}
   tolerations:
     - operator: Exists
+  # -- Taint worker nodes as they register, as a Union data plane does, until
+  # the node agent on them is serving, so no task lands on a node whose
+  # Volumes broker is not up yet. The node agent's readiness component removes
+  # the taint (it then gets an API token, allowed to get and update nodes).
+  # Like the data plane's, the node webhook fails closed: while onebox is down,
+  # matching nodes cannot register. Needs webhook.enabled.
+  startupTaint:
+    enabled: false
+    # -- Labels a node must have to be tainted. Empty: a Union data plane's
+    # worker nodes, flyte.org/node-role=worker.
+    nodeLabels: {}
   resources:
     requests:
       cpu: 20m

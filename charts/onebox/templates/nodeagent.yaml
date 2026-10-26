@@ -2,12 +2,15 @@
 The node agent: the uvol mount broker Volumes mount through, as the one node
 DaemonSet onebox needs. Same code and config shape as the dataplane chart's
 union-node-agent (unionai/cloud operator/deploy/helm/templates/nodeagent) with
-only the broker component; the broker is a pure CSI node plugin, so the pod gets
-no API token.
+the broker component, and readiness when nodeAgent.startupTaint is on. The
+broker is a pure CSI node plugin, so without readiness the pod gets no API
+token; readiness gets one that may only get and update nodes (to remove the
+node's startup taint).
 */}}
 {{- if .Values.nodeAgent.enabled }}
 {{- $na := .Values.nodeAgent }}
 {{- $name := printf "%s-node-agent" (include "onebox.fullname" .) }}
+{{- $readiness := $na.startupTaint.enabled }}
 ---
 apiVersion: storage.k8s.io/v1
 kind: CSIDriver
@@ -32,8 +35,37 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "onebox.labels" . | nindent 4 }}
-automountServiceAccountToken: false
+automountServiceAccountToken: {{ $readiness }}
 ---
+{{- if $readiness }}
+# Readiness removes the node's startup taint once the broker serves.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ printf "%s-%s" .Release.Namespace $name }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ printf "%s-%s" .Release.Namespace $name }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ printf "%s-%s" .Release.Namespace $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+---
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -44,7 +76,11 @@ metadata:
 data:
   agent.yaml: |
     nodeReadiness:
-      enabled: false
+      enabled: {{ $readiness }}
+      {{- if $readiness }}
+      # The taint onebox's webhook applies; the broker in this process gates it.
+      taintKeys: [startup-taint.cluster-autoscaler.kubernetes.io/unionai-node-not-ready]
+      {{- end }}
     gpuFaultWatcher:
       enabled: false
     uvolBroker:
@@ -90,7 +126,7 @@ spec:
         prometheus.io/path: /metrics
     spec:
       serviceAccountName: {{ $name }}
-      automountServiceAccountToken: false
+      automountServiceAccountToken: {{ $readiness }}
       priorityClassName: {{ $na.priorityClassName }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
