@@ -522,6 +522,21 @@ expect-manifest "the deprecated serving.enabled still turns app serving on" \
 expect-manifest "and an explicit apps.enabled still overrides it" absent "name: union-knative-controller-cluster-read" \
   "${zt[@]}" --set serving.enabled=true --set apps.enabled=false --set singleNamespace=false
 
+expect-manifest "a stock install renders no Knative stack" \
+  absent "name: union-knative-controller-cluster-read"
+expect-manifest "with both keys unset, app serving is on outside singleNamespace" \
+  present "name: union-knative-controller-cluster-read" \
+  "${zt[@]}" --set singleNamespace=false
+expect-manifest "unless serving.enabled turns it off" \
+  absent "name: union-knative-controller-cluster-read" \
+  "${zt[@]}" --set serving.enabled=false --set singleNamespace=false
+expect-manifest "or apps.enabled does" \
+  absent "name: union-knative-controller-cluster-read" \
+  "${zt[@]}" --set apps.enabled=false --set singleNamespace=false
+expect-refusal "the deprecated serving.enabled on at the singleNamespace default" \
+  "requires singleNamespace: false" \
+  "${zt[@]}" --set serving.enabled=true
+
 echo "- the uvol broker's block-mode default follows singleNamespace"
 expect-manifest "a default install renders no block-mode allow list" \
   absent "blockAllow:"
@@ -1505,7 +1520,7 @@ expect-binding-subject "and it stays out of the pooled work-ns subject list" \
 expect-binding-subject "with per-component identities too, where it would be visible" \
   RoleBinding union-work-ns leaseworker,operator-system,proxy-system,union-webhook-system \
   --set singleNamespace=false --set clusterresourcesync.enabled=true \
-  --set commonServiceAccount.enabled=false \
+  --set commonServiceAccount.enabled=false --set apps.enabled=false \
   --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
 
 echo
@@ -2158,7 +2173,8 @@ expect-rule "no create with the API key off" absent \
 expect-rule "operator, apps: connector-config update, pinned" present \
   union-operator-comp-ns-write "core configmaps update connector-config" "${APPS[@]}"
 expect-rule "not with apps off" absent \
-  union-operator-comp-ns-write "core configmaps update connector-config" "${MULTI[@]}"
+  union-operator-comp-ns-write "core configmaps update connector-config" \
+  "${MULTI[@]}" --set apps.enabled=false
 
 UNMANAGED=(--set flytepropellerwebhook.managedConfig=false)
 expect-rule "webhook, self-registering: its own pod, for the ownerReferences" present \

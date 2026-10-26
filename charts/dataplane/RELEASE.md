@@ -810,9 +810,9 @@ Also, in both modes:
   | `activator` | `knative-activator` |
   | `net-kourier` | `net-kourier` — unchanged, nothing to do |
 
-  Two kinds of install have nothing to do here: `apps.enabled` off, which is the default; and
-  app serving on the legacy knative-operator path (`gateway.enabled: false`), where the
-  Knative Operator owns those workloads and their accounts are untouched.
+  Two kinds of install have nothing to do here: `apps.enabled` off, the default under
+  `singleNamespace`; and app serving on the legacy knative-operator path (`gateway.enabled:
+  false`), where the Knative Operator owns those workloads and their accounts are untouched.
 
 - **On the vendored gateway, this chart no longer supplies the Knative aggregation
   roles anything outside it may have been consuming.** Three cases, all of which now need
@@ -1044,12 +1044,13 @@ Also, in both modes:
   error on a values key nothing reads, so an overlay still setting either is silently
   ignored rather than refused; drop them.
 
-- **App serving is now off by default.** `apps.enabled` (and the deprecated `serving.enabled`)
-  previously defaulted to *on*, so every install that set neither got Knative Serving — 32 of
-  the 37 dataplane snapshot fixtures did. It now defaults off, because `singleNamespace`
-  defaults on and the two cannot both be true (see the next entry). **Any deployment relying
-  on the default loses app serving on upgrade**, on the vendored-gateway *and* the legacy
-  knative-operator path; set `apps.enabled: true` (plus `singleNamespace: false`) to keep it.
+- **App serving is now off by default under `singleNamespace`.** `apps.enabled` (and the
+  deprecated `serving.enabled`) previously defaulted to *on*, so every install that set neither
+  got Knative Serving — 32 of the 37 dataplane snapshot fixtures did. With both unset it is now
+  on unless `singleNamespace` is true, because `singleNamespace` defaults on and the two cannot
+  both be true (see the next entry). **A deployment relying on the default loses app serving on
+  upgrade unless it sets `singleNamespace: false`**, on the vendored-gateway *and* the legacy
+  knative-operator path; set `singleNamespace: false` to keep it.
   Check the generated overlays in `unionai/cloud` for environments that never set it
   explicitly before pinning this revision. `serving.enabled: true` still works and still takes
   effect — `apps.enabled` is left null rather than false precisely so the deprecated key keeps
@@ -1060,10 +1061,10 @@ Also, in both modes:
   and 4 ClusterRoleBindings with no namespaced form — `controller` gets its whole grant
   through an aggregated ClusterRole, `knative-serving-core` needs namespaces, CRDs and the
   webhook configurations, and the deployments take no watch-scope flag — so `singleNamespace`
-  cannot scope it. **An existing install running app serving on the vendored gateway that has
-  not set `singleNamespace: false` will fail to render on upgrade** with a message naming both
-  exits: set `singleNamespace: false` to keep app serving, or `apps.enabled: false` to run
-  without it. On the ArgoCD path this surfaces as a sync failure rather than a silent
+  cannot scope it. **An existing install that sets `apps.enabled: true` (or `serving.enabled:
+  true`) on the vendored gateway without `singleNamespace: false` will fail to render on
+  upgrade** with a message naming both exits: set `singleNamespace: false` to keep app
+  serving, or `apps.enabled: false` to run without it. On the ArgoCD path this surfaces as a sync failure rather than a silent
   degradation, which is the intent — the alternative was a dataplane whose apps never start
   and nothing saying why. The Envoy gateway, dataproxy and tunnel-service ingress gate on
   `serving.renderGateway` (`gateway.enabled` with either app serving or zero trust), so

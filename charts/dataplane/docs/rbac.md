@@ -204,16 +204,17 @@ Out of scope: the deprecated knative-operator and kube-prometheus-stack subchart
 
 ## App serving
 
-App serving is off by default and requires `singleNamespace: false`.
+App serving requires `singleNamespace: false`.
 `templates/gateway/validate.yaml` refuses `apps.enabled: true` alongside `singleNamespace: true`,
-naming both exits. Since `singleNamespace` defaults on, `apps.enabled` defaults off — so the
-default install is self-consistent and never meets the refusal.
+naming both exits. Left unset, `apps.enabled` is on unless `singleNamespace` is true, so the
+default install, which is single-namespace, never meets the refusal.
 
 To turn app serving on, layer this over the zero-trust default:
 
 ```yaml
-# App serving needs both of these keys. The Knative Serving / Kourier stack reads
-# cluster-wide, so the chart refuses to render it while singleNamespace is true.
+# singleNamespace: false alone turns app serving on; apps.enabled: true states it.
+# The Knative Serving / Kourier stack reads cluster-wide, so the chart refuses to
+# render it while singleNamespace is true.
 apps:
   enabled: true
 # low_privilege is the older name for this key. If another values file you layer
@@ -237,11 +238,11 @@ vendored Knative stack renders whenever app serving is on and delivered by this 
 whether or not zero trust is. The deprecated `knative-operator` path (`gateway.enabled:
 false`) is out of scope here, as it is everywhere else in this document.
 
-That default lives in the `apps.enabled` helper's missing final branch, not in `values.yaml`.
+That default lives in the `apps.enabled` helper's final branch, not in `values.yaml`.
 Writing `apps.enabled: false` there would make the key *set*, and precedence is
-`apps.enabled > serving.enabled > false` — so the deprecated `serving.enabled` would stop
-being consulted and every install still using it would lose app serving while explicitly
-asking for it. `tests/values/dataplane.aws.zero-trust-serving-enabled.yaml` is the golden that
+`apps.enabled > serving.enabled > not singleNamespace` — so the deprecated `serving.enabled`
+would stop being consulted and every install still using it would lose app serving while
+explicitly asking for it. `tests/values/dataplane.aws.zero-trust-serving-enabled.yaml` is the golden that
 catches that.
 
 It is the one component the flag governs by refusing outright rather than by narrowing a
