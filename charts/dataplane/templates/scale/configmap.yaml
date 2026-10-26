@@ -29,7 +29,10 @@ data:
       agent:
         enabled: true
         url: {{ include "scale-agent.url" . }}
-        dailyDiagnoses: {{ .Values.scale.agent.dailyDiagnoses | int }}
+        {{- /* 0 in the values means no cap, as for the proxy's budgets; the runtime reads 0 as its
+               default and a negative number as no cap. */}}
+        {{- $daily := .Values.scale.agent.dailyDiagnoses | int }}
+        dailyDiagnoses: {{ if gt $daily 0 }}{{ $daily }}{{ else }}-1{{ end }}
         timeout: {{ printf "%ds" (.Values.scale.agent.timeoutSeconds | int) }}
       {{- end }}
       {{- /* The image Scale's jobs run in (scale.jobs.image in the runtime), with the operator's tag. */}}
@@ -37,6 +40,10 @@ data:
       {{- with ($jobs.image | default dict).repository }}
       jobs:
         image: {{ printf "%s:%s" . ($jobs.image.tag | default $.Values.image.union.tag | default $.Chart.AppVersion) | quote }}
+        {{- /* A job's evidence holds a log tail only where Scale's agent may read logs. */}}
+        readLogs: {{ dig "readLogs" true ($.Values.scale.agent | default dict) }}
+        {{- /* Phase 1: a person starts every job, so this stays false unless the values say so. */}}
+        autoStart: {{ $jobs.autoStart | default false }}
       {{- end }}
       {{- /*
       The usage price table holds AWS prices only, and an empty detectors.cost.cloud means it
@@ -64,6 +71,12 @@ data:
           apiUrl: {{ $git.github.apiUrl | quote }}
           webUrl: {{ $git.github.webUrl | quote }}
           privateKeyPath: /etc/scale/github/{{ $git.privateKeySecret.key }}
+        {{- /* The rest of scale.git; scale.config.git is refused (templates/scale/_scale.tpl). */}}
+        {{- range $k := list "pollInterval" "authorName" "authorEmail" "maxFiles" "maxFileBytes" }}
+        {{- with get $git $k }}
+        {{ $k }}: {{ . | toJson }}
+        {{- end }}
+        {{- end }}
         {{- with $git.sources }}
         sources:
           {{- toYaml . | nindent 10 }}

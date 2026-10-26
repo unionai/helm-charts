@@ -28,6 +28,10 @@ global:
 secrets:
   admin:
     clientSecret: test-not-real-secret
+# Scale needs a caller key or the proxy NetworkPolicy before it serves anything; checked on its own
+# below.
+scale:
+  callerAuth: {secretName: scale-caller}
 YAML
 
 cat > "$tmp/secure.yaml" <<'YAML'
@@ -144,10 +148,62 @@ must_render --set scale.enabled=true
 must_render -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true
 must_render -f "$tmp/secure.yaml" --set scale.git.enabled=true --set scale.git.github.appId=1
 
+# Scale needs a caller key or the proxy NetworkPolicy, whatever else is on.
+must_fail "callerAuth.secretName or scale.proxyNetworkPolicy.enabled" --set scale.enabled=true --set scale.callerAuth.secretName=
+must_render --set scale.enabled=true --set scale.callerAuth.secretName= --set scale.proxyNetworkPolicy.enabled=true
+must_fail "callerAuth.secretName or scale.proxyNetworkPolicy.enabled" -f "$tmp/secure.yaml" \
+  --set scale.callerAuth.secretName= --set scale.proxyNetworkPolicy.enabled=false
+
+# A serverless (multi-org) cluster refuses Scale until caller keys are per org, by either marker; a
+# cluster without Scale still renders.
+crm=clusterresourcesync.config
+must_fail "serverless (multi-org)" -f "$tmp/secure.yaml" --set "$crm.clusterResourcesPrivate.app.isServerless=true"
+must_fail "serverless (multi-org)" -f "$tmp/secure.yaml" --set "$crm.cluster_resources.isServerless=true"
+must_render -f "$tmp/secure.yaml" --set "$crm.clusterResourcesPrivate.app.isServerless=false"
+must_render --set "$crm.clusterResourcesPrivate.app.isServerless=true" --set "$crm.cluster_resources.isServerless=true"
+
 # Every way to turn writes on goes through the guards.
 for on in scale.config.fix.enabled scale.git.enabled; do
   must_fail "scale.auth.appId" --set scale.enabled=true --set "$on=true"
 done
+# Jobs are off by default, and setting their image turns them on like a write: with only caller
+# auth the render fails; with everything fixes need it renders.
+must_render --set scale.enabled=true
+expect_not scaleconfig "jobs:"
+must_fail "scale.auth.appId" --set scale.enabled=true --set scale.jobs.image.repository=scale-job
+must_fail "fixWriter" -f "$tmp/secure.yaml" --set scale.jobs.image.repository=scale-job --set scale.fixWriter.secretName=
+must_fail "proxyNetworkPolicy" -f "$tmp/secure.yaml" --set scale.jobs.image.repository=scale-job --set scale.proxyNetworkPolicy.enabled=false
+must_fail "serviceAccount.create" -f "$tmp/secure.yaml" --set scale.jobs.image.repository=scale-job --set scale.serviceAccount.create=false
+# Scale never starts a job by itself unless the values say so, and a job's evidence holds a log
+# tail only where the agent may read logs.
+must_render -f "$tmp/secure.yaml" --set scale.jobs.image.repository=scale-job
+expect scaleconfig "autoStart: false"
+expect scaleconfig "readLogs: true"
+must_render -f "$tmp/secure.yaml" --set scale.jobs.image.repository=scale-job --set scale.jobs.autoStart=true --set scale.agent.readLogs=false
+expect scaleconfig "autoStart: true"
+expect scaleconfig "readLogs: false"
+# useRuntimeCredentials stands in for the writer only in the dogfood org.
+must_fail "dogfood org only" -f "$tmp/secure.yaml" --set scale.fixWriter.secretName= --set scale.config.fix.enabled=true \
+  --set scale.config.fix.writer.useRuntimeCredentials=true
+must_render -f "$tmp/secure.yaml" --set scale.fixWriter.secretName= --set scale.config.fix.enabled=true \
+  --set scale.config.fix.writer.useRuntimeCredentials=true --set global.ORG_NAME=dogfood
+
+# scale.git's commit author, poll interval and read limits reach the runtime's config; unset, the
+# runtime's defaults apply.
+git_on=(-f "$tmp/secure.yaml" --set scale.git.enabled=true --set scale.git.github.appId=1)
+must_render "${git_on[@]}" --set scale.git.authorName="Acme Bot" --set scale.git.authorEmail=bot@acme.com \
+  --set scale.git.pollInterval=30s --set scale.git.maxFiles=500 --set scale.git.maxFileBytes=2097152
+for want in 'authorName: "Acme Bot"' 'authorEmail: "bot@acme.com"' 'pollInterval: "30s"' 'maxFiles: 500' 'maxFileBytes: 2097152'; do
+  expect scaleconfig "$want"
+done
+must_render "${git_on[@]}"
+for unset in authorName pollInterval maxFiles; do expect_not scaleconfig "$unset"; done
+
+# 0 daily diagnoses means no cap (-1 to the runtime), as in the operator chart.
+must_render -f "$tmp/agent.yaml" --set scale.agent.dailyDiagnoses=0
+expect scaleconfig "dailyDiagnoses: -1"
+must_render -f "$tmp/agent.yaml"
+expect scaleconfig "dailyDiagnoses: 20"
 must_fail "not scale.config.git" --set scale.enabled=true --set scale.config.git.enabled=true
 for spelling in scale.config.Fix.enabled scale.config.FIX.enabled scale.config.fix.Enabled scale.config.Git.enabled scale.git.Enabled; do
   must_fail "only read lowercase" -f "$tmp/secure.yaml" --set "$spelling=true"
@@ -308,6 +364,15 @@ expect proxyconfig 'cpu: 100m'
 expect proxyconfig 'memory: 512Mi'
 must_render -f "$tmp/agent-base.yaml" -f "$tmp/anthropic.yaml" --set scale.agent.minScale=1
 expect proxyconfig 'minScale: 1'
+
+# With egress on and no model rules the agent reaches only the Anthropic API, so the proxy refuses
+# any other endpoint people save in the console.
+must_render -f "$tmp/agent-base.yaml" -f "$tmp/egress.yaml"
+expect proxyconfig 'anthropicOnly: true'
+must_render -f "$tmp/agent-base.yaml" -f "$tmp/egress.yaml" -f "$tmp/gateway-egress.yaml"
+expect proxyconfig 'anthropicOnly: false'
+must_render -f "$tmp/agent-base.yaml"
+expect proxyconfig 'anthropicOnly: false'
 
 if [ "$failures" -gt 0 ]; then echo "$failures Scale guard check(s) failed"; exit 1; fi
 echo "Scale guards OK"

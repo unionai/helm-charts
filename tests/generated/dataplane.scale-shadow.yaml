@@ -5455,6 +5455,11 @@ data:
           pathTemplate: namespace-{{.KubernetesNamespace}}.pod-{{.KubernetesPodName}}.cont-{{.KubernetesContainerName}}
           prefix: persisted-logs
         sourceType: ObjectStore
+      scale:
+        callerKeyPath: /etc/union/scale-caller/caller-key
+        cluster: test-cluster-name
+        organization: union
+        storageContainer: ""
       smConfig:
         awsConfig:
           account: ''
@@ -5472,6 +5477,7 @@ data:
       scale:
         enabled: true
         clusterName: "test-cluster-name"
+        callerKeyPath: /etc/union/scale-caller/caller-key
         organization: "union"
         cluster: "test-cluster-name"
         conversationRetention: "2160h"
@@ -8995,7 +9001,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "ec7040aec85dd1af0443f693c1ab58a89d1e6dbfac276ff3660445afdb5ffe60"
+        configChecksum: "9d5ffff62c62a0162b10232d97af584732bd98308b0c8f19284174d0dbaab5f2"
         
       labels:
         
@@ -9007,7 +9013,7 @@ spec:
     spec:
       serviceAccountName: union-system
       securityContext:
-        {}
+        fsGroup: 65532
       volumes:
         - name: config-volume
           configMap:
@@ -9015,6 +9021,13 @@ spec:
         - name: secret-volume
           secret:
             secretName: union-secret-auth
+        - name: scale-caller
+          secret:
+            secretName: scale-caller
+            defaultMode: 0440
+            items:
+              - key: caller-key
+                path: caller-key
       containers:
         - name: dataproxy
           securityContext:
@@ -9034,6 +9047,9 @@ spec:
               name: config-volume
             - mountPath: /etc/union/secret
               name: secret-volume
+            - mountPath: /etc/union/scale-caller
+              name: scale-caller
+              readOnly: true
           args:
             - dataproxy
             - serve
@@ -10255,7 +10271,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "ec7040aec85dd1af0443f693c1ab58a89d1e6dbfac276ff3660445afdb5ffe60"
+        configChecksum: "9d5ffff62c62a0162b10232d97af584732bd98308b0c8f19284174d0dbaab5f2"
         karpenter.sh/do-not-disrupt: "true"
         
       labels:
@@ -10275,9 +10291,17 @@ spec:
         - name: secret-volume
           secret:
             secretName: union-secret-auth
+        - name: scale-caller
+          secret:
+            secretName: scale-caller
+            optional: true
+            defaultMode: 0440
+            items:
+              - key: caller-key
+                path: caller-key
       serviceAccountName: union-system
       securityContext:
-        {}
+        fsGroup: 65532
       containers:
         - name: operator-proxy
           securityContext:
@@ -10297,6 +10321,9 @@ spec:
               name: config-volume
             - mountPath: /etc/union/secret
               name: secret-volume
+            - mountPath: /etc/union/scale-caller
+              name: scale-caller
+              readOnly: true
           args:
             - operator
             - proxy
@@ -10396,7 +10423,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "ec7040aec85dd1af0443f693c1ab58a89d1e6dbfac276ff3660445afdb5ffe60"
+        configChecksum: "9d5ffff62c62a0162b10232d97af584732bd98308b0c8f19284174d0dbaab5f2"
         
       labels:
         

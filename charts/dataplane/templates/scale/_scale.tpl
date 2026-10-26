@@ -77,6 +77,7 @@ agent:
   {{- /* The agent's model and key as people save them in the console, read from this cluster's
          secret store; see templates/scale/_agent.tpl. */}}
   modelFromSecret: {{ include "scale.agent.modelFromConsole" . | eq "true" }}
+  anthropicOnly: {{ include "scale.agent.anthropicOnly" . | eq "true" }}
   {{- /* "Keep Scale warm": minScale 1 or more wins over the console's setting; the requests
          price one running replica. */}}
   minScale: {{ $s.agent.minScale | default 0 | int }}
@@ -138,14 +139,36 @@ vendored path and Kourier's 3scale-kourier-gateway on the knative-operator path.
 {{- end -}}
 
 {{/*
-"true" when Scale is set up to write: fixes or code pushes, turned on in either place the config
-can say so (scale.config.fix.enabled, scale.git.enabled, scale.config.git.enabled). Every guard
-that protects writes keys off this, so no setting can turn writes on around them.
+"true" when jobs are on: the chart sets the job task's image (scale.jobs.image.repository), and the
+runtime turns jobs on whenever it has one.
+*/}}
+{{- define "scale.jobs" -}}
+{{- if dig "jobs" "image" "repository" "" (.Values.scale | default dict) -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/*
+"true" when Scale is set up to write: fixes, code pushes or jobs, turned on in any place the
+config can say so (scale.config.fix.enabled, scale.git.enabled, scale.config.git.enabled,
+scale.jobs.image.repository). Every guard that protects writes keys off this, so no setting can
+turn writes on around them.
 */}}
 {{- define "scale.writes" -}}
 {{- $config := .Values.scale.config | default dict -}}
 {{- $git := .Values.scale.git | default dict -}}
-{{- if or (dig "fix" "enabled" false $config) (dig "git" "enabled" false $config) (dig "enabled" false $git) -}}
+{{- if or (dig "fix" "enabled" false $config) (dig "git" "enabled" false $config) (dig "enabled" false $git) (include "scale.jobs" .) -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/*
+"true" on a serverless cluster, which runs tasks for many orgs. The serverless dataplane values mark
+it in the cluster resource manager's config (clusterResourcesPrivate.app.isServerless).
+*/}}
+{{- define "scale.serverless" -}}
+{{- $crm := dig "config" dict (.Values.clusterresourcesync | default dict) -}}
+{{- if or (dig "clusterResourcesPrivate" "app" "isServerless" false $crm) (dig "cluster_resources" "isServerless" false $crm) -}}
 true
 {{- end -}}
 {{- end -}}
@@ -169,6 +192,12 @@ for (unionai/cloud scale/README.md, Security).
 {{- if .Values.scale.enabled }}
 {{- if not (include "scale.org" .) }}
 {{- fail "scale: needs orgName (global.ORG_NAME): Scale's issues and the caller assertions the operator proxy checks name the organization" }}
+{{- end }}
+{{- /* The caller key is per cluster. On a cluster shared by many orgs, the operator proxy could
+       not tell one org's signed calls from another's key, so Scale stays off there until caller
+       keys are per org. */}}
+{{- if include "scale.serverless" . }}
+{{- fail "scale: Scale cannot run on a serverless (multi-org) cluster yet: caller keys are per cluster, not per org. Leave scale.enabled off" }}
 {{- end }}
 {{- /* The runtime's config loader matches keys case-insensitively, so Fix.Enabled would turn fixes
        on while every check below, which reads fix.enabled, saw nothing. Refuse any other spelling. */}}
@@ -194,31 +223,43 @@ for (unionai/cloud scale/README.md, Security).
 {{- if and .Values.scale.storageContainer (not .Values.storage.enableMultiContainer) }}
 {{- fail "scale: scale.storageContainer needs storage.enableMultiContainer, or Scale cannot reach its bucket" }}
 {{- end }}
+{{- /* Without a caller key the operator proxy believes no claim and serves reads to anything that
+       reaches it, for any org and project; the proxy NetworkPolicy at least keeps out pods outside
+       the release namespace. Scale needs one of the two, whatever else is on. */}}
+{{- if and (not .Values.scale.callerAuth.secretName) (not (include "scale.proxyNetworkPolicy.rendered" .)) }}
+{{- fail "scale: Scale needs scale.callerAuth.secretName or scale.proxyNetworkPolicy.enabled, so a pod that reaches the operator proxy cannot read every project's issues" }}
+{{- end }}
 {{- if include "scale.writes" . }}
 {{- if not .Values.scale.auth.appId }}
-{{- fail "scale: fixes and pushes need scale.auth.appId (the cluster's Scale app), not the operator's app" }}
+{{- fail "scale: fixes, pushes and jobs need scale.auth.appId (the cluster's Scale app), not the operator's app" }}
 {{- end }}
 {{- if not .Values.scale.signing.secretName }}
-{{- fail "scale: fixes and pushes need scale.signing.secretName, so a task pod cannot forge approvals" }}
+{{- fail "scale: fixes, pushes and jobs need scale.signing.secretName, so a task pod cannot forge approvals" }}
 {{- end }}
 {{- if .Values.scale.signing.acceptUnsignedUntil }}
-{{- fail "scale: fixes and pushes stay off while scale.signing.acceptUnsignedUntil keeps unsigned objects readable" }}
+{{- fail "scale: fixes, pushes and jobs stay off while scale.signing.acceptUnsignedUntil keeps unsigned objects readable" }}
 {{- end }}
 {{- if not .Values.scale.callerAuth.secretName }}
-{{- fail "scale: fixes and pushes need scale.callerAuth.secretName, so the operator proxy can check who the dataproxy says is calling" }}
+{{- fail "scale: fixes, pushes and jobs need scale.callerAuth.secretName, so the operator proxy can check who the dataproxy says is calling" }}
 {{- end }}
 {{- if not .Values.scale.storageContainer }}
-{{- fail "scale: fixes and pushes need scale.storageContainer, a bucket user task roles cannot reach" }}
+{{- fail "scale: fixes, pushes and jobs need scale.storageContainer, a bucket user task roles cannot reach" }}
 {{- end }}
 {{- if not .Values.scale.serviceAccount.create }}
-{{- fail "scale: fixes and pushes need scale.serviceAccount.create, so Scale does not run as the operator" }}
+{{- fail "scale: fixes, pushes and jobs need scale.serviceAccount.create, so Scale does not run as the operator" }}
 {{- end }}
 {{- $fix := dig "fix" dict $config }}
-{{- if and (dig "enabled" false $fix) (not .Values.scale.fixWriter.secretName) (not (dig "writer" "useRuntimeCredentials" false $fix)) }}
-{{- fail "scale: fixes need scale.fixWriter.secretName, the development-only writer app (provisionctl create scalefixwriter)" }}
+{{- $runtimeCredentials := dig "writer" "useRuntimeCredentials" false $fix }}
+{{- /* The runtime refuses useRuntimeCredentials outside Union's own org (scale/config/fix.go), so
+       the chart does not take it in place of the writer anywhere else. */}}
+{{- if and $runtimeCredentials (ne (include "scale.org" .) "dogfood") }}
+{{- fail "scale: scale.config.fix.writer.useRuntimeCredentials is for the dogfood org only; set scale.fixWriter.secretName" }}
+{{- end }}
+{{- if and (or (dig "enabled" false $fix) (include "scale.jobs" .)) (not .Values.scale.fixWriter.secretName) (not $runtimeCredentials) }}
+{{- fail "scale: fixes and jobs need scale.fixWriter.secretName, the development-only writer app (provisionctl create scalefixwriter)" }}
 {{- end }}
 {{- if not (include "scale.proxyNetworkPolicy.rendered" .) }}
-{{- fail "scale: fixes and pushes need scale.proxyNetworkPolicy.enabled, so pods outside the release namespace cannot reach the operator proxy" }}
+{{- fail "scale: fixes, pushes and jobs need scale.proxyNetworkPolicy.enabled, so pods outside the release namespace cannot reach the operator proxy" }}
 {{- end }}
 {{- end }}
 {{- if .Values.scale.agent.enabled }}

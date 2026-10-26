@@ -81,3 +81,17 @@ since it would have nowhere to save them.
 true
 {{- end -}}
 {{- end -}}
+
+{{/*
+"true" when the agent takes the console's model settings but its network policy lets it reach only
+the Anthropic API: egress is on and scale.agent.networkPolicy.egress.model adds no other endpoint.
+The operator proxy then refuses any other model endpoint in SetAgentModel (agent.anthropicOnly), so a
+person cannot save one the agent could not reach.
+*/}}
+{{- define "scale.agent.anthropicOnly" -}}
+{{- $np := .Values.scale.agent.networkPolicy }}
+{{- $egress := $np.egress | default dict }}
+{{- if and (include "scale.agent.modelFromConsole" .) $np.enabled $egress.enabled (not $egress.model) -}}
+true
+{{- end -}}
+{{- end -}}
