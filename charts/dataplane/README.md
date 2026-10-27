@@ -473,18 +473,18 @@ can't derive from the flag.
 `low_privilege` resolves to the same setting. Set either key, or both to the same value; the
 chart refuses to render if both are set and disagree. Unset, both mean single-namespace.
 
-**App serving is on by default only at `singleNamespace: false`, and under
-`zero_trust.enabled: true` it requires it.** On that path this chart provides app serving
-itself: its RBAC is declared per binary like every other component's, and every grant that can
-be namespaced is —
-but the Knative binaries read cluster-wide however their RBAC is written, so the chart
-**refuses to render** `apps.enabled: true` alongside `singleNamespace: true` rather than
-break the promise above. Left unset, `apps.enabled` is on unless `singleNamespace` is true,
+**App serving is on by default only at `singleNamespace: false`, and on the vendored
+gateway (`gateway.enabled: true`, the default) it requires it.** On that path this chart
+provides app serving itself: its RBAC is declared per binary like every other component's, and
+every grant that can be namespaced is — but the Knative binaries read cluster-wide however
+their RBAC is written, so the chart **refuses to render** `apps.enabled: true` alongside
+`singleNamespace: true` rather than break the promise above. Left unset, `apps.enabled` is on unless `singleNamespace` is true,
 so a default install never meets that refusal.
 
-With zero trust off, app serving comes from the `knative-operator` subchart instead, which
-carries its own cluster-scoped RBAC (see the table below) and is not covered by that refusal —
-that combination renders at either `singleNamespace` setting. The Envoy gateway, dataproxy and
+With `gateway.enabled: false`, app serving comes from the deprecated `knative-operator`
+subchart instead, which carries its own cluster-scoped RBAC (see the table below) and is not
+covered by that refusal — that combination renders at either `singleNamespace` setting. Turning
+zero trust off does not select it: `gateway.enabled` defaults to true either way. The Envoy gateway, dataproxy and
 tunnel ingress are unaffected by `apps.enabled` and work either way. See
 [docs/rbac.md](docs/rbac.md#app-serving).
 
