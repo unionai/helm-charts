@@ -390,8 +390,8 @@ From the operator:
   tasks run in. It renders under `singleNamespace` too, on the same conditions (see
   [`singleNamespace` replaces `low_privilege`](#singlenamespace-replaces-low_privilege)).
   Anything pinning that grant by role name should follow the move.
-- `nonResourceURLs: [/metrics]` left its `ClusterRole`. It was emitted only at
-  `singleNamespace: false`, so the default install never had it.
+- `nonResourceURLs: [/metrics]` moved to the same `-operator-cluster-read` `ClusterRole`. It
+  is still granted only at `singleNamespace: false`, so the default install never had it.
 - `post` left the `flyteworkflows` rule (`flytepropeller`'s rule, not the operator's). It is
   not a Kubernetes verb, so no request ever matched it.
 
