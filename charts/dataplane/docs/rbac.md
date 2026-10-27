@@ -1,8 +1,8 @@
 # Third-party subchart RBAC
 
 What each dependency subchart is allowed to read, and why. [App serving](#app-serving) is
-here too: it is not a subchart, but it is the one component the flag governs by refusing to
-render.
+here too: it is not a subchart, but it is the one component whose cluster-wide reads the flag
+cannot narrow, so the flag turns it off by default instead.
 
 For Union's own components — the slot model, the work-namespace bindings and the identity
 axis — see [rbac-union.md](rbac-union.md). Two points about them are covered here because
@@ -207,17 +207,17 @@ Out of scope: the deprecated knative-operator and kube-prometheus-stack subchart
 
 ## App serving
 
-App serving requires `singleNamespace: false`. `templates/gateway/validate.yaml` refuses
-`apps.enabled: true` alongside `singleNamespace: true`, and the message names both exits.
 Left unset, `apps.enabled` is on unless `singleNamespace` is true, so the default install,
-which is single-namespace, never meets the refusal.
+which is single-namespace, runs without app serving. Under `singleNamespace: true`, setting
+`apps.enabled: true` (or the deprecated `serving.enabled: true`) turns it on, and with it the
+Knative stack's cluster-wide reads described below. That is the one exception to
+single-namespace mode's fixed list of cluster-scoped grants, and it is opt-in.
 
-To turn app serving on, layer this over the zero-trust default:
+The recommended way to run app serving is multi-namespace. Layer this over the zero-trust
+default:
 
 ```yaml
 # singleNamespace: false alone turns app serving on; apps.enabled: true states it.
-# The Knative Serving / Kourier stack reads cluster-wide, so the chart refuses to
-# render it while singleNamespace is true.
 apps:
   enabled: true
 # low_privilege is the older name for this key. If another values file you layer
@@ -235,9 +235,10 @@ clusterresourcesync:
   enabled: true
 ```
 
-The refusal covers the vendored delivery path — `serving.useVendoredGateway`, i.e.
-`apps.enabled` with `gateway.enabled` (the default) — and applies whether or not zero trust
-is on. The vendored Knative stack renders whenever app serving is on and delivered by this
+Under `singleNamespace: true` with app serving on, the Knative workloads keep their
+`cluster-read` ClusterRoles and the webhook its name-pinned `cluster-write`, while the
+work-namespace grant, `<ns>-work-ns`, becomes a Role in the release namespace, where the apps
+run. The vendored Knative stack renders whenever app serving is on and delivered by this
 chart. The deprecated `knative-operator` path (`gateway.enabled: false`) is out of scope
 here, as it is everywhere else in this document.
 
@@ -248,10 +249,9 @@ would stop being consulted. Every install still using it would lose app serving 
 explicitly asking for it. `tests/values/dataplane.aws.zero-trust-serving-enabled.yaml` is the
 golden that catches that.
 
-App serving is the one component the flag governs by refusing outright rather than by
-narrowing a grant. The grant is writable: app serving's RBAC is declared per binary through
-this chart's slot framework, like every other component's, and every grant that can be
-namespaced is. The refusal follows from what the *images* do:
+App serving is the one component the flag cannot narrow. Its RBAC is declared per binary
+through this chart's slot framework, like every other component's, and every grant that can
+be namespaced is. The rest follows from what the *images* do:
 
 - **The watches are unscoped.** The deployments take only `SYSTEM_NAMESPACE` (where
   Knative's own config lives); upstream ships no namespace-scoped install, and the binaries
@@ -266,32 +266,32 @@ namespaced is. The refusal follows from what the *images* do:
   exists to guard on.
 
 So app serving reads every namespace in the cluster. `singleNamespace: true` promises that
-Union's cluster-scoped reads are a fixed list, and Knative's are not on it. The webhook
-configurations confirm this from the other direction: every rule has `scope: "*"` and omits
-`namespaceSelector`, so admission intercepts cluster-wide regardless of RBAC.
+Union's cluster-scoped reads are a fixed list, and Knative's are on it only when app serving
+is explicitly on: the scope allowlist in `tests/test-rbac-guards.sh` names them under that
+condition. The webhook configurations confirm this from the other direction: every rule has
+`scope: "*"` and omits `namespaceSelector`, so admission intercepts cluster-wide regardless
+of RBAC.
 
-The refusal is all the flag does here; the grants are the same in the only posture app
-serving renders in. The release notes give the per-component breakdown.
+The default is all the flag does here; the Knative grants are the same in both modes. The
+release notes give the per-component breakdown.
 
-**Why it refuses rather than dropping the stack.** Rendering nothing would be cheaper and
-wrong in a familiar way: `apps.enabled` would stay true with no backend, so the operator
-would keep advertising app serving and keep its (namespaced) `serving.knative.dev` grant,
-and every Knative Service it created would sit unreconciled with nothing reporting why.
-Refusing keeps `apps.enabled` meaning one thing, so the operator's config and Role stay
-correct by construction rather than through a second helper that must be kept in step.
+**Why the stack renders whole or not at all.** Rendering `apps.enabled: true` without the
+stack would be wrong in a familiar way: the operator would keep advertising app serving and
+keep its (namespaced) `serving.knative.dev` grant, and every Knative Service it created would
+sit unreconciled with nothing reporting why. So `apps.enabled` means one thing in both
+modes, and the operator's config and Role stay correct by construction.
 
 **What `apps.enabled: false` keeps.** The Envoy gateway, dataproxy and tunnel-service ingress
 gate on `serving.renderGateway` — `gateway.enabled` with either app serving or zero trust —
 so under zero trust they survive `apps.enabled: false` on their own. They hold no
-cluster-scoped RBAC, and their static dataplane routes are what zero trust is. The guard
-therefore forces a choice between app serving and `singleNamespace`, never between zero
-trust and `singleNamespace`.
+cluster-scoped RBAC, and their static dataplane routes are what zero trust is. Turning app
+serving off never costs zero trust.
 
 `tests/values/dataplane.aws.zero-trust{,-overrides,-serving-enabled}.yaml` turn app serving
 on and so pin `low_privilege: false`, the alias. `-apps-disabled` leaves scope at the
 default, which is what lets it prove `apps.enabled` beats `serving.enabled`: a regression
-reading it as true would hit this guard and fail the render rather than quietly match.
-`tests/test-rbac-guards.sh` asserts the refusal itself, which no golden can.
+reading it as true would render the Knative stack into that golden.
+`tests/test-rbac-guards.sh` asserts the default and the opt-in under `singleNamespace`.
 
 ## Notes
 

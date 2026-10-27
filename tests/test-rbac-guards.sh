@@ -500,14 +500,13 @@ expect-render "watch namespace set but the subchart renders no controller RBAC" 
   --set ingress-nginx.rbac.create=false \
   --set ingress-nginx.controller.scope.namespace=elsewhere
 
-echo "- app serving and singleNamespace are refused together, not silently reconciled"
+echo "- app serving under singleNamespace renders only when asked for"
 zt=(--set zero_trust.enabled=true --set knative-operator.enabled=false --set orgName=test-org)
 expect-manifest "the stack renders with apps on and singleNamespace off" present "name: union-knative-controller-cluster-read" \
   "${zt[@]}" --set apps.enabled=true --set singleNamespace=false
 expect-manifest "and its Kourier half with it" present "name: union-knative-kourier-cluster-read" \
   "${zt[@]}" --set apps.enabled=true --set singleNamespace=false
-expect-refusal "apps on at the singleNamespace default" \
-  "requires singleNamespace: false" \
+expect-manifest "apps on at the singleNamespace default renders the stack" present "name: union-knative-controller-cluster-read" \
   "${zt[@]}" --set apps.enabled=true
 
 expect-manifest "the default zero-trust install renders, with no Knative stack" \
@@ -533,8 +532,8 @@ expect-manifest "unless serving.enabled turns it off" \
 expect-manifest "or apps.enabled does" \
   absent "name: union-knative-controller-cluster-read" \
   "${zt[@]}" --set apps.enabled=false --set singleNamespace=false
-expect-refusal "the deprecated serving.enabled on at the singleNamespace default" \
-  "requires singleNamespace: false" \
+expect-manifest "the deprecated serving.enabled on at the singleNamespace default renders it too" \
+  present "name: union-knative-controller-cluster-read" \
   "${zt[@]}" --set serving.enabled=true
 
 echo "- the uvol broker's block-mode default follows singleNamespace"
@@ -2279,6 +2278,42 @@ dataplane-nginx-ingressclass read networking.k8s.io ingressclasses get,list,watc
 flyte-webhook-cleanup-union read admissionregistration.k8s.io mutatingwebhookconfigurations get flyte-pod-webhook
 flyte-webhook-cleanup-union pinned-write admissionregistration.k8s.io mutatingwebhookconfigurations delete flyte-pod-webhook
 
+# App serving on the vendored gateway, which renders under singleNamespace only when
+# apps.enabled (or the deprecated serving.enabled) is set. Knative's informers are not
+# namespace-scoped, so these reads are cluster-wide in either mode.
+union-knative-controller-cluster-read read core services list,watch
+union-knative-controller-cluster-read read core endpoints list,watch
+union-knative-controller-cluster-read read core namespaces list,watch
+union-knative-controller-cluster-read read serving.knative.dev * list,watch
+union-knative-controller-cluster-read read autoscaling.internal.knative.dev * list,watch
+union-knative-controller-cluster-read read networking.internal.knative.dev * list,watch
+union-knative-controller-cluster-read read caching.internal.knative.dev * list,watch
+union-knative-controller-cluster-read read apps deployments list,watch
+union-knative-activator-cluster-read read core services list,watch
+union-knative-activator-cluster-read read core endpoints list,watch
+union-knative-activator-cluster-read read serving.knative.dev revisions list,watch
+union-knative-autoscaler-cluster-read read core pods list,watch
+union-knative-autoscaler-cluster-read read core services list,watch
+union-knative-autoscaler-cluster-read read discovery.k8s.io endpointslices list,watch
+union-knative-autoscaler-cluster-read read coordination.k8s.io leases list,watch
+union-knative-autoscaler-cluster-read read autoscaling.internal.knative.dev * list,watch
+union-knative-autoscaler-cluster-read read networking.internal.knative.dev * list,watch
+union-knative-autoscaler-cluster-read read serving.knative.dev revisions list,watch
+union-knative-autoscaler-cluster-read read apps deployments list,watch
+union-knative-autoscaler-cluster-read read autoscaling horizontalpodautoscalers list,watch
+union-knative-kourier-cluster-read read core pods list,watch
+union-knative-kourier-cluster-read read core endpoints list,watch
+union-knative-kourier-cluster-read read core services list,watch
+union-knative-kourier-cluster-read read networking.internal.knative.dev ingresses list,watch
+union-knative-webhook-cluster-read read admissionregistration.k8s.io mutatingwebhookconfigurations list,watch
+union-knative-webhook-cluster-read read admissionregistration.k8s.io validatingwebhookconfigurations list,watch
+union-knative-webhook-cluster-read read core namespaces get union
+union-knative-webhook-cluster-write read admissionregistration.k8s.io mutatingwebhookconfigurations get webhook.serving.knative.dev
+union-knative-webhook-cluster-write pinned-write admissionregistration.k8s.io mutatingwebhookconfigurations update webhook.serving.knative.dev
+union-knative-webhook-cluster-write read admissionregistration.k8s.io validatingwebhookconfigurations get config.webhook.serving.knative.dev,validation.webhook.serving.knative.dev
+union-knative-webhook-cluster-write pinned-write admissionregistration.k8s.io validatingwebhookconfigurations update config.webhook.serving.knative.dev,validation.webhook.serving.knative.dev
+union-knative-webhook-cluster-write pinned-write core namespaces/finalizers update union
+
 outside-namespace operator-system-secrets-watcher
 
 subchart monitoring
@@ -2312,6 +2347,7 @@ max_features=(
 )
 MAX_APPS="${WORK_DIR}/max-apps.yaml"
 MAX_ZT="${WORK_DIR}/max-zero-trust.yaml"
+MAX_ZT_APPS="${WORK_DIR}/max-zero-trust-apps.yaml"
 scope_renders=()
 if render "${max_features[@]}" --set zero_trust.enabled=false \
     --set apps.enabled=true --set gateway.enabled=false --set knative-operator.enabled=true \
@@ -2327,6 +2363,13 @@ if render "${max_features[@]}" --set zero_trust.enabled=true --set knative-opera
 else
   checks=$((checks + 1)); failures=$((failures + 1))
   echo "  FAILED   the max-features zero-trust render: $(grep -o 'Error:.*' "${MAX_ZT}" | head -c 300)"
+fi
+if render "${max_features[@]}" --set zero_trust.enabled=true --set knative-operator.enabled=false \
+    --set orgName=test-org --set apps.enabled=true >"${MAX_ZT_APPS}" 2>&1; then
+  scope_renders+=(--render "every component, zero trust, app serving on the vendored gateway=${MAX_ZT_APPS}")
+else
+  checks=$((checks + 1)); failures=$((failures + 1))
+  echo "  FAILED   the max-features zero-trust render with app serving: $(grep -o 'Error:.*' "${MAX_ZT_APPS}" | head -c 300)"
 fi
 
 audit_status=0

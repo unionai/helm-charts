@@ -955,32 +955,25 @@ Also, in both modes:
   error on a values key nothing reads, so an overlay that still sets either is silently
   ignored; drop them.
 
-- **App serving is now off by default under `singleNamespace`.** `apps.enabled` (and the
-  deprecated `serving.enabled`) previously defaulted to *on*, so every install that set
-  neither got Knative Serving; 32 of the 37 dataplane snapshot fixtures did. With both unset
-  it is now on unless `singleNamespace` is true, which is the default, because the vendored
-  gateway cannot run app serving under `singleNamespace` (see the next entry). **A
-  single-namespace deployment relying on the default loses app serving on upgrade**, on the
-  vendored-gateway *and* the legacy knative-operator path. Set `singleNamespace: false` to
-  keep it; on the legacy path, `apps.enabled: true` also works. Check the generated overlays
-  in `unionai/cloud` for environments that never set it explicitly before pinning this
-  revision. `serving.enabled: true` still takes effect: `apps.enabled` is left null rather
-  than false so the deprecated key keeps being consulted.
-
-- **App serving now requires `singleNamespace: false`, and the chart refuses the alternative.**
-  The vendored Knative Serving / Kourier stack under `templates/gateway/` has no namespaced
-  form: `controller` gets its whole grant through an aggregated ClusterRole,
-  `knative-serving-core` needs namespaces, CRDs and the webhook configurations, and the
-  deployments take no watch-scope flag. `singleNamespace` therefore cannot scope it. **An
-  existing install that sets `apps.enabled: true` (or `serving.enabled: true`) on the
-  vendored gateway without `singleNamespace: false` fails to render on upgrade** with a
-  message naming both exits: set `singleNamespace: false` to keep app serving, or
-  `apps.enabled: false` to run without it. On the ArgoCD path this surfaces as a sync
-  failure, which is the intent, since the alternative was a dataplane whose apps never start
-  with no explanation. The Envoy gateway, dataproxy and tunnel-service ingress gate on
-  `serving.renderGateway` (`gateway.enabled` with either app serving or zero trust), so
-  `apps.enabled: false` leaves the zero-trust dataplane fully working.
-  ([docs/rbac.md](docs/rbac.md#app-serving))
+- **BREAKING: app serving is now off by default under `singleNamespace`.** `apps.enabled`
+  (and the deprecated `serving.enabled`) previously defaulted to *on*, so every install that
+  set neither got Knative Serving; 32 of the 37 dataplane snapshot fixtures did. With both
+  unset it is now on unless `singleNamespace` is true, which is the default. The vendored
+  Knative Serving / Kourier stack under `templates/gateway/` has no namespaced form: the
+  binaries' informers are not namespace-scoped, `knative-serving-core` needs namespaces, CRDs
+  and the webhook configurations, and the deployments take no watch-scope flag, so
+  `singleNamespace` cannot scope it, and the chart no longer turns it on implicitly in a mode
+  that promises a fixed list of cluster-scoped reads. **A single-namespace deployment
+  relying on the default loses app serving on upgrade**, on the vendored-gateway *and* the
+  legacy knative-operator path. Set `apps.enabled: true` to keep it in single-namespace mode,
+  which keeps Knative's cluster-wide reads as the one opt-in exception to the mode's list, or
+  move to `singleNamespace: false`. Check the generated overlays in `unionai/cloud` for
+  environments that never set it explicitly before pinning this revision.
+  `serving.enabled: true` still takes effect: `apps.enabled` is left null rather than false
+  so the deprecated key keeps being consulted. The Envoy gateway, dataproxy and
+  tunnel-service ingress gate on `serving.renderGateway` (`gateway.enabled` with either app
+  serving or zero trust), so `apps.enabled: false` leaves the zero-trust dataplane fully
+  working. ([docs/rbac.md](docs/rbac.md#app-serving))
 
 - **App serving: Knative TLS certificate provisioning is removed** on the vendored gateway.
   The `config-certmanager` ConfigMap and the `routing-serving-certs` `Certificate` are gone,
