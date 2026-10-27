@@ -218,6 +218,8 @@ Each component therefore declares the calls it makes:
 | Role | Grant | Granted when | Code path |
 |---|---|---|---|
 | `union-operator-comp-ns-read` | `apps` `deployments`, `daemonsets`, `statefulsets` `get,list,watch` | always | the cluster health snapshot, which reports every Union workload in the release namespace |
+| `union-operator-comp-ns-read` | `configmaps`, `podtemplates` `get` | always | the cluster health snapshot's component config hashes and the propeller shard pod template, both read by name |
+| `union-proxy-comp-ns-read` | `configmaps` `get` | always | the ClusterConfig service, which reads the same component ConfigMaps by name |
 | `union-operator-comp-ns-read` | `configmaps` `get,list,watch` on `union-operator`; `secrets` `list,watch` | `imageBuilder.enabled` | the image builder's reference-ConfigMap informer and mirror-secrets deleter, both of which startup waits on |
 | `union-operator-comp-ns-write` | `secrets` `get,update` on `operator.secretName` | `operator.enableTunnelService` | the tunnel token Secret |
 | `union-operator-comp-ns-write` | `secrets` `create`; `get,update` on the API key state Secret | `config.operator.apiKey.enabled` | the Eager API key cache |

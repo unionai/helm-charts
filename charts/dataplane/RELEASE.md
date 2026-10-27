@@ -15,6 +15,16 @@ are untangled. Several of these changes are breaking: read the sections below, e
   both scope modes** (#613). The grant is in `<release-ns>-operator-comp-ns-read`. Outside
   `singleNamespace`, no other operator grant lets it list Deployments there, and the cluster
   health snapshot needs them.
+- **The operator and proxy read the release namespace's component ConfigMaps in both scope
+  modes** ([cloud#19250](https://github.com/unionai/cloud/pull/19250)). The cluster health
+  snapshot and the proxy's ClusterConfig service `get` the tracked component ConfigMaps by
+  name, and the snapshot also reads the propeller shard PodTemplate.
+  `<release-ns>-operator-comp-ns-read` now grants `configmaps` and `podtemplates` `get`, and
+  a new `<release-ns>-proxy-comp-ns-read` grants `configmaps` `get`. Outside
+  `singleNamespace` nothing else granted them reliably: the snapshot dropped
+  `component_configs` and the ClusterConfig service reported the ConfigMaps as unreadable
+  whenever app serving was off or components had their own ServiceAccounts, and the shard
+  PodTemplate read was refused on every install.
 - **Node-capacity reporting is granted through `<release-ns>-operator-cluster-read`** (#565).
   `config.operator.clusterHealth.nodeCapacity.enabled` adds `get` to that role's `nodes` rule,
   and emits the rule even when the node informer's own gate is off. With `clusterWidePods` as

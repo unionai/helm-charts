@@ -1757,10 +1757,14 @@ expect-verb-resources "leaseworker's comp-ns-read is its Endpoints watch and not
   union-leaseworker-comp-ns-read get "endpoints"
 expect-verb-resources "and the operator's is its pod-metrics list, the image builder's informers and the snapshot's workload reads" \
   union-operator-comp-ns-read list "configmaps,daemonsets,deployments,pods,secrets,statefulsets"
-expect-verb-resources "with get only on the image builder's reference ConfigMap and the snapshot's workloads" \
-  union-operator-comp-ns-read get "configmaps,daemonsets,deployments,statefulsets"
-expect-verb-resources "and get only on the snapshot's workloads with the image builder off" \
-  union-operator-comp-ns-read get "daemonsets,deployments,statefulsets" --set imageBuilder.enabled=false
+expect-verb-resources "with get on the snapshot's workloads, component ConfigMaps and shard PodTemplate" \
+  union-operator-comp-ns-read get "configmaps,daemonsets,deployments,podtemplates,statefulsets"
+expect-verb-resources "and the same get with the image builder off" \
+  union-operator-comp-ns-read get "configmaps,daemonsets,deployments,podtemplates,statefulsets" --set imageBuilder.enabled=false
+expect-verb-resources "the proxy's comp-ns-read is its ClusterConfig service's ConfigMap get" \
+  union-proxy-comp-ns-read get "configmaps"
+expect-verb-resources "and grants no list, so the proxy caches no release-namespace ConfigMaps" \
+  union-proxy-comp-ns-read list ""
 for v in create update patch delete deletecollection; do
   expect-verb-resources "leaseworker's comp-ns-read grants no ${v}" \
     union-leaseworker-comp-ns-read "${v}" ""
@@ -1848,7 +1852,7 @@ expect-manifest "and is pinned to the propeller ConfigMap by name" \
   --set config.operator.syncClusterConfig.enabled=true
 
 for r in union-operator-work-ns-cluster-read union-proxy-work-ns-cluster-read \
-         union-operator-comp-ns-read \
+         union-operator-comp-ns-read union-proxy-comp-ns-read \
          union-leaseworker-work-ns-cluster-read union-webhook-work-ns-cluster-read \
          union-knative-controller-cluster-read union-knative-webhook-cluster-read \
          union-knative-autoscaler-cluster-read union-knative-activator-cluster-read \
