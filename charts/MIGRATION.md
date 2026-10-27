@@ -8,48 +8,38 @@ Tracking the migration story for the helm-charts cloud overlays. New entries at 
 
 ### What changed
 
-`low_privilege` is renamed `singleNamespace`. The flag always decided scope — whether Union
-runs in the release namespace with namespaced Roles, or across per-project namespaces with
-ClusterRoles — and the new name says so. What `singleNamespace: true` promises:
+`low_privilege` is renamed `singleNamespace`, because the flag has always decided scope:
+Union in the release namespace with namespaced Roles, or across per-project namespaces with
+ClusterRoles. The dataplane README's [RBAC section](dataplane/README.md#rbac) lists what
+`singleNamespace: true` promises.
 
-- Union's workloads, tasks and apps included, run in the release namespace, and every grant
-  that can be namespaced is.
-- Cluster-scoped reads come only from a fixed allowlist, each entry tied to the code that
-  needs it (`charts/dataplane/docs/rbac.md#what-singlenamespace-still-reads-cluster-wide`),
-  enforced by `tests/test-rbac-guards.sh`.
-- No cluster-scoped writes, except ones pinned to named objects (the legacy webhook cleanup
-  hook). nodeobserver and node-bootstrap, both off by default, are the listed exceptions:
-  each removes a startup taint from the node it runs on.
-
-**`low_privilege` still works, as an alias.** Nothing needs to change in an overlay that sets
-it: `low_privilege: true` and `low_privilege: false` resolve exactly as before. Both keys are
-now unset in `values.yaml`, and unset means single-namespace, as before. Setting both keys to
-different values fails the render, and so does a quoted string (`"false"`) for either, which
-previously read as true.
+**`low_privilege` still works as an alias**, and `true` and `false` resolve as before. Both
+keys are unset in `values.yaml`, which still means single-namespace. Two values now fail the
+render: the two keys set to different values, and a quoted string such as `"false"`, which
+used to read as true.
 
 **Single-namespace mode no longer switches features off.** It used to force
 `config.operator.collectUsages.enabled` to `false` and `config.operator.disableClusterPermissions`
 to `true`. Both now follow their own values:
 
 - `collectUsages` is on by default, so single-namespace operators start collecting usage. The
-  operator already confines its pod and pod-metrics reads to `limitNamespace`, so the
-  pod-metrics grant stays a Role in the release namespace.
-- `disableClusterPermissions` defaults to off, so the operator's node informer now runs in
-  single-namespace mode, and the chart adds a ClusterRole and ClusterRoleBinding,
-  `<release-ns>-operator-cluster-read`, granting `nodes` `list` and `watch`. That is the new
-  cluster-scoped read. The informer also enables GPU attribution by node label, the
-  Legacy/Shadow node-based billing collector, and cloud-provider detection from node labels.
+  operator confines its pod and pod-metrics reads to `limitNamespace`, so the pod-metrics
+  grant stays a Role in the release namespace.
+- `disableClusterPermissions` defaults to `false`, so the operator's node informer runs in
+  single-namespace mode too. The chart adds the ClusterRole and ClusterRoleBinding
+  `<release-ns>-operator-cluster-read`, granting `nodes` `list` and `watch`. The informer
+  drives GPU attribution by node label, the Legacy/Shadow node-based billing collector, and
+  cloud-provider detection from node labels.
 
-The RBAC gates that decide those grants now parse the operator's boolean flags the way the
-operator does (`strconv.ParseBool`): a string `"True"` or `"1"` counts as on, and a value the
-operator cannot parse fails the render.
+The chart parses those operator flags as the operator does (`strconv.ParseBool`) when
+deciding the grants: a string `"True"` or `"1"` counts as on, and a value the operator cannot
+parse fails the render.
 
 ### Operational impact
 
 - **A new cluster-scoped read on every single-namespace dataplane**: `nodes` `list`/`watch`
-  for the operator's ServiceAccount. An install identity confined to the release namespace
-  already could not deploy this chart (see the README's RBAC section), but the dataplane now
-  holds a cluster-scoped read it did not before.
+  for the operator's ServiceAccount. A namespace-confined install identity already could not
+  deploy this chart; see the dataplane README's RBAC section.
 - **Usage collection starts** on single-namespace dataplanes, and the operator's config
   checksum changes, so the operator and proxy roll on upgrade.
 - To keep the old behavior, set it explicitly:
@@ -63,23 +53,23 @@ operator cannot parse fails the render.
   ```
 
   With cluster permissions disabled, set `config.operator.clusterData.cloudProvider` (it
-  defaults to the top-level `provider`): the operator cannot detect it from node labels.
-- **Use one name for the scope flag across every values file you layer.** The examples
-  `examples/values.full-privilege.yaml` and `values-legacy.yaml`, and the app-serving recipe in
-  `dataplane/docs/rbac.md`, now set `singleNamespace: false`. Layered with an overlay that sets `low_privilege: true`, the
-  later file used to win; now the render fails with
-  `singleNamespace is false but low_privilege is true`. The refusal is deliberate — picking
-  either value would silently flip scope. Migrate overlays to `singleNamespace`, or, while
-  some files still use the old name, set the same value under both.
-- **Replace `.Values.low_privilege` in your own templated values.** `low_privilege` is no
-  longer set in `values.yaml`, so unless an overlay sets it, `.Values.low_privilege` is empty
-  and `{{ if not .Values.low_privilege }}` is true at the single-namespace default. Around the
-  `kubernetes-cadvisor` job in a `prometheus.extraScrapeConfigs` override (a guard copied from
-  a pre-release revision of this chart's `values.yaml`), that renders the job where
-  prometheus holds only a Role, and the scrape fails with `403`. Use
-  `{{ if not (include "singleNamespace" .) }}`, as the chart's `values.yaml` now does. The
-  same goes for any other value the chart renders through `tpl` — `extraObjects` and the
-  `config.*` blocks. `prometheus.serverFiles` is not rendered through `tpl` at all.
+  defaults to the top-level `provider`), because the operator can then no longer detect it
+  from node labels.
+- **Use one name for the scope flag across every values file you layer.**
+  `examples/values.full-privilege.yaml`, `examples/values-legacy.yaml` and the app-serving
+  recipe in `dataplane/docs/rbac.md` now set `singleNamespace: false`. Layered with an overlay
+  that sets `low_privilege: true`, the later file used to win; the render now fails with
+  `singleNamespace is false but low_privilege is true`, because either choice would silently
+  flip scope. Migrate overlays to `singleNamespace`, or set the same value under both names
+  until every file is migrated.
+- **Replace `.Values.low_privilege` in your own templated values.** `values.yaml` no longer
+  sets it, so unless an overlay does, `{{ if not .Values.low_privilege }}` is true at the
+  single-namespace default. A guard like that around the `kubernetes-cadvisor` job in a
+  `prometheus.extraScrapeConfigs` override (copied from a pre-release `values.yaml`) renders
+  the job where prometheus holds only a Role, and the scrape fails with `403`. Use
+  `{{ if not (include "singleNamespace" .) }}`, as `values.yaml` now does, in every value the
+  chart renders through `tpl`: `extraObjects` and the `config.*` blocks.
+  `prometheus.serverFiles` is not rendered through `tpl`.
 
 ### Rollback
 

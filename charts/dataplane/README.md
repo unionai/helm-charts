@@ -436,70 +436,65 @@ Two documents cover this in full:
 - **[docs/rbac-union.md](docs/rbac-union.md)** — Union's own components: the slot model, who
   creates the per-namespace bindings, and what to check after registering a project.
 - **[docs/rbac.md](docs/rbac.md)** — the observability subcharts, the cluster-scoped reads
-  single-namespace mode still makes, and what it costs you in metrics.
+  single-namespace mode still makes, and their cost in metrics.
 
 ### Three independent keys
 
 | Key | Default | What it decides |
 | --- | --- | --- |
-| `singleNamespace` | `true` | Whether Union runs in the release namespace alone, with namespaced `Role`s, or across per-project namespaces, with `ClusterRole`s. `low_privilege` is its older name and still works as an alias. |
-| `namespaces.enabled` / `namespaces.static` | `false` / a six-name list | Which work namespaces exist at install time. It changes no role's rules; it does decide where the work-namespace role is bound. |
-| `commonServiceAccount.enabled` | `true` | How many identities hold the grants. The rules are the same either way; which workload can use which is not. |
+| `singleNamespace` | `true` | Whether Union runs in the release namespace with namespaced `Role`s, or across per-project namespaces with `ClusterRole`s. `low_privilege` is its older name and still works as an alias. |
+| `namespaces.enabled` / `namespaces.static` | `false` / a six-name list | Which work namespaces exist at install time, and so where the work-namespace role is bound. Role rules stay the same. |
+| `commonServiceAccount.enabled` | `true` | How many identities hold the grants. The rules stay the same; only which workload can use which grant changes. |
 
-`singleNamespace` is a scope flag. Set to `true`, the default, it promises three things:
+`singleNamespace: true`, the default, promises three things:
 
-- Union's workloads, tasks and apps included, run in the release namespace, and every grant
-  that can be namespaced is — Union's own components, prometheus and kube-state-metrics
-  alike. No namespaces are created.
-- Cluster-scoped reads come only from a fixed allowlist, each entry tied to the code that
-  needs it: today the operator's node informer, plus nodeobserver's, node-bootstrap's and
-  ingress-nginx's reads when those are enabled. `tests/test-rbac-guards.sh` enforces the list;
-  [docs/rbac.md](docs/rbac.md#what-singlenamespace-still-reads-cluster-wide) explains each
-  entry.
-- No cluster-scoped writes, except ones pinned to named objects — the pre-upgrade hook that
-  deletes the legacy `flyte-pod-webhook`. nodeobserver and node-bootstrap, both off by
-  default, are the exceptions: each removes a startup taint from its own node.
+- Union's workloads, including tasks and apps, run in the release namespace, and every grant
+  that can be namespaced is — for Union's components, prometheus and kube-state-metrics alike.
+  The chart creates no namespaces.
+- Cluster-scoped reads come only from a fixed allowlist: the operator's node informer, plus
+  nodeobserver, node-bootstrap and ingress-nginx when enabled. `tests/test-rbac-guards.sh`
+  enforces the list; [docs/rbac.md](docs/rbac.md#what-singlenamespace-still-reads-cluster-wide)
+  explains each entry.
+- Cluster-scoped writes are pinned to named objects, such as the pre-upgrade hook that deletes
+  the legacy `flyte-pod-webhook`. The exceptions are nodeobserver and node-bootstrap, both off
+  by default, which each remove a startup taint from their own node.
 
-It does not switch features off to avoid cluster-scoped reads: usage collection and the
-operator's node informer run in both modes. The cost of the mode is the reduced
-functionality listed on the `singleNamespace` key in `values.yaml` — no Task-Level
-Monitoring, no node-level metrics, less accurate cost data, and no chart-created leaseworker or
-flytepropeller PriorityClass. The uvol mount broker's PriorityClass is created in both modes.
+Usage collection and the operator's node informer run in both modes. The mode's cost is the
+reduced functionality listed under `singleNamespace` in `values.yaml`: no Task-Level
+Monitoring, no node-level metrics, less accurate cost data, and no chart-created leaseworker
+or flytepropeller PriorityClass. The uvol mount broker's PriorityClass is created in both
+modes. `singleNamespace: false` restores that access; layer
+`examples/values.full-privilege.yaml` as well to collect with it, since Helm can't derive its
+kube-state-metrics settings from the flag.
 
-To trade that back, set `singleNamespace: false`. To also *collect* with that access, layer
-`examples/values.full-privilege.yaml`, which carries the kube-state-metrics settings Helm
-can't derive from the flag.
+Set `singleNamespace` or `low_privilege`, or both to the same value; the chart refuses to
+render if they disagree.
 
-`low_privilege` resolves to the same setting. Set either key, or both to the same value; the
-chart refuses to render if both are set and disagree. Unset, both mean single-namespace.
-
-**App serving is on by default only at `singleNamespace: false`, and on the vendored
-gateway (`gateway.enabled: true`, the default) it requires it.** On that path this chart
-provides app serving itself: its RBAC is declared per binary like every other component's, and
-every grant that can be namespaced is — but the Knative binaries read cluster-wide however
-their RBAC is written, so the chart **refuses to render** `apps.enabled: true` alongside
-`singleNamespace: true` rather than break the promise above. Left unset, `apps.enabled` is on unless `singleNamespace` is true,
-so a default install never meets that refusal.
+**App serving is on by default only at `singleNamespace: false`, and on the vendored gateway
+(`gateway.enabled: true`, the default) it requires that setting.** The Knative binaries read
+cluster-wide however their RBAC is written, so the chart **refuses to render**
+`apps.enabled: true` with `singleNamespace: true`. Unset, `apps.enabled` is the inverse of
+`singleNamespace`, so a default install never hits the refusal.
 
 With `gateway.enabled: false`, app serving comes from the deprecated `knative-operator`
-subchart instead, which carries its own cluster-scoped RBAC (see the table below) and is not
-covered by that refusal — that combination renders at either `singleNamespace` setting. Turning
-zero trust off does not select it: `gateway.enabled` defaults to true either way. The Envoy gateway, dataproxy and
-tunnel ingress are unaffected by `apps.enabled` and work either way. See
-[docs/rbac.md](docs/rbac.md#app-serving).
+subchart, which brings its own cluster-scoped RBAC (see the table below) and renders at either
+setting. `gateway.enabled` defaults to `true` whether zero trust is on or off, so turning zero
+trust off keeps the vendored gateway. The Envoy gateway, dataproxy and tunnel ingress work
+regardless of `apps.enabled`. See [docs/rbac.md](docs/rbac.md#app-serving).
 
 ### `singleNamespace` is not a whole-chart namespace boundary
 
-These hold cluster-scoped permissions in either mode, so a namespace-confined install
-identity is not enough to deploy the chart. The subcharts' RBAC is their own, and
-`singleNamespace` does not govern it:
+The components below hold cluster-scoped permissions in either mode, so deploying the chart
+takes more than a namespace-confined install identity. `singleNamespace` leaves the subcharts'
+own RBAC alone:
 
 | Component | Default | Cluster-scoped grant |
 | --- | --- | --- |
 | operator | **on** | `nodes` list and watch, for its node informer. Off with `config.operator.disableClusterPermissions: true`, which also stops the Legacy/Shadow billing collector and GPU attribution by node label |
 | Helm hook cleanup | **on** | one ClusterRole, pinned by `resourceNames` to a single MutatingWebhookConfiguration |
 | `knative-operator` subchart | off | 7 ClusterRoles and 7 ClusterRoleBindings of its own. Leave it off on the zero-trust path, where this chart provides app serving instead. |
-| nodeobserver | off | `nodes` get and `update`, plus cluster-wide `pods` list. `nodes` is cluster-scoped by nature; the pod list goes out with an empty namespace and a `spec.nodeName` selector, which the API server authorizes as cluster-scoped too — so neither narrows. The `update` removes a taint from the node it runs on, and is the one cluster-scoped write not pinned to a name |
+| nodeobserver | off | `nodes` get and `update`, plus cluster-wide `pods` list. `nodes` is cluster-scoped, and the API server authorizes a pod list with an empty namespace and a `spec.nodeName` selector as cluster-scoped too. The `update` removes a startup taint from its own node and is unpinned by name |
+| node-bootstrap | off | `nodes` get and `update` when `nodeBootstrap.startupTaintKey` is set. The `update` removes the startup taint from its own node and is unpinned by name |
 | opencost | off | cluster-wide read; it prices the whole cluster, and no key narrows it |
 | metrics-server | off | cluster-wide read plus a RoleBinding written into `kube-system` |
 | `monitoring` (kube-prometheus-stack) | off | its operator, prometheus, grafana and kube-state-metrics ClusterRoles |
@@ -507,14 +502,12 @@ identity is not enough to deploy the chart. The subcharts' RBAC is their own, an
 
 ### If you run `singleNamespace: false`
 
-Something must create a `RoleBinding` for the `<release-ns>-work-ns` ClusterRole in every
-work namespace — this chart when `namespaces.enabled: true`, `clusterresourcesync` as
-projects are registered, or your own tooling. **Nothing about a successful render proves it
-happened**, and at the default `namespaces.enabled: false` that ClusterRole renders with no
-binding at all — which is expected when one of the other two routes is in play, and a broken
-install when none of them is. `clusterresourcesync.enabled` also defaults to `false`, so
-setting `singleNamespace: false` and nothing else leaves every route unstaffed. After
-registering a new project, confirm the RoleBinding exists in the new namespace. See
+Every work namespace needs a `RoleBinding` to the `<release-ns>-work-ns` ClusterRole, created
+by this chart (`namespaces.enabled: true`), by `clusterresourcesync` as projects are
+registered, or by your own tooling. `namespaces.enabled` and `clusterresourcesync.enabled`
+both default to `false`, so setting only `singleNamespace: false` renders the ClusterRole
+unbound, and the render still succeeds. After registering a project, confirm the RoleBinding
+exists in its namespace. See
 [docs/rbac-union.md](docs/rbac-union.md#the-union-work-ns-clusterrole-can-render-present-but-unbound).
 
 ---

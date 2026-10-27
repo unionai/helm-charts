@@ -12,58 +12,56 @@ are untangled. Several of these changes are breaking: read the sections below, e
 ### Recent main changes on the slot model
 
 - **The operator reads the release namespace's Deployments, DaemonSets and StatefulSets in
-  both scope modes** (#613). The grant is in `<release-ns>-operator-comp-ns-read`.
-  `deployments` is in that rule too: outside `singleNamespace` no other operator grant lets it
-  list Deployments in the release namespace, and the cluster health snapshot lists them.
+  both scope modes** (#613). The grant is in `<release-ns>-operator-comp-ns-read`. Outside
+  `singleNamespace`, no other operator grant lets it list Deployments there, and the cluster
+  health snapshot needs them.
 - **Node-capacity reporting is granted through `<release-ns>-operator-cluster-read`** (#565).
   `config.operator.clusterHealth.nodeCapacity.enabled` adds `get` to that role's `nodes` rule,
-  and emits the rule even when the node informer's own gate is off. With `clusterWidePods`
-  as well, the role gains `pods` `get`/`list`/`watch`. Both are independent of
-  `disableClusterPermissions` and render in both scope modes. Both are on the
-  single-namespace allowlist. No separate `-node-capacity` ClusterRole is rendered.
-- **`uvolMountBroker.block.allow`'s default follows `singleNamespace`** (#606). With the key
-  unset, block mode is off under `singleNamespace`, the chart default, and allowed for every
+  and emits the rule even when the node informer's own gate is off. With `clusterWidePods` as
+  well, the role gains `pods` `get`/`list`/`watch`. Both grants are independent of
+  `disableClusterPermissions`, render in both scope modes, and are on the single-namespace
+  allowlist. They live in this role; there is no separate `-node-capacity` ClusterRole.
+- **`uvolMountBroker.block.allow` defaults from `singleNamespace`** (#606). With the key
+  unset, block mode is off under `singleNamespace` (the chart default) and allowed for every
   pod at `singleNamespace: false`. `low_privilege` still works as the alias. The template used
-  to read `low_privilege` directly. `values.yaml` no longer sets that key, so the old template
-  would have turned block mode on for every pod on a default install.
+  to read `low_privilege` directly, which `values.yaml` no longer sets, so on a default
+  install it would have turned block mode on for every pod.
 - **node-bootstrap's taint removal is granted through its own cluster slots** (#646). With
   `nodeBootstrap.enabled` and a `startupTaintKey`, `union-node-readiness` holds `nodes` `get`
   in `<release-ns>-node-bootstrap-cluster-read` and `nodes` `update` in
-  `<release-ns>-node-bootstrap-cluster-write`, in both scope modes. That replaces the
-  standalone `<release>-node-bootstrap` ClusterRole main renders. The ClusterRole is now
-  named after the release namespace, like every other slot role. The update cannot be
-  pinned to the node the pod runs on, so it is the second unpinned cluster-scoped write on
-  the single-namespace allowlist, after nodeobserver's. With no taint key the binary makes
-  no API call, and the ServiceAccount gets no RBAC and mounts no token, as on main.
+  `<release-ns>-node-bootstrap-cluster-write`, in both scope modes. This replaces the
+  standalone `<release>-node-bootstrap` ClusterRole that main renders. RBAC cannot pin the
+  update to the node the pod runs on, so it is the second unpinned cluster-scoped write on the
+  single-namespace allowlist, after nodeobserver's. With no taint key the binary makes no API
+  call, so the ServiceAccount gets no RBAC and mounts no token, as on main.
 
 ### `singleNamespace` replaces `low_privilege`
 
 - **`low_privilege` is renamed `singleNamespace`, and `low_privilege` keeps working as an
-  alias.** The flag always decided scope — Union in the release namespace with namespaced
-  `Role`s, or across per-project namespaces with `ClusterRole`s — and "low privilege"
-  promised something the chart could not keep, since some cluster-scoped reads are needed
-  even in one namespace. The rest of these notes use the new name; everything they say about
-  `singleNamespace` applies to an overlay that still sets `low_privilege`. Both keys are unset
-  in `values.yaml`, and unset means single-namespace, as `low_privilege: true` did before.
+  alias.** The flag always decided scope (Union in the release namespace with namespaced
+  `Role`s, or across per-project namespaces with `ClusterRole`s), and "low privilege"
+  overpromised, since some cluster-scoped reads are needed even in one namespace. These notes
+  use the new name; everything they say about `singleNamespace` applies to an overlay that
+  still sets `low_privilege`. Both keys are unset in `values.yaml`, and unset means
+  single-namespace, as `low_privilege: true` did before.
 
-- **Two values the chart used to accept now fail the render.**
+- **Two inputs the chart used to accept now fail the render.**
   - Both keys set to different values: `singleNamespace is false but low_privilege is true`.
-    The chart will not pick one, because either choice silently flips scope. This also fires
-    when layered values files use different names — see *Migration* below.
-  - Either key set to anything but a YAML boolean. A quoted `"false"` used to be a non-empty
-    string and so meant **true**; it is now refused rather than guessed at.
+    Either choice would silently flip scope. This also fires when layered values files use
+    different names; see *Migration* below.
+  - Either key set to a non-boolean. A quoted `"false"` used to be a non-empty string and so
+    meant **true**.
 
-- **`singleNamespace: true` makes a promise the guard tests enforce.**
-  - Union's workloads, tasks and apps included, run in the release namespace, and every
-    grant that can be namespaced is.
+- **`singleNamespace: true` promises the following, and `tests/test-rbac-guards.sh` enforces
+  it.**
+  - Union's workloads, tasks and apps included, run in the release namespace, and every grant
+    that can be namespaced is.
   - Cluster-scoped reads come only from a fixed allowlist, each entry tied to the code that
-    needs it: the operator's node informer, and — when enabled — nodeobserver's node and pod
-    reads and ingress-nginx's IngressClass read. `tests/test-rbac-guards.sh` audits every
-    single-namespace fixture against it; see
+    needs it; see
     [docs/rbac.md](docs/rbac.md#what-singlenamespace-still-reads-cluster-wide).
-  - No cluster-scoped writes, except ones pinned to named objects (the pre-upgrade hook that
-    deletes the legacy `flyte-pod-webhook`). nodeobserver's `nodes` `update`, off by default,
-    is the one listed exception.
+  - Cluster-scoped writes are pinned to named objects (the pre-upgrade hook that deletes the
+    legacy `flyte-pod-webhook`), except the unpinned `nodes` `update` of nodeobserver and
+    node-bootstrap, both off by default.
   - Third-party subcharts that ship their own RBAC (kube-prometheus-stack, metrics-server,
     opencost, knative-operator, ingress-nginx's controller, dcgm-exporter, fluent-bit) are
     outside the promise.
@@ -88,63 +86,54 @@ are untangled. Several of these changes are breaking: read the sections below, e
   disabled, set `config.operator.clusterData.cloudProvider` (it defaults to the top-level
   `provider`), since the operator cannot detect it from node labels.
 
-- **The operator RBAC gates now read its flags the way the operator does.** A string
+- **The operator RBAC gates now parse its flags the way the operator does.** A string
   `"True"` or `"1"` for `collectUsages.enabled` or `disableClusterPermissions` counts as on,
-  as it does for the operator's config decoder; a value the operator cannot parse fails the
-  render. Previously only the literal string `true` counted, so the chart could withhold the
-  nodes grant while the operator waited on it at startup.
+  and a value the operator cannot parse fails the render. Previously only the literal string
+  `true` counted, so the chart could withhold the nodes grant while the operator waited on it
+  at startup.
 
 ### Proxy image-builder repository and tunnel proxy restart
 
 - **The operator-proxy no longer crash-loops when `imageBuilder.defaultRepository` is unset.**
   `config.proxy.imageBuilderConfig.defaultRepository` passed the raw value through, so it
-  rendered empty wherever the registry path is derived from `imageBuilder.registryName`. It
-  now uses the same helper as `image-builder.default-repository`, and the two keys always
-  agree. This bug is also on earlier releases.
-- **The operator can restart the proxy after rotating the tunnel token again.** The tunnel
-  updater gets and updates the `union-operator-proxy` Deployment. The RBAC rework had
-  dropped that grant, so the restart was denied and the proxy kept the old token until
-  restarted by hand. The operator's `comp-ns-write` Role now grants `deployments`
-  `get`/`update`, limited to `union-operator-proxy`, whenever `operator.enableTunnelService`
-  is on (the default).
+  rendered empty wherever the registry path derives from `imageBuilder.registryName`. It now
+  uses the same helper as `image-builder.default-repository`, so the two keys agree. Earlier
+  releases have this bug too.
+- **The operator can again restart the proxy after rotating the tunnel token.** The tunnel
+  updater gets and updates the `union-operator-proxy` Deployment. The RBAC rework dropped that
+  grant, so the restart was denied and the proxy kept the old token until restarted by hand.
+  The operator's `comp-ns-write` Role now grants `deployments` `get`/`update`, limited to
+  `union-operator-proxy`, whenever `operator.enableTunnelService` is on (the default).
 
 ### Release-namespace grants, plugin CRD reads and the work-ns wildcard
 
-- **The reworked RBAC grants release-namespace calls to the component that makes them.** At
+- **Release-namespace calls are granted to the component that makes them.** At
   `singleNamespace: false` the release namespace is not a work namespace, so the work-ns role
-  does not reach it. Each call a component makes there is declared in its own `comp-ns-read`
-  or `comp-ns-write` Role, pinned by `resourceNames` where the name is fixed. None of them
-  depends on sharing `union-system` with the proxy's Secret Role:
-  - operator, with `imageBuilder.enabled` (the default): `configmaps` `get`/`list`/`watch` on
-    the image builder's reference ConfigMap, `union-operator`, and `secrets` `list`/`watch`
-    for its mirror-secrets deleter. Both informers block operator startup until they sync.
-  - operator: the tunnel token Secret (`operator.secretName`) `get`/`update`; the Eager API
-    key state Secret `get`/`update`, plus `create`; `connector-config` `update` with apps on.
-  - webhook: `pods` `get` and `replicasets/finalizers` `update` when it registers its own
-    MutatingWebhookConfiguration (`singleNamespace: false`, `managedConfig: false`). With
-    `certificate.provider: legacy`, the certificate Secret: `create`, and `get`/`update` on
-    its name.
-  - webhook and leaseworker: a `<release-ns>-secret-read` Role in `proxy.secretsNamespace`
-    granting `secrets` `get`, for the K8s secret manager's reads.
+  does not reach it. Each component declares its own release-namespace calls in a
+  `comp-ns-read` or `comp-ns-write` Role, pinned by `resourceNames` where the name is fixed,
+  instead of relying on sharing `union-system` with the proxy's Secret Role. The operator,
+  webhook and leaseworker grants and their conditions are listed in
+  [docs/rbac-union.md](docs/rbac-union.md#release-namespace-grants-do-not-come-from-work-ns).
+  They include a `<release-ns>-secret-read` Role in `proxy.secretsNamespace` granting
+  `secrets` `get`, for the webhook's and leaseworker's K8s secret manager reads.
 - **The leaseworker's event watcher is granted at `singleNamespace: false`.** With no limit
-  namespace set it watches every namespace, so it needs a cluster-wide read:
-  `<release-ns>-leaseworker-work-ns-cluster-read` grants `events.k8s.io` `events`
-  `list`/`watch`. Under `singleNamespace` the watcher, the fast-task orphan pod lists and the
-  fastray idle-cluster reaper are confined to the limit namespace as of
-  [cloud#18782](https://github.com/unionai/cloud/pull/18782), so the release-namespace
-  `work-ns` Role covers them and nothing is added to the allowlist. A leaseworker image
-  without that change still watches events cluster-wide there, is refused, and leaves task
-  status without Kubernetes events; `appVersion` `2026.10.0` predates it.
+  namespace it watches every namespace, so `<release-ns>-leaseworker-work-ns-cluster-read`
+  grants `events.k8s.io` `events` `list`/`watch`. Under `singleNamespace`, the watcher, the
+  fast-task orphan pod lists and the fastray idle-cluster reaper are confined to the limit
+  namespace as of [cloud#18782](https://github.com/unionai/cloud/pull/18782), so the
+  release-namespace `work-ns` Role covers them and the allowlist is unchanged. A leaseworker
+  image without that change still watches events cluster-wide there, is refused, and leaves
+  task status without Kubernetes events; `appVersion` `2026.10.0` predates it.
 - **New `taskPluginClusterReadRules`.** At `singleNamespace: false`, CRD-backed task plugins
   (Spark, Ray, Dask, Kubeflow, JobSet) watch their CRDs across every namespace, which no
-  work-namespace binding can authorize. List them here and leaseworker and flytepropeller get
-  cluster-wide `list`/`watch` on them. The key is for CRDs only: the core group, the other
-  built-in groups (`apps`, `batch` and every group without a dot), `rbac.authorization.k8s.io`
-  and `certificates.k8s.io` fail the render, as does a wildcard or a write verb. It renders
-  nothing under `singleNamespace`. See
+  work-namespace binding can authorize. List the CRDs here to give leaseworker and
+  flytepropeller cluster-wide `list`/`watch` on them. The key accepts CRD groups only: a
+  wildcard, a write verb, or a built-in group (the core group, `apps`, `batch`, every group
+  without a dot, `rbac.authorization.k8s.io`, `certificates.k8s.io`) fails the render. It
+  renders nothing under `singleNamespace`. See
   [docs/rbac.md](docs/rbac.md#plugin-crd-reads-at-singlenamespace-false).
 - **`apiGroups: ["*"]` is refused outside the work-ns role.** work-ns keeps its wildcard on
-  purpose, since a grant that can create pods in a namespace is already admin of it. See
+  purpose, since a grant that can create pods in a namespace is already admin of it; see
   [docs/rbac.md](docs/rbac.md#the-work-ns-wildcard). Every other slot now refuses an
   all-groups rule, `clusterresourcesync.clusterRoleRules` included. **Breaking** if an
   overlay puts `apiGroups: ["*"]` in `clusterRoleRules`: name the groups instead.
@@ -152,84 +141,63 @@ are untangled. Several of these changes are breaking: read the sections below, e
 ### Privilege and namespace axes
 
 - **`singleNamespace` is now the chart's only scope axis; `namespaces.enabled` no longer
-  implies single-namespace mode.** The `singleNamespace` helper — which drives
+  implies single-namespace mode.** The `singleNamespace` helper drives
   `limit-namespace` / `namespace_mapping` / `limitNamespace` injection, the single-namespace
-  task PodTemplate, and the `clusterresourcesync` gate — was
-  `or (not namespaces.enabled) low_privilege`. That folded a
-  namespace *pre-seed* toggle into a *scope* decision, and the two are not the same thing:
-  `namespaces.enabled` only pre-seeds a fixed list of namespaces, while a multi-namespace
-  dataplane creates namespaces for newly registered projects dynamically via
-  `clusterresourcesync`. The helper now resolves the scope flag alone, the one flag that
-  really does mean "no namespaces are created by any route."
+  task PodTemplate, and the `clusterresourcesync` gate. It was
+  `or (not namespaces.enabled) low_privilege`, which folded the namespace pre-seed toggle into
+  the scope decision. It now resolves the scope flag alone.
 
   **This fixes a silent misconfiguration in the default full-privilege install.**
-  `namespaces.enabled` defaults to `false`, so `singleNamespace: false` alone previously put the
-  chart in single-namespace mode — and all three `clusterresourcesync` templates are gated
-  `not singleNamespace`, so the very component that creates per-project namespaces was
-  suppressed. A multi-namespace dataplane that left `namespaces.enabled` at its default had
-  nothing creating namespaces for new projects at all.
+  `namespaces.enabled` defaults to `false`, so `singleNamespace: false` alone previously put
+  the chart in single-namespace mode, and all three `clusterresourcesync` templates (gated
+  `not singleNamespace`) were suppressed. Nothing created namespaces for new projects.
 
   **Every `singleNamespace: true` deployment is namespace-scoped exactly as before**, and
-  pre-seeds nothing regardless of `namespaces.enabled`. Only the
-  `namespaces.enabled: false` + `singleNamespace: false` combination changes behavior; see
-  Migration.
+  `namespaces.enabled` has no effect on it. Only `namespaces.enabled: false` with
+  `singleNamespace: false` changes behavior; see Migration.
 
 - **`commonServiceAccount.enabled` is now honored in every privilege mode.** The
-  `useCommonServiceAccount` helper previously returned true whenever `singleNamespace` was
-  set, so an explicit `commonServiceAccount.enabled: false` was silently discarded in the
-  chart's default mode. Identity sharing and privilege scope are independent concerns and are
-  now keyed independently. **The default is unchanged (`true`), so any install that leaves the
-  key alone is unaffected** — but an install that already sets it `false` while running in the
-  old single-namespace mode had that setting ignored, and will now get what it asked for.
-  Setting it `false` creates one ServiceAccount per component; each new name needs a matching
-  workload-identity binding on the cloud side before those workloads can authenticate. The
-  names are `operator-system`, `proxy-system`, `leaseworker`, `union-webhook-system`,
-  `union-imagebuilder` (buildkit, enabled by default) and — under `zero_trust.enabled` —
-  `dataproxy-system`. **`fluentbit` is the exception and needs a manual step:** its account
-  name comes from the subchart key `fluentbit.serviceAccount.name`, which this chart pins to
-  `union-system`, and that pin wins over the per-component fallback. Set it to a dedicated
-  name yourself if you want fluentbit partitioned too; its `rbac.create` is false here, so
-  the account carries no Kubernetes permissions either way.
+  `useCommonServiceAccount` helper used to return true whenever `singleNamespace` was set, so
+  an explicit `commonServiceAccount.enabled: false` was discarded in the default mode. The
+  default is unchanged (`true`). An install that already sets it `false` under
+  single-namespace mode had that ignored and now gets one ServiceAccount per component:
+  `operator-system`, `proxy-system`, `leaseworker`, `union-webhook-system`,
+  `union-imagebuilder` (buildkit, enabled by default) and, under `zero_trust.enabled`,
+  `dataproxy-system`. **Each new name needs a matching cloud-side workload-identity binding
+  before its workload can authenticate**, so plan the bindings before flipping the key.
+  `fluentbit` is the exception: the chart pins `fluentbit.serviceAccount.name` to
+  `union-system`, and that pin wins over the per-component fallback. Set the key to a
+  dedicated name yourself to partition fluentbit too.
 
-  It does not change `Role` versus `ClusterRole` scope, but it does partition the existing
-  grants across identities: the shared `union-system` account is the subject of every
-  component's binding at once, where per-component accounts each hold only their own. A
-  compromised workload can now exercise only its own component's grants. That is a real
-  reduction in each workload's effective permissions — plan the cloud-side bindings before
-  flipping it, not after.
+  The key does not change `Role` versus `ClusterRole` scope. It partitions the existing grants
+  across identities, so a compromised workload exercises only its own component's grants,
+  except in the pooled work-namespace role (see *Union RBAC is split by destination*). See
+  [Identities](docs/rbac-union.md#identities).
 
-- **`namespaces.static` (new)** enumerates the work namespaces to pre-create when
+- **`namespaces.static` (new)** lists the work namespaces to pre-create when
   `namespaces.enabled: true`. It defaults to the six names `common/namespaces.yaml` previously
   hardcoded (`flytesnacks-{development,staging,production}` and
-  `union-health-monitoring-{development,staging,production}`), so the rendered output is
-  unchanged for anyone who has not set it. **This is not the full set a dataplane uses** —
-  `clusterresourcesync` creates one namespace per project/domain at runtime and cannot know
-  those names in advance.
-
-  Leaving `namespaces.enabled: false` remains the supported path for externally-managed
-  namespaces: when Terraform, a platform team or anything else owns the `Namespace` objects,
-  Helm never touches them and there are no adoption annotations to negotiate.
+  `union-health-monitoring-{development,staging,production}`), so rendered output is
+  unchanged unless you set it. It is not the full set a dataplane uses: `clusterresourcesync`
+  creates one namespace per project/domain at runtime. `namespaces.enabled: false` remains the
+  supported path for externally managed namespaces, which Helm never touches.
 
 - **`namespaces.labels` and `namespaces.annotations` (new)** set metadata on every Namespace
-  the chart creates — Pod Security Standards levels, service-mesh injection, cost attribution,
+  the chart creates: Pod Security Standards levels, service-mesh injection, cost attribution,
   or a retention key for your deployment tool. They cover the `static` list only; namespaces
   `clusterresourcesync` creates at runtime are shaped by the `a_namespace` entry in
   `clusterresourcesync.templates`, as before.
 
 - **`namespaces.annotations` defaults to `helm.sh/resource-policy: keep`, so `helm uninstall`
-  no longer deletes the pre-seeded namespaces.** Uninstalling previously cascade-deleted each
-  managed namespace and everything inside it: task pods, Secrets, PVCs, and objects
-  `clusterresourcesync` created at runtime that this chart never knew about. That is the
-  ordinary consequence of Helm owning a resource, but the resource is a whole namespace,
-  which made it the largest blast radius in the chart and rarely what "uninstall the
-  dataplane" was meant to mean. Leftover namespaces are one `kubectl delete` to recover; the
-  reverse is not.
+  no longer deletes the pre-seeded namespaces.** Uninstall used to cascade-delete each managed
+  namespace and everything in it: task pods, Secrets, PVCs, and objects `clusterresourcesync`
+  created at runtime. Leftover namespaces are one `kubectl delete` to recover; deleted data
+  cannot be recovered.
 
-  **Helm is the only thing that honors that key.** A GitOps controller renders this chart and
-  reconciles against its own bookkeeping, so it prunes a Namespace that leaves the desired
-  manifest no matter what Helm annotations it carries — Argo CD does not map
-  `helm.sh/resource-policy` to a sync option at all. If you deploy that way, add your
-  controller's own retention key; they merge with the default:
+  **Only Helm honors that key.** A GitOps controller prunes a Namespace that leaves the
+  desired manifest whatever Helm annotations it carries; Argo CD does not map
+  `helm.sh/resource-policy` to a sync option. If you deploy that way, add your controller's
+  retention key, which merges with the default:
 
   ```yaml
   namespaces:
@@ -247,149 +215,119 @@ for them. In the usual `union` release namespace:
 
 | Role | Kind | Bound by | Holds |
 |---|---|---|---|
-| `union-<component>-comp-ns-read`, `union-<component>-comp-ns-write` | `Role` | `RoleBinding` in the release namespace | what that component needs on Union's *own* objects. One Role per component: nothing is shared here |
-| `union-work-ns` | `ClusterRole`, or `Role` under `singleNamespace: true` | one `RoleBinding` per work namespace — **never** in the release namespace at `singleNamespace: false` | what components need on user tasks, apps and builds |
-| `union-<component>-work-ns-cluster-read` | `ClusterRole` | `ClusterRoleBinding` | reads the API server authorizes as cluster-scope checks, because the caller lists with an empty namespace. Read-only (enforced at render time); the chart's own rules here use `list`/`watch` alone, and none is emitted at all under `singleNamespace: true` |
+| `union-<component>-comp-ns-read`, `union-<component>-comp-ns-write` | `Role` | `RoleBinding` in the release namespace | what that component needs on Union's *own* objects. One Role per component |
+| `union-work-ns` | `ClusterRole`, or `Role` under `singleNamespace: true` | one `RoleBinding` per work namespace, **never** in the release namespace at `singleNamespace: false` | what components need on user tasks, apps and builds |
+| `union-<component>-work-ns-cluster-read` | `ClusterRole` | `ClusterRoleBinding` | reads the API server authorizes as cluster-scope checks, because the caller lists with an empty namespace. Read-only, enforced at render time: a slot whose name ends in `-read` admits `get`, `list` and `watch`, and a write verb fails the render. The chart's own rules here use `list`/`watch`, and none is emitted under `singleNamespace: true` |
 
-**Read-only on that row is enforced at render time, not by convention.** A slot whose name
-ends in `-read` — `work-ns-cluster-read` included — admits `get`, `list` and `watch` and
-rejects every write verb, and the chart refuses to render rather than emitting one. What
-is enforced is the absence of writes; that today's `work-ns-cluster-read` rules stop at
-`list` and `watch` is a property of the declarations, not of the check. A `get` in a read
-slot is legitimate and one renders — see the Knative webhook's `resourceNames`-pinned
-namespace read below.
+**`union-work-ns` is the only role several components share.** The release-namespace roles are
+now one Role per component, `union-<component>-comp-ns-read` and `-comp-ns-write`, with the
+resource declarations redistributed unchanged and the verbs narrowed as described next.
+**Anything outside this chart that references `union-comp-ns-read` or `union-comp-ns-write` by
+name (an audit policy, a `RoleBinding`, a Kyverno rule) stops matching**, because nothing named
+`union-comp-ns-*` renders any more. `work-ns` stays shared because its namespaces are created
+at runtime, and one role there means one `RoleBinding` and one `bind` grant per namespace
+instead of one per component. See [Pooling](docs/rbac-union.md#pooling).
 
-**`union-work-ns` is the only role several components share.** The release-namespace roles
-were shared too in earlier drafts of this model, which meant every component holding every
-other component's release-namespace rules: the Knative activator registers a namespaced
-Secret informer unconditionally, and that one rule gave the operator, leaseworker and the
-other four app-serving binaries a read of every Secret in the release namespace. (Not the
-proxy — it declares into neither `comp-ns` slot, so it was never a subject of that role.
-Its own release-namespace Secret grant comes from `operator/serviceaccount-proxy-secret.yaml`
-and is unaffected by any of this.)
-They are now one Role per component, `union-<component>-comp-ns-read` and
-`-comp-ns-write`. **Anything outside this chart that references `union-comp-ns-read` or
-`union-comp-ns-write` by name — an audit policy, a `RoleBinding`, a Kyverno rule — stops
-matching.** Nothing named `union-comp-ns-*` renders any more. The resource declarations are
-redistributed unchanged; their verb sets are narrowed, as the next section describes — so
-this is not a rename you can skim past.
-`work-ns` stays shared, because the namespaces it is bound in are created at
-runtime and one role there means one `RoleBinding` and one `bind` grant per namespace
-instead of one per component.
-
-**Every RBAC rule in the chart now declares its own `verbs`, and they are narrowed.**
-Previously the three release-namespace and work-namespace slots had the emitter stamp a
-fixed verb set onto every rule and refuse any rule that named its own, so no rule could
-ask for less than the whole set. Each rule now names what its component calls, taken from
-the verbs the role it replaced actually granted. What that removes, in the grants an
-operator is most likely to be asked about:
+**Every RBAC rule in the chart now declares its own `verbs`, and they are narrowed.** The
+three release-namespace and work-namespace slots used to stamp a fixed verb set onto every
+rule and refuse any rule that named its own. Each rule now names what its component calls,
+taken from the verbs the role it replaced granted. The changes an operator is most likely to
+be asked about:
 
 | Grant | Was | Is |
 |---|---|---|
-| proxy, on everything it touches in a work namespace | full write set | `get`, `list`, `watch` — it is a reader and now says so |
-| pod webhook, on `secrets`/`pods` in a work namespace | full write set | `get`, `list`, `watch`, `create`, `update`, `patch`; no `delete` |
+| proxy, on everything it touches in a work namespace | full write set | `get`, `list`, `watch` |
+| pod webhook, on `secrets`/`pods` in a work namespace | full write set | `get`, `list`, `watch`, `create`, `update`, `patch` (`delete` removed) |
 | `knative-controller`, on `serviceaccounts`/`secrets` for image digest resolution | full write set | `get` |
 | `net-kourier`, on `ingresses` | full write set | `get`, `list`, `watch`, `patch`, plus `update` on `ingresses/status` |
 | `deletecollection`, anywhere | every rule in three slots | `flyteworkflows` and the Knative API groups only |
 | `endpoints/restricted` | the surrounding rule's whole verb set | `create`, the one verb the admission plugin checks |
 
-Note the pooled `work-ns` role is the union of its declarers' rules, so narrowing one
-declarer there does not narrow what the others convey to it — the proxy is bound to a role
-that still carries `leaseworker`'s resource wildcard. The release-namespace roles are the
-ones where a narrowed declaration is the whole grant.
+The pooled `work-ns` role is the union of its declarers' rules, so narrowing one declarer there
+does not narrow what the others convey to it: the proxy is bound to a role that still carries
+`leaseworker`'s resource wildcard. The release-namespace roles are where a narrowed
+declaration is the whole grant.
 
-No operator-set value changes behavior, so this is not called out with a `BREAKING` banner
-above — but it does break the *declaration contract* for anything defining its own
-`dataplane.rbac.slots.<name>`: a downstream fork of this chart, or an overlay that adds a
-component via that same mechanism. Every rule such a declaration contributes must now carry
-a `verbs` key of its own; the chart refuses to render if one is missing, where it previously
-inferred the verbs from the slot in three of the six cases.
+No operator-set value changes behavior, so this carries no `BREAKING` banner above. It does
+break the *declaration contract* for anything defining its own `dataplane.rbac.slots.<name>`,
+such as a downstream fork or an overlay that adds a component that way: every rule must carry
+its own `verbs` key. The chart refuses to render otherwise, where it previously inferred the
+verbs from the slot in three of the six cases.
 
-**The split is the point.** `union-work-ns` is a `ClusterRole` only so its rules are written
-once; a `RoleBinding` referencing a `ClusterRole` confines that role to the binding's own
-namespace. Because it is never bound in the release namespace at `singleNamespace: false`,
-`union-work-ns` conveys no access at all to Union's own Deployments and Secrets: what it grants
-in a work namespace stops at that namespace's edge. Under `singleNamespace: true` the release
-namespace *is* the work namespace, so `union-work-ns` is a plain `Role` bound there, as before.
+**Verb allowlist.** Each rule's verbs are checked against a ceiling set by the slot's name:
+`get`, `list`, `watch`, `create`, `update`, `patch`, `delete`, `deletecollection` for a write
+slot, and the first three for a slot whose name ends `-read`. A declaration may name any
+subset. Wildcards are refused: on `roles` a wildcard verb grants `escalate`, which disables
+RBAC's escalation-prevention check, and on `serviceaccounts` it grants `impersonate`.
 
-That claim is scoped to `union-work-ns` alone. RBAC unions every binding a subject holds, so a
-component's effective permissions are the sum of its
-slot roles *and* any role outside the slot model. One such grant exists at stock values: with
-`proxy.secretManager.enabled: true` and `type: K8s` (both defaults), the proxy holds `get`,
-`list`, `create`, `update` and `delete` on Secrets in `proxy.secretsNamespace`, which defaults
-to the release namespace. Set `proxy.secretManager.namespace` to keep Union-managed secrets out
-of the release namespace. With `commonServiceAccount.enabled: true` (the default) every
-component shares one identity, so each also holds every other component's roles — split the
-identities before reasoning about any component's permissions individually.
+**`union-work-ns` is a `ClusterRole` only so its rules are written once.** Every binding for it
+is a per-work-namespace `RoleBinding`, which confines it to that namespace. At
+`singleNamespace: false` it is never bound in the release namespace, so it conveys no access to
+Union's own Deployments and Secrets. Under `singleNamespace: true` the release namespace is the
+work namespace, so `union-work-ns` is a plain `Role` bound there, as before.
 
-The work-namespace role is **pooled**: one object holding the union of every declaring
-component's rules, bound to every declaring ServiceAccount. Pooling there is by destination,
-not by identity, so `commonServiceAccount.enabled: false` does not multiply the object count
-in work namespaces — and does not narrow anything there either. Splitting the identities buys
-one cloud IAM identity per component; in a work namespace, each still holds every other
-declarer's rules. The release-namespace and cluster-scoped roles are per-component, so
-splitting identities does separate those.
+That claim covers `union-work-ns` alone. RBAC unions every binding a subject holds, and one
+grant outside the slot model matters at stock values: with `proxy.secretManager.enabled: true`
+and `type: K8s` (both defaults), the proxy holds `get`, `list`, `create`, `update` and
+`delete` on Secrets in `proxy.secretsNamespace`, which defaults to the release namespace. Set
+`proxy.secretManager.namespace` to keep Union-managed secrets elsewhere. With
+`commonServiceAccount.enabled: true` (the default) every component shares one identity and so
+holds every other component's roles; split the identities before reasoning about one
+component's permissions.
 
-**Verb allowlist.** Every rule in every slot names its own verbs, checked against a
-ceiling that the slot's name decides: `get`, `list`, `watch`, `create`, `update`, `patch`,
-`delete`, `deletecollection` for a write slot, narrowed to the first three for one whose
-name ends `-read`. A declaration may name any subset of that ceiling, and most do — see the
-narrowing table above. Wildcards are excluded deliberately: on `roles` a wildcard verb
-grants `escalate`, disabling RBAC's escalation-prevention check, and on `serviceaccounts` it
-grants `impersonate`.
+The work-namespace role is **pooled**: one object holding the union of every declarer's
+rules, bound to every declaring ServiceAccount. Pooling is by destination, not identity, so
+`commonServiceAccount.enabled: false` neither multiplies the work-namespace objects nor
+narrows them; each identity still holds every other declarer's rules there. Splitting
+identities does separate the release-namespace and cluster-scoped roles, which are per
+component.
 
-`leaseworker` and `flytepropeller` are on this model too, so the roles named
-`<release-ns>-leaseworker` and `flytepropeller-role`, and the bindings named
-`<release-ns>-leaseworker` and `flytepropeller-binding`, no longer exist. Both declared the
-same `apiGroups: ['*']`, `resources: ['*']` grant, and it now lives once in the pooled
-`union-work-ns` role rather than twice in roles of their own.
+`leaseworker` and `flytepropeller` are on this model too, so the roles
+`<release-ns>-leaseworker` and `flytepropeller-role` and the bindings
+`<release-ns>-leaseworker` and `flytepropeller-binding` no longer exist. Both declared the
+same `apiGroups: ['*']`, `resources: ['*']` grant, which now lives once in the pooled
+`union-work-ns` role.
 
-**One consequence of pooling that rule.** Because a pooled role is bound to every declaring
-ServiceAccount, `commonServiceAccount.enabled: false` no longer keeps the operator and proxy
-to their enumerated resources — on this slot they hold the wildcard too. (The wildcard itself
-grants what the two roles it replaces granted, `get,list,watch,create,update,patch,delete`
-and no `deletecollection`; only `flyteworkflows`, which propeller's garbage collector deletes
-by label selector, carries that verb.) It reaches exactly as far as `union-work-ns` is bound,
-which differs by mode:
+**One consequence of pooling that rule.** Because the pooled role is bound to every declaring
+ServiceAccount, with `commonServiceAccount.enabled: false` the operator and proxy hold the
+wildcard too, instead of only their enumerated resources. The wildcard grants what the two
+replaced roles granted, `get,list,watch,create,update,patch,delete`; only `flyteworkflows`,
+which propeller's garbage collector deletes by label selector, carries `deletecollection`. It
+reaches exactly as far as `union-work-ns` is bound:
 
-- **At `singleNamespace: false`, they are confined to the work namespaces.** `union-work-ns` is
-  never bound in the release namespace in that mode, so Union's own Deployments and Secrets
-  are not reachable through it, however the identities are arranged.
-- **At `singleNamespace: true` (the default), the release namespace *is* the work namespace**, so
-  the pooled role is bound there — over Union's own objects. With the default
-  `commonServiceAccount.enabled: true` this changes nothing between components, because that
-  single account already held the wildcard at these verbs.
+- **At `singleNamespace: false`, the work namespaces only.** `union-work-ns` is never bound in
+  the release namespace, so Union's own Deployments and Secrets are out of reach however the
+  identities are arranged.
+- **At `singleNamespace: true` (the default), the release namespace *is* the work
+  namespace**, so the pooled role is bound there, over Union's own objects. With the default
+  `commonServiceAccount.enabled: true` nothing changes between components, because the single
+  account already held the wildcard at these verbs.
   **With `commonServiceAccount.enabled: false` it is a real widening: `operator-system`,
   `proxy-system` and `union-webhook-system` previously held only their own enumerated
   resources in the release namespace and now hold `apiGroups: ['*'], resources: ['*']`
-  there**, covering Union's own Deployments and Secrets. (`union-webhook-system` joins that
-  list in this release, when the pod webhook moves onto the slot model; the other two joined
-  when `leaseworker` and `flytepropeller` did.) It is bounded by that namespace —
-  `singleNamespace: true` creates no work
-  namespaces, so nothing here reaches a namespace Union does not already own outright, and no
-  tenant workload is exposed to it. What it costs is blast-radius separation *between Union's
-  own components* inside that one namespace, which is what splitting the identities was
-  buying. Splitting identities does not narrow a pooled slot; if that separation is why you
-  set the key, weigh this before upgrading.
+  there**, covering Union's own Deployments and Secrets. (`union-webhook-system` joins in this
+  release, when the pod webhook moves onto the slot model; the other two joined with
+  `leaseworker` and `flytepropeller`.) The reach ends at that namespace: `singleNamespace: true`
+  creates no work namespaces, so only Union's own namespace is in reach. The cost is blast-radius
+  separation between Union's own components inside that namespace, which is what splitting the
+  identities bought. If that separation is why you set the key, weigh this before upgrading.
 
-**Read the raw diff carefully here: this is a narrowing, not a widening.** At
-`singleNamespace: false` the released chart bound `<release-ns>-leaseworker` — a wildcard on
-every resource in every API group at `get`, `list`, `watch`, `create`, `update`, `delete`,
-`patch` — with a **`ClusterRoleBinding`**, so it applied in every namespace in the cluster,
+**The `leaseworker`/`flytepropeller` change is a narrowing, though the raw diff reads as a
+widening.** At `singleNamespace: false` the released chart bound `<release-ns>-leaseworker`
+(a wildcard on every resource in every API group at `get`, `list`, `watch`, `create`,
+`update`, `delete`, `patch`) with a **`ClusterRoleBinding`**, so it applied in every namespace
 including the release namespace and `kube-system`. `flytepropeller-role` was the same shape.
-What replaces them is that wildcard in a `ClusterRole` that is only ever referenced from
-per-work-namespace `RoleBindings`, so it conveys nothing outside the work namespaces and
-nothing at all on Union's own objects. A new `ClusterRole` appearing in the diff is what that
-looks like; the object that actually granted cluster-wide access is the `ClusterRoleBinding`
-that went away. Under `singleNamespace: true` both were namespaced `Role`s bound in the release
-namespace, and the pooled `Role` that replaces them is bound in the same place, so the change
-there is one of packaging plus the identity consequence noted above.
+The replacement is that wildcard in a `ClusterRole` referenced only from per-work-namespace
+`RoleBindings`, so it reaches only the work namespaces. The new `ClusterRole` in the
+diff is that role; the object that granted cluster-wide access is the `ClusterRoleBinding` that
+went away. Under `singleNamespace: true` both were namespaced `Role`s bound in the release
+namespace, and so is the replacement; the change there is packaging plus the identity
+consequence above.
 
-**Measured cluster-wide, which is what matters on a shared cluster**, this is the set of
-write-capable cluster-scoped grants Union's own identities hold after this release **at the
-default `clusterresourcesync.clusterRoleRules: []`**. Anything you add to that key is appended
-to `union-clusterresourcesync-cluster-write` and granted cluster-wide, so it belongs in your
-own copy of this table:
+**Cluster-wide, the write-capable cluster-scoped grants Union's identities hold after this
+release** are below, at the default `clusterresourcesync.clusterRoleRules: []`. Anything you
+add to that key is appended to `union-clusterresourcesync-cluster-write` and granted
+cluster-wide, so add it to your own copy of this table:
 
 | ServiceAccount | Grant | When |
 |---|---|---|
@@ -401,149 +339,135 @@ own copy of this table:
 
 `leaseworker`'s and `flytepropeller`'s cluster-wide wildcards are replaced by
 `list`/`watch`-only `-work-ns-cluster-read` roles, and the webhook's `ClusterRole` over
-Secrets, Pods and `replicasets/finalizers` goes the same way. **The one row worth reading
-twice is the first.** `clusterresourcesync` keeps cluster-wide write on three *namespaced*
-resources, and that is not a narrowing this chart can make: it applies those objects into a
-namespace on the sync that creates it, at which point it holds no `RoleBinding` there — it is
-about to create one. What did change is the size of that grant, from twelve resources at
-`verbs: ['*']` (including `secrets`, `roles` and `clusterrolebindings`) down to the four
-above; `bind` is pinned by `resourceNames` to the single `union-work-ns` `ClusterRole`, so it
-cannot be used to grant any other role. Every namespaced Union grant that is *not* in this
-table lands in the release namespace, a namespace listed in `namespaces.static`, or one
-`clusterresourcesync` provisions — never anywhere else.
+Secrets, Pods and `replicasets/finalizers` is replaced the same way. **The first row is the one
+to read twice.** `clusterresourcesync` keeps cluster-wide write on three *namespaced*
+resources because it applies them into a namespace on the sync that creates it, before any
+`RoleBinding` exists there, and the chart cannot narrow that. The grant did shrink, from twelve
+resources at `verbs: ['*']` (including `secrets`, `roles` and `clusterrolebindings`) to the
+four above. `bind` is pinned by `resourceNames` to the `union-work-ns` `ClusterRole`, so it
+cannot grant any other role. Every namespaced Union grant outside this table lands in the
+release namespace, a namespace listed in `namespaces.static`, or one `clusterresourcesync`
+provisions. See
+[The cluster-scoped write surface](docs/rbac-union.md#the-cluster-scoped-write-surface).
 
 Both writes are cut to the calls each binary makes. `clusterresourcesync` applies every
-template as a create, then on `AlreadyExists` a get and a patch; it never issues an update,
-so the `update` its rules used to carry is gone. The webhook registers its
-`MutatingWebhookConfiguration` as a create, then on `AlreadyExists` a get and an update of
-that one object; it never patches, so `patch` is gone and `get`/`update` are pinned to the
-name. `create` cannot be pinned by `resourceNames`, because there is no name to match before
-the object exists.
+template with a create, then on `AlreadyExists` a get and a patch, so the `update` its rules
+carried is gone. The webhook registers its `MutatingWebhookConfiguration` with a create, then
+on `AlreadyExists` a get and an update of that one object, so `patch` is gone and
+`get`/`update` are pinned to the name. `create` cannot be pinned by `resourceNames`, because
+the object has no name to match yet.
 
 **`union-clustersync-auth-delegator` is removed.** It bound `union-clustersync-system` to the
 built-in `system:auth-delegator`, conveying `create` on `tokenreviews` and
-`subjectaccessreviews` cluster-wide. The controller never makes either review: it serves only
-unauthenticated metrics and pprof on port 10254. Anything outside this chart that references
-the binding by name stops matching.
+`subjectaccessreviews` cluster-wide. The controller serves only unauthenticated metrics and
+pprof on port 10254, so it never makes either review. Anything outside this chart that
+references the binding by name stops matching.
 
-This table covers Union-authored components. Vendored third-party RBAC — the Knative Serving
-grants under `templates/gateway/` and the `kube-prometheus-stack` operator where it is enabled
-— is not in scope here and is unchanged by this release.
-
-**Grants that are gone.** From `leaseworker` and `flytepropeller`, and only at
-`singleNamespace: false`:
+**Grants that are gone.** From `leaseworker` and `flytepropeller`, at `singleNamespace: false`
+only:
 
 - `apiextensions.k8s.io/customresourcedefinitions` at `get`, `list`, `watch`, `create`,
-  `delete`, `update`. CRDs are cluster-scoped, so only a cluster slot could carry them and
-  neither component declares one — and under `singleNamespace: true` the namespaced `Role` that
-  held the rule never conveyed it in the first place, so the default install never had it.
-  This chart installs the FlyteWorkflow CRD itself from `crds/` (or `crds/flyte-v1/` for the
-  server-side-apply path), which is the supported way to manage it; see the `2026.7.x` notes
-  for both install paths. **If you relied on a data-plane component creating or updating a
-  CRD at runtime, this is the one grant here you must replace.**
+  `delete`, `update`. CRDs are cluster-scoped, so only a cluster slot could carry them, and
+  neither component declares one. Under `singleNamespace: true` the namespaced `Role` never
+  conveyed the rule, so the default install never had it. This chart installs the
+  FlyteWorkflow CRD itself from `crds/` (or `crds/flyte-v1/` for the server-side-apply path);
+  see the `2026.7.x` notes for both install paths. **If you relied on a data-plane component
+  creating or updating a CRD at runtime, this is the one grant here you must replace.**
 
 From the operator:
 
 - `namespaces` and `nodes` left its write rule. Both are cluster-scoped, so the namespaced
-  `Role` that carried them under `singleNamespace: true` never conveyed them at all. At
-  `singleNamespace: false` the operator keeps cluster-wide `namespaces: [list, watch]` while
-  `imageBuilder.enabled` (the default). `nodes` is now read-only, and only where the node
-  informer actually runs — `disableClusterPermissions` unset and any usage collector running
-  (a billing model other than `None`, `collectUsages.enabled`, or
-  `serverlessCollectUsages.enabled`), which includes the default install. Write is gone from
-  both resources in every mode.
+  `Role` under `singleNamespace: true` never conveyed them. At `singleNamespace: false` the
+  operator keeps cluster-wide `namespaces: [list, watch]` while `imageBuilder.enabled` (the
+  default). `nodes` is now read-only, and only where the node informer runs:
+  `disableClusterPermissions` unset and any usage collector running (a billing model other
+  than `None`, `collectUsages.enabled`, or `serverlessCollectUsages.enabled`), which includes
+  the default install. Write is removed from both resources in every mode.
 
   The `nodes` read is carried by a new `<release-namespace>-operator-cluster-read`
-  `ClusterRole` and its `ClusterRoleBinding`, not by `-operator-work-ns-cluster-read`: the
-  informer reads nodes for usage attribution, not to reach across the namespaces tasks run
-  in. It is rendered under `singleNamespace` too, on the same conditions: that mode no
-  longer forces `disableClusterPermissions` (see
+  `ClusterRole` and its `ClusterRoleBinding`, not by `-operator-work-ns-cluster-read`, because
+  the informer reads nodes for usage attribution rather than to reach across the namespaces
+  tasks run in. It renders under `singleNamespace` too, on the same conditions (see
   [`singleNamespace` replaces `low_privilege`](#singlenamespace-replaces-low_privilege)).
   Anything pinning that grant by role name should follow the move.
 - `nonResourceURLs: [/metrics]` left its `ClusterRole`. It was emitted only at
   `singleNamespace: false`, so the default install never had it.
-- `post` left the `flyteworkflows` rule — `flytepropeller`'s rule, not the operator's. It is
-  not a Kubernetes verb and authorized nothing.
+- `post` left the `flyteworkflows` rule (`flytepropeller`'s rule, not the operator's). It is
+  not a Kubernetes verb, so no request ever matched it.
 
 **No Union component owns a hand-written `Role` for its general permissions any more.** The
 pod webhook, `nodeobserver` and `clusterresourcesync` were the last three, and they now
 declare into the same slots as everything else.
 
 Some Union-authored RBAC is still written by hand, because slots are organized by
-destination and these grants have none — **if you are auditing what this chart creates, this
-is the list the slot roles do not cover**:
+destination and these grants have none. **If you are auditing what this chart creates, this
+is the list the slot roles do not cover:**
 
 | Object | Why it is not a slot |
 |---|---|
 | the proxy's `<sa>-secret` `Role` | targets `proxy.secretsNamespace`, which is neither the release namespace nor a work namespace |
 | the operator's `<sa>-secrets-watcher` `Role` | targets the control-plane namespace, same reason; only with `config.operator.secretsWatcher.enabled` |
 | `flyte-webhook-cleanup-<release-ns>`, `<release>-pre-upgrade` | hook-scoped, carrying `helm.sh/hook-delete-policy` |
-| the OpenShift SCC `Role`s for imagebuilder and the Kourier gateway | grant `use` on a `SecurityContextConstraints` by name — a resource the slot model has no verb set for |
+| the OpenShift SCC `Role`s for imagebuilder and the Kourier gateway | grant `use` on a `SecurityContextConstraints` by name, a resource the slot model has no verb set for |
 
 Third-party RBAC this chart authors (`templates/prometheus/`, `templates/ingress-nginx/`) and
-the vendored Knative Serving grants under `templates/gateway/` are outside the model too, and
-are covered in their own sections.
+the vendored Knative Serving grants under `templates/gateway/` are outside this model and are
+covered in their own sections below. `kube-prometheus-stack`, where enabled, is unchanged by
+this release.
 
-- **The pod webhook.** `union-webhook-role` held `apiGroups: ['*']` over
-  `secrets`, `pods` and `replicasets/finalizers` at `get`/`create`/`update`/`patch`/`list`/
-  `watch`, and at `singleNamespace: false` a `ClusterRoleBinding` conveyed it in every namespace
-  in the cluster. Those resources move to the pooled `union-work-ns` role, which is bound only
-  per work namespace, so the webhook keeps exactly the reach it uses — task pods and their
-  secrets — and loses the rest. Two grants stay cluster-scoped because they cannot be
-  narrowed: `secrets: [list, watch]` in `union-webhook-work-ns-cluster-read`, which backs the
-  Secret cache the webhook builds without a namespace filter (read-only, and not emitted at
-  all under `singleNamespace: true`, where the cache *is* scoped); and
-  `mutatingwebhookconfigurations` in `union-webhook-cluster-write`, emitted only with
-  `flytepropellerwebhook.managedConfig: false` **and** `singleNamespace: false`, the one
-  combination in which the webhook registers its own configuration.
+- **The pod webhook.** `union-webhook-role` held `apiGroups: ['*']` over `secrets`, `pods` and
+  `replicasets/finalizers` at `get`/`create`/`update`/`patch`/`list`/`watch`, and at
+  `singleNamespace: false` a `ClusterRoleBinding` conveyed it in every namespace in the
+  cluster. Those resources move to the pooled `union-work-ns` role, which is bound only per
+  work namespace, so the webhook keeps the reach it uses (task pods and their secrets) and
+  loses the rest. Two grants stay cluster-scoped because they cannot be narrowed:
+  `secrets: [list, watch]` in `union-webhook-work-ns-cluster-read`, which backs the Secret
+  cache the webhook builds without a namespace filter (read-only, and not emitted under
+  `singleNamespace: true`, where the cache is scoped); and `mutatingwebhookconfigurations` in
+  `union-webhook-cluster-write`, emitted only with `flytepropellerwebhook.managedConfig: false`
+  **and** `singleNamespace: false`, the one combination in which the webhook registers its own
+  configuration.
 
-- **`nodeobserver.enabled: true` now works under `singleNamespace: true`, where it previously
-  could not.** Its two rules were emitted as a namespaced `Role` in that mode and neither was
-  conveyable by one: `nodes` is cluster-scoped, and `nodeobserver` lists pods with an empty
-  namespace and a `spec.nodeName` field selector, which the API server authorizes as a
-  cluster-scope check. Both now sit in cluster slots in both scope modes —
-  `union-nodeobserver-cluster-read` (`nodes: [get]`, `pods: [list]`) and
-  `union-nodeobserver-cluster-write` (`nodes: [update]`). **`singleNamespace: true` does not
-  narrow this grant, and that is deliberate**; its `update` is the one unpinned
-  cluster-scoped write the single-namespace allowlist admits. `nodeobserver` is off by
-  default, so no install that has not opted in is affected.
+- **`nodeobserver.enabled: true` now works under `singleNamespace: true`.** Its two rules used
+  to render as a namespaced `Role` there, and neither can be conveyed by one: `nodes` is
+  cluster-scoped, and `nodeobserver` lists pods with an empty namespace and a `spec.nodeName`
+  field selector, which the API server authorizes as a cluster-scope check. Both now sit in
+  cluster slots in both scope modes: `union-nodeobserver-cluster-read` (`nodes: [get]`,
+  `pods: [list]`) and `union-nodeobserver-cluster-write` (`nodes: [update]`).
+  **`singleNamespace: true` deliberately leaves this grant as is**; its `update` is the one
+  unpinned cluster-scoped write the single-namespace allowlist admits. `nodeobserver` is off
+  by default, so only installs that opted in change.
 
 - **`clusterresourcesync`'s grant is now derived from the templates it applies.** See the
-  `clusterRoleRules` entry under Migration — this is the release's one breaking default
-  change.
+  `clusterRoleRules` entry under Migration; this change is breaking.
 
 - **The pre-upgrade cleanup hook is split and pinned to the objects it deletes.**
-  `flyte-webhook-cleanup-<release-ns>` was a single `ClusterRole` granting `get`/`delete` on
-  `deployments`, `secrets` and `mutatingwebhookconfigurations` cluster-wide, with no
-  `resourceNames`. The Job only ever names four literal objects, so the two namespaced kinds
-  move to a `Role` and every rule is now confined by `resourceNames` to exactly those names.
-  Both objects keep the same name and the same hook annotations.
+  `flyte-webhook-cleanup-<release-ns>` was one `ClusterRole` granting `get`/`delete` on
+  `deployments`, `secrets` and `mutatingwebhookconfigurations` cluster-wide, without
+  `resourceNames`. The Job names four literal objects, so the two namespaced kinds move to a
+  `Role` and every rule is confined by `resourceNames` to those names. Both objects keep their
+  names and hook annotations.
 
-  The rule worth calling out is the cluster-scoped one. Unpinned, it let the upgrade hook
-  delete **any** `MutatingWebhookConfiguration` in the cluster for the duration of an
-  upgrade — including a policy engine's, whose absence fails open rather than loudly. It is
-  now confined to `flyte-pod-webhook`. Nothing an operator could previously clean up stops
-  working: the Job's commands are unchanged, and a leftover under any other name was never
-  being deleted.
+  The cluster-scoped rule matters most. Unpinned, it let the upgrade hook delete **any**
+  `MutatingWebhookConfiguration` in the cluster for the duration of an upgrade, including a
+  policy engine's, whose absence fails open rather than loudly. It is now confined to
+  `flyte-pod-webhook`. The Job's commands are unchanged and it only ever deleted those names,
+  so every cleanup it performed still works.
 
 ### App-serving pod identity (vendored gateway only)
 
-**Scope: this section applies only to the vendored gateway — `apps.enabled: true` with
-`gateway.enabled: true`, the default.** App serving has two implementations. On the vendored
-path the chart renders the Knative workloads itself, and that is what changes here. On the
-legacy `knative-operator` path (`gateway.enabled: false`) it instead emits a `KnativeServing`
-resource and the Knative Operator creates those workloads — **that path is unchanged and keeps
-the upstream account names.** The chart offers no ServiceAccount override there, and the
-`KnativeServing` workload overrides expose no ServiceAccount field to add one through. If you
-run app serving through the knative-operator, nothing below applies to you and no migration
-step is needed.
+**Scope: this section applies only to the vendored gateway** (`apps.enabled: true` with
+`gateway.enabled: true`, the default). On the legacy `knative-operator` path
+(`gateway.enabled: false`) the chart emits a `KnativeServing` resource and the Knative
+Operator creates the workloads. **That path is unchanged and keeps the upstream account
+names**; the chart has no ServiceAccount override there, and nothing below applies to it.
 
-- **BREAKING: the app-serving workloads change ServiceAccount.** Upstream Knative ships three
-  ServiceAccounts for six workloads: the controller, the webhook and both autoscalers all ran
-  as one account named `controller`, which meant no grant could be expressed for any one of
-  them without giving it to the other three. The six now have five per-component identities —
-  and, as for every other component, `commonServiceAccount.enabled` decides whether they are
-  used: with it on, the chart default, all six run as the single common account instead.
+- **BREAKING: the app-serving workloads change ServiceAccount.** Upstream Knative runs six
+  workloads under three accounts: the controller, the webhook and both autoscalers share one
+  account named `controller`, so no grant could be expressed for one of them without giving it
+  to the other three. The six now have five per-component identities, and
+  `commonServiceAccount.enabled` decides whether they are used: with it on (the chart
+  default), all six run as the single common account instead.
 
   | Workload | Was | Default (`commonServiceAccount.enabled: true`) | Per-component |
   |---|---|---|---|
@@ -556,35 +480,32 @@ step is needed.
 
   `autoscaler-hpa` shares the autoscaler's identity: it is the same reconciler with a
   different PodAutoscaler class, and it held exactly the autoscaler's grants before. Kourier
-  keeps its upstream name rather than gaining a `knative-` prefix — it is a separate project
-  and that is the name its own manifests and issue reports use, so it is the one account whose
-  name is unchanged under per-component identities.
+  keeps its upstream name `net-kourier`, so it is the one account whose name is unchanged
+  under per-component identities. See
+  [Knative ServiceAccount naming](docs/rbac-union.md#knative-serviceaccount-naming).
 
-- **Renaming an identity does not by itself change what it holds.** Splitting one account into
-  five could have left the webhook and the autoscalers unauthorized, since upstream conveys
-  their whole grant through roles bound to the shared `controller` account. It does not: what
-  each binary is granted is set by the section below, which replaces those roles outright.
+- **Splitting the account leaves the webhook and autoscalers authorized.** Upstream conveys
+  their whole grant through roles bound to the shared `controller` account. The next section
+  replaces those roles outright, so each binary is granted what it needs under either
+  identity mode.
 
-- **What each binary gains from the *identity mode* is separate from that.** With
-  `commonServiceAccount.enabled: true`, the chart default, the app-serving pods run as
-  `union-system` and so hold everything that account already carried for the operator, the
-  proxy, the leaseworker and the rest. Nothing new is granted to the cluster; the grants are
-  pooled onto one identity. That is the standing trade of a shared service account — one
-  identity per install, so one cloud-side workload-identity binding — reaching app serving for
-  the first time. Set `commonServiceAccount.enabled: false` to split them back out across the
-  five names above, at the cost of a cloud-side binding for each.
+- **With `commonServiceAccount.enabled: true` (the default), the app-serving pods run as
+  `union-system`** and hold everything that account already carries for the operator, the
+  proxy, the leaseworker and the rest. The cluster's total grants are unchanged; they are
+  pooled onto one identity, which is the standing trade of a shared ServiceAccount (one
+  cloud-side workload-identity binding per install), now reaching app serving. Set
+  `commonServiceAccount.enabled: false` to split them across the five names above, at the
+  cost of a cloud-side binding for each.
 
 ### App-serving (Knative) RBAC (vendored gateway only)
 
-**Scope: as above, this applies only when `apps.enabled: true` and `gateway.enabled: true`
-(the default).** A dataplane that does not run app serving is unaffected by all of it, and so
-is the `knative-operator` path (`gateway.enabled: false`), which installs its own RBAC.
+**Scope: as above, only `apps.enabled: true` with `gateway.enabled: true` (the default).**
+Dataplanes without app serving are unaffected, as is the `knative-operator` path
+(`gateway.enabled: false`), which installs its own RBAC.
 
 - **BREAKING: the vendored Knative Serving and Kourier RBAC is deleted, and the app-serving
-  binaries declare into this chart's slot framework instead.** 16 hand-vendored objects go —
-  10 ClusterRoles, 4 ClusterRoleBindings, 1 Role and 1 RoleBinding — and app serving becomes
-  the last part of the chart whose permissions are written the same way every other
-  component's are.
+  binaries declare into this chart's slot framework instead.** 16 hand-vendored objects go:
+  10 ClusterRoles, 4 ClusterRoleBindings, 1 Role and 1 RoleBinding.
 
   | Retired | What it conveyed |
   |---|---|
@@ -597,170 +518,162 @@ is the `knative-operator` path (`gateway.enabled: false`), which installs its ow
   | `knative-serving-namespaced-admin` / `-edit` / `-view` | Knative Serving objects to anyone holding the built-in `admin`, `edit` or `view` role in a namespace, by aggregation |
 
   **What replaces them.** Five per-component `<release-ns>-knative-<component>-cluster-read`
-  ClusterRoles — `list`/`watch` informer reads, plus exactly one `get`-only rule: the webhook's
-  on the release `Namespace`, `resourceNames`-scoped to that one name — and exactly one cluster-scoped write
-  role, `<release-ns>-knative-webhook-cluster-write`, whose every rule is
-  `resourceNames`-scoped: one to the mutating webhook configuration, one to the two validating
-  ones, and one to the release namespace's `namespaces/finalizers`. The two configuration kinds
-  are separate rules on purpose — Kubernetes applies `resourceNames` across every resource in a
-  rule, so naming both kinds together would have authorized six kind/name pairs instead of the
-  three objects that exist. Everything else the binaries need is namespaced: a
-  `comp-ns-*` Role of the binary's own in the release namespace, and the pooled `work-ns`
-  role the rest of the chart shares.
-
-  There is no aggregation left, no cert-manager or CRD grant, and **no cluster-scoped
-  `create` anywhere in the set** — which is what makes the `resourceNames` scoping meaningful,
-  since a `create` cannot be confined by a name that does not exist yet.
+  ClusterRoles carry `list`/`watch` informer reads, plus one `get`-only rule: the webhook's on
+  the release `Namespace`, `resourceNames`-scoped to that name. One cluster-scoped write role,
+  `<release-ns>-knative-webhook-cluster-write`, has only `resourceNames`-scoped rules: one for
+  the mutating webhook configuration, one for the two validating ones, and one for the release
+  namespace's `namespaces/finalizers`. The two configuration kinds are separate rules because
+  `resourceNames` applies across every resource in a rule, so naming both kinds together would
+  authorize six kind/name pairs instead of the three objects that exist. Everything else is
+  namespaced: each binary's own `comp-ns-*` Role in the release namespace, and the pooled
+  `work-ns` role. The set has no aggregation, no cert-manager or CRD grant, and **no
+  cluster-scoped `create`**, which makes the `resourceNames` scoping meaningful, since a
+  `create` cannot be confined by a name that does not exist yet.
 
 - **Measured: cluster-scoped write grants in an app-serving render drop from 118 to 4 at the
   chart default, and from 355 to 4 with per-component identities.** Counted as
   `(ServiceAccount, apiGroup, resource, verb, resourceNames)` tuples over the rendered
-  fixtures, resolving each aggregated ClusterRole to what it actually aggregates. Three of the
-  four are the webhook's rules above; the fourth is the pre-upgrade cleanup hook's pinned
-  `delete`, which predates this and is unrelated to app serving. Every one is
-  `resourceNames`-scoped.
+  fixtures, resolving each aggregated ClusterRole to what it aggregates. Three of the four are
+  the webhook's rules above; the fourth is the pre-upgrade cleanup hook's pinned `delete`,
+  which is unrelated to app serving. All four are `resourceNames`-scoped.
 
-  Two specific escalation primitives are gone with them: **cluster-wide `pods: create`**,
-  which lets its holder schedule a pod under any ServiceAccount in the cluster, and
-  **cluster-wide write on `serviceaccounts`, `namespaces` and `customresourcedefinitions`**.
-  `kubernetes.podspec-dryrun` stays pinned `disabled`, and is now identity-mode-dependent
-  rather than merely unused: the dry-run makes the webhook create a throwaway Pod in the app's
-  namespace, which the shared `union-system` account can still do through the pooled work-ns
-  binding, but a per-component `knative-webhook` cannot, since it declares into no
-  work-namespace slot. The chart does not refuse the key; it simply is not a feature to enable
-  when it works in one identity mode and not the other.
+  Two escalation primitives are gone with them: **cluster-wide `pods: create`**, which lets its
+  holder schedule a pod under any ServiceAccount in the cluster, and **cluster-wide write on
+  `serviceaccounts`, `namespaces` and `customresourcedefinitions`**.
+  `kubernetes.podspec-dryrun` stays pinned `disabled`, and its behavior now depends on identity
+  mode: the dry-run makes the webhook create a throwaway Pod in the app's namespace, which the
+  shared `union-system` account can do through the pooled work-ns binding and a per-component
+  `knative-webhook` cannot, since it declares into no work-namespace slot. The chart does not
+  refuse the key, but enabling it would work in one identity mode and fail in the other.
 
-  **One grant from that role is kept and re-scoped rather than dropped: the restricted-endpoints
-  subresource.** It is an OpenShift admission concept — `RestrictedEndpointsAdmission` refuses an
-  endpoints object naming a cluster-network address unless the caller holds `create` on that
-  subresource, and both the autoscaler's statforwarder and the controller's serverlessservice
-  reconciler write exactly such an object. It moves from one cluster-wide grant to two namespaced
-  ones, and Serving 1.23 splits them across two API groups: `discovery.k8s.io`
-  `endpointslices/restricted` in the release-namespace `comp-ns-write` Role, where the
-  statforwarder publishes its bucket as an EndpointSlice, and core `endpoints/restricted` in the
-  `work-ns` role, where the controller still writes each revision's public `Endpoints`. On any
-  non-OpenShift cluster it conveys nothing.
+  **The restricted-endpoints subresource is kept and re-scoped rather than dropped.** It is an
+  OpenShift admission concept: `RestrictedEndpointsAdmission` refuses an endpoints object
+  naming a cluster-network address unless the caller holds `create` on that subresource, and
+  both the autoscaler's statforwarder and the controller's serverlessservice reconciler write
+  such an object. The grant moves from one cluster-wide rule to two namespaced ones, split
+  across two API groups by Serving 1.23: `discovery.k8s.io` `endpointslices/restricted` in the
+  release-namespace `comp-ns-write` Role, where the statforwarder publishes its bucket as an
+  EndpointSlice, and core `endpoints/restricted` in the `work-ns` role, where the controller
+  writes each revision's public `Endpoints`. On non-OpenShift clusters it has no effect.
 
-  **The autoscaler's core `endpoints` grants go entirely.** At 1.23 the statforwarder writes its
-  bucket through `DiscoveryV1()` and takes the EndpointSlice lister; nothing in that binary
-  registers a core Endpoints informer any more. Its release-namespace `endpoints` write and its
-  cluster-wide `endpoints` `list`/`watch` are replaced by the equivalent `discovery.k8s.io`
-  `endpointslices` rules — `get`/`list`/`watch`/`create`/`update`, since `createOrUpdateEndpoints`
-  neither deletes nor patches the slice. The controller and the activator keep their core
-  `endpoints` rules, which their own informers still need.
+  **The autoscaler's core `endpoints` grants are removed.** At 1.23 the statforwarder writes its
+  bucket through `DiscoveryV1()` and takes the EndpointSlice lister, and the binary registers no
+  core Endpoints informer. Its release-namespace `endpoints` write and its cluster-wide
+  `endpoints` `list`/`watch` become `discovery.k8s.io` `endpointslices` rules:
+  `get`/`list`/`watch`/`create`/`update`, since `createOrUpdateEndpoints` neither deletes nor
+  patches the slice. The controller and the activator keep their core `endpoints` rules, which
+  their informers still use.
 
 - **`autoscaling/horizontalpodautoscalers` moves from a cluster-wide write to a namespaced
   one.** `autoscaler-hpa` reconciles an HPA-class PodAutoscaler into a HorizontalPodAutoscaler
-  beside the revision it scales, so the write belongs in the work namespaces and now lives in
-  the pooled `work-ns` role. A cluster-wide `list`/`watch` remains, because the reconciler
-  takes the shared, unfiltered HPA informer.
+  beside the revision it scales, so the write now lives in the pooled `work-ns` role. A
+  cluster-wide `list`/`watch` remains, because the reconciler takes the shared, unfiltered HPA
+  informer.
 
 - **BREAKING: `net-kourier` no longer holds a cluster-wide `secrets` `list`/`watch`, and this
-  one has an image floor.** Kourier used to register its Secret informer unconditionally and
-  unfiltered by namespace, which made a cluster-scoped read load-bearing — a namespaced Role
-  cannot authorize a cluster-scoped `LIST`. The image now gates that informer behind
-  `ENABLE_INGRESS_TLS`, which **defaults to false**, and with it off the filtered-informer
-  injectors register no Secret informer at all, so nothing issues the list. The chart does not
-  set the env var, so no workload change accompanies this.
+  has an image floor.** Kourier used to register its Secret informer unconditionally and
+  without a namespace filter, which made a cluster-scoped read load-bearing, since a
+  namespaced Role cannot authorize a cluster-scoped `LIST`. The image now gates that informer
+  behind `ENABLE_INGRESS_TLS`, which **defaults to false**. With it off, no Secret informer is
+  registered and nothing issues the list. The chart leaves the variable unset, so the image
+  default applies.
 
-  **The image floor is `2026.8.4`.** The grant is removed
-  unconditionally, so the operator image must contain net-kourier `b9fbd869`
-  (unionai/net-kourier#13, picked up by unionai/cloud#17870 on 2026-08-23). `2026.8.4` is the
-  first release that does; every earlier build, up to and including `2026.8.3`, does not.
+  **The image floor is `2026.8.4`.** The grant is removed unconditionally, so the image must
+  contain net-kourier `b9fbd869` (unionai/net-kourier#13, picked up by unionai/cloud#17870 on
+  2026-08-23). `2026.8.4` is the first release that does; every earlier build, up to and
+  including `2026.8.3`, does not.
 
   Against an older image the removal is a **silent outage**: the Secret reflector loops on
-  `secrets is forbidden`, its cache never syncs, the reconcilers never start — but the xDS
-  readiness probe on `:18000` comes up independently, so the controller sits `1/1 Running`
-  with zero restarts while every new app deployment hangs at `IngressNotConfigured`. There is
-  no crash, no restart count, and no failing probe to alert on.
+  `secrets is forbidden` and its cache never syncs, so the reconcilers never start. The xDS
+  readiness probe on `:18000` comes up independently, so the controller shows `1/1 Running`
+  with zero restarts while every new app deployment hangs at `IngressNotConfigured`. That
+  status is the only sign of the failure.
 
   The chart's own default is safe after this bump, but an **override is not**. The controller
   runs `gateway.components.kourier-controller.containers.controller.image`, which resolves to
-  `image.union.tag | default .Chart.AppVersion` — so any deployment pinning `image.union.tag`,
-  or overriding that component's `image.tag` directly, to a build older than `2026.8.4` must
-  lift that pin in the same change as this upgrade. Nothing refuses an older tag at render
-  time: the tag can legitimately be a git sha or a dev build, so the chart cannot tell. If
-  you cannot move the image, stay on the previous chart version rather than removing the
-  grant.
+  `image.union.tag | default .Chart.AppVersion`. Any deployment pinning `image.union.tag`, or
+  overriding that component's `image.tag` directly, to a build older than `2026.8.4` must lift
+  that pin in the same change as this upgrade. The chart cannot refuse an older tag at render
+  time, because a tag can be a git sha or a dev build. If you cannot move the image, stay on
+  the previous chart version rather than removing the grant.
 
 - **`knative-controller`'s digest-resolution reads on `serviceaccounts` and `secrets` are now
-  namespaced — the cluster-wide `get` is gone.** Digest resolution reads the ServiceAccount
-  named in the Revision's spec plus the Secrets its `imagePullSecrets` name. That was conveyed
-  by a `ClusterRole` + `ClusterRoleBinding`, which let the identity `get` **any Secret in any
-  namespace on the cluster**, tenant namespaces included. It never needed to be:
-  `reconcileDigest` sets `k8schain.Options.Namespace` to the Revision's own namespace and
-  passes a plain clientset, so these are direct, namespaced `Get`s, which is exactly what a
-  per-namespace `RoleBinding` conveys. The rule now sits in `work-ns`. `resourceNames` is not usable here — both the
-  ServiceAccount name and the Secret names come from the user's Revision spec.
+  namespaced; the cluster-wide `get` is removed.** Digest resolution reads the ServiceAccount
+  named in the Revision's spec and the Secrets its `imagePullSecrets` name. A `ClusterRole` and
+  `ClusterRoleBinding` conveyed that, which let the identity `get` **any Secret in any
+  namespace on the cluster**, tenant namespaces included. `reconcileDigest` sets
+  `k8schain.Options.Namespace` to the Revision's own namespace and passes a plain clientset, so
+  these are direct, namespaced `Get`s, which a per-namespace `RoleBinding` conveys. The rule
+  now sits in `work-ns`. `resourceNames` cannot be used, because the ServiceAccount and Secret
+  names come from the user's Revision spec.
 
-  **Behavior change worth knowing:** digest resolution now depends on the `<release-ns>-work-ns`
+  **Behavior change:** digest resolution now depends on the `<release-ns>-work-ns`
   `RoleBinding` existing in the app's namespace. If it is missing, the Revision is marked
-  `ContainerMissing` rather than resolving anyway — a visible failure in the Revision status,
-  and one more symptom of
+  `ContainerMissing`, a visible failure in the Revision status and one more symptom of
   [the work-namespace binding being absent](docs/rbac-union.md#the-union-work-ns-clusterrole-can-render-present-but-unbound).
-  The effective grant does not change at the `commonServiceAccount.enabled: true` default, since
-  `<release-ns>-work-ns` already carries `leaseworker`'s and `flytepropeller`'s resource wildcard.
+  The effective grant is unchanged at the `commonServiceAccount.enabled: true` default, since
+  `<release-ns>-work-ns` already carries `leaseworker`'s and `flytepropeller`'s resource
+  wildcard.
 
-  **A wider cluster-wide Secret read remains, untouched by this release and not narrowable
-  today: the pod `webhook`.** Its controller-runtime Secret cache is unscoped unless propeller's
-  `limit-namespace` is set — and it reads the same config
-  key propeller does, so it cannot be scoped without pinning propeller's own informer. It
-  holds `list`/`watch`, which returns every Secret's contents and enumerates them besides, so
-  it is broader than the named `get` this change removed. If you are auditing what this
-  release still exposes, that is the row to read; it is listed with its removal condition in
-  [docs/rbac-union.md](docs/rbac-union.md#where-a-secrets-rule-belongs).
-  `net-kourier`'s is gone — see the `net-kourier` bullet above.
+  **A wider cluster-wide Secret read remains and cannot be narrowed today: the pod `webhook`.**
+  Its controller-runtime Secret cache is unscoped unless propeller's `limit-namespace` is set,
+  and it reads the same config key propeller does, so scoping it would pin propeller's own
+  informer. It holds `list`/`watch`, which returns every Secret's contents, so it is broader
+  than the named `get` removed here. It is listed with its removal condition in
+  [docs/rbac-union.md](docs/rbac-union.md#where-a-secrets-rule-belongs). `net-kourier`'s
+  cluster-wide read is gone (see the `net-kourier` bullet above).
 
 - **The autoscaler's scale-subresource rule is namespaced.** Upstream's `*/scale` `patch`
   rule, restored in 2026.9.4 (#593), sat on the vendored `knative-serving-core` ClusterRole as
-  `apiGroups: ["*"]` on `"*/scale"`. This chart no longer vendors that role. The rule is now
-  `apps/deployments/scale` `patch` in the autoscaler's `work-ns` slot: the revision's
-  namespace is where the KPA patches, and the revision reconciler only ever names an
-  `apps/v1` Deployment as the scale target.
+  `apiGroups: ["*"]` on `"*/scale"`. The rule is now `apps/deployments/scale` `patch` in the
+  autoscaler's `work-ns` slot, because the KPA patches in the revision's namespace and the
+  revision reconciler only ever names an `apps/v1` Deployment as the scale target.
 
-- **The work-namespace slot is pooled, and that cuts both ways.** Each of the five also
-  receives every other declarer's rules in that one role, so `commonServiceAccount.enabled:
-  false` separates app serving from union's own components everywhere except the work
-  namespaces. As rendered at full privilege with per-component identities:
-  `knative-controller`, `knative-autoscaler` and `net-kourier` join `<release-ns>-work-ns`,
-  whose first rule is `apiGroups: ["*"], resources: ["*"]`, so they hold unrestricted write in
-  the work namespaces; and in the other direction the operator, proxy, leaseworker and webhook
-  identities gain the Knative API groups there. The release namespace is not like this: each
+- **The work-namespace slot is pooled, and that cuts both ways.** Each of the five identities
+  also receives every other declarer's rules in that one role, so
+  `commonServiceAccount.enabled: false` separates app serving from Union's own components
+  everywhere except the work namespaces. As rendered at full privilege with per-component
+  identities, `knative-controller`, `knative-autoscaler` and `net-kourier` join
+  `<release-ns>-work-ns`, whose first rule is `apiGroups: ["*"], resources: ["*"]`, so they
+  hold unrestricted write in the work namespaces; and the operator, proxy, leaseworker and
+  webhook identities gain the Knative API groups there. The release namespace differs: each
   binary has its own `comp-ns-*` Role, so the activator's unconditional namespaced Secret
-  informer is a Secret read for `knative-activator` and for nothing else. `knative-webhook` is
-  the only one of the five that joins no work-namespace slot; `knative-activator` is the only
-  one that joins neither write slot.
+  informer is a Secret read for `knative-activator` alone. `knative-webhook` is the only one
+  of the five that joins no work-namespace slot; `knative-activator` is the only one that joins
+  neither write slot.
 
 ### Third-party subchart RBAC
 
 The chart now writes prometheus and kube-state-metrics RBAC itself (both pinned to
-`rbac.create: false`), so `singleNamespace` governs it in both directions — narrowing to one
+`rbac.create: false`), so `singleNamespace` governs it in both directions: narrowing to one
 namespace when true, widening to cluster-wide read when false. Rationale and per-subchart
 detail: [docs/rbac.md](docs/rbac.md).
 
 Two broken metrics families are fixed, both under `singleNamespace`:
 
-- kube-state-metrics' RoleBinding named a nonexistent ServiceAccount — no `kube_*` since
-  2026-05-02.
-- prometheus's namespaced Role named cluster-scoped resources, which never match —
-  `kubernetes-cadvisor` got `403`s, so no `container_*`.
+- kube-state-metrics' RoleBinding named a nonexistent ServiceAccount, so there was no `kube_*`
+  since 2026-05-02.
+- prometheus's namespaced Role named cluster-scoped resources, which never match, so
+  `kubernetes-cadvisor` got `403`s and there was no `container_*`.
 
 Also, in both modes:
 
-- `kubernetes-cadvisor` is no longer scraped under `singleNamespace` — it needs cluster-wide node
-  access. The Task-Level Monitoring tradeoff the flag has always described.
+- `kubernetes-cadvisor` is no longer scraped under `singleNamespace`, because it needs
+  cluster-wide node access. This is the Task-Level Monitoring tradeoff the flag has always
+  described.
 - kube-state-metrics collects 4 resources instead of 28 (pods, deployments, daemonsets,
   resourcequotas). `examples/values.full-privilege.yaml` adds nodes and namespaces.
 - Nine cluster-wide upstream scrape jobs are dropped (`kubernetes-apiservers`, `-nodes`,
   `-nodes-cadvisor`, `-service-endpoints(-slow)`, `-services`, `-pods(-slow)`,
   `prometheus-pushgateway`). Pods and services annotated `prometheus.io/scrape` are no longer
-  discovered — add a job under `prometheus.extraScrapeConfigs` if you need one.
-- The "deployments available" dashboard panel gets its data — the kube-state-metrics scrape
-  filter dropped the two series behind it.
-- `gpu-metrics` now looks in the release namespace, where dcgm-exporter runs (was `kube-system`).
+  discovered; add a job under `prometheus.extraScrapeConfigs` if you need one.
+- The "deployments available" dashboard panel gets its data again: the kube-state-metrics
+  scrape filter had dropped the two series behind it.
+- `gpu-metrics` now looks in the release namespace, where dcgm-exporter runs (was
+  `kube-system`).
 - FluentBit no longer creates a ClusterRole; it never calls the Kubernetes API here.
 - ingress-nginx is confined to the release namespace (see Migration). metrics-server is
-  unchanged — cluster-scoped by design.
+  unchanged: cluster-scoped by design.
 
 ### Migration / action required
 
@@ -773,209 +686,197 @@ Also, in both modes:
   examples (`examples/values.full-privilege.yaml`, `values-legacy.yaml`) and the app-serving
   recipe in `docs/rbac.md` now set `singleNamespace: false`. Layered with an overlay that sets
   `low_privilege: true`, the later file used to win; now the render fails with
-  `singleNamespace is false but low_privilege is true`, because picking either silently
-  flips scope. Migrate overlays to `singleNamespace`, or set the same value under both names.
+  `singleNamespace is false but low_privilege is true`, because picking either would silently
+  flip scope. Migrate overlays to `singleNamespace`, or set the same value under both names.
 
 - **Replace any `.Values.low_privilege` read in your own templated values with
   `include "singleNamespace" .`.** `low_privilege` is no longer set in `values.yaml`, so
-  unless your overlay sets it, `.Values.low_privilege` is empty, and
-  `{{ if not .Values.low_privilege }}` is true at the single-namespace default. Wrapped
-  around the `kubernetes-cadvisor` job in a `prometheus.extraScrapeConfigs` override, it
-  renders that job where prometheus holds only a Role, and the scrape fails with `403`. Write
-  `{{ if not (include "singleNamespace" .) }}` instead, as the chart's own `values.yaml`
-  does. The same applies anywhere else the chart renders your values through `tpl`:
-  `extraObjects`, and the `config.*` blocks. `prometheus.serverFiles` is not rendered through
-  `tpl`, so template syntax there is never evaluated.
+  unless your overlay sets it, `.Values.low_privilege` is empty and
+  `{{ if not .Values.low_privilege }}` is true at the single-namespace default. Wrapped around
+  the `kubernetes-cadvisor` job in a `prometheus.extraScrapeConfigs` override, it renders that
+  job where prometheus holds only a Role, and the scrape fails with `403`. Write
+  `{{ if not (include "singleNamespace" .) }}` instead, as the chart's own `values.yaml` does.
+  The same applies anywhere else the chart renders your values through `tpl`: `extraObjects`
+  and the `config.*` blocks. `prometheus.serverFiles` is not rendered through `tpl`, so
+  template syntax there is never evaluated.
 
 - **On the vendored gateway (`gateway.enabled: true`, the default), the app-serving
-  ServiceAccount names change; rebind
-  anything outside the chart that referenced them.** Nothing inside the chart needs action —
-  the bindings follow the names — but anything that named `controller`, `activator` or
-  `net-kourier` from outside may: a cloud IAM trust policy or workload-identity binding
-  scoped to one of those accounts, an admission policy that matches on the requesting user
-  (`system:serviceaccount:<release-ns>:controller`), or a NetworkPolicy or audit rule keyed
-  on the same.
+  ServiceAccount names change; rebind anything outside the chart that referenced them.**
+  Bindings inside the chart follow the names. Anything that
+  named `controller`, `activator` or `net-kourier` from outside may need it: a cloud IAM trust
+  policy or workload-identity binding scoped to one of those accounts, an admission policy
+  that matches the requesting user (`system:serviceaccount:<release-ns>:controller`), or a
+  NetworkPolicy or audit rule keyed on the same.
 
   At the chart default all three become `union-system`, so each old reference becomes one new
   reference.
 
-  Under `commonServiceAccount.enabled: false` the mapping is not one-to-one, and `controller`
-  is the case to watch: it covered four workloads and **fans out to three accounts**, so a
-  single rule keyed on it has to become three or it will stop matching the webhook and the
-  autoscalers.
+  Under `commonServiceAccount.enabled: false` the mapping is not one-to-one. `controller`
+  covered four workloads and **fans out to three accounts**, so a single rule keyed on it has
+  to become three or it stops matching the webhook and the autoscalers.
 
   | Old account | Becomes, under per-component identities |
   |---|---|
   | `controller` | `knative-controller`, `knative-webhook` **and** `knative-autoscaler` |
   | `activator` | `knative-activator` |
-  | `net-kourier` | `net-kourier` — unchanged, nothing to do |
+  | `net-kourier` | `net-kourier` (unchanged) |
 
-  Two kinds of install have nothing to do here: `apps.enabled` off, the default under
-  `singleNamespace`; and app serving on the legacy knative-operator path (`gateway.enabled:
-  false`), where the Knative Operator owns those workloads and their accounts are untouched.
+  Installs with `apps.enabled` off (the default under `singleNamespace`) and installs serving
+  apps through the legacy knative-operator path (`gateway.enabled: false`) need no action
+  here; the Knative Operator owns those accounts.
 
-- **On the vendored gateway, this chart no longer supplies the Knative aggregation
-  roles anything outside it may have been consuming.** Three cases, all of which now need
-  supplying yourself:
+- **On the vendored gateway, this chart no longer supplies the Knative aggregation roles that
+  anything outside it may have consumed.** Three cases now need supplying yourself:
 
   - **`knative-serving-addressable-resolver` and `knative-serving-podspecable-binding`.**
-    Neither had a union subject; they exist so other controllers can aggregate Knative
-    Serving's `Addressable` and `PodSpecable` duck types into their own ClusterRoles. A
-    controller of yours whose `aggregationRule` selects `duck.knative.dev/addressable: "true"`
-    or `duck.knative.dev/podspecable: "true"` will find nothing matching after this upgrade and
-    will silently lose those rules — an aggregated role with no matching source is empty, not
-    an error. Ship your own labelled ClusterRole, or name the resources directly.
+    Neither had a union subject; they let other controllers aggregate Knative Serving's
+    `Addressable` and `PodSpecable` duck types into their own ClusterRoles. A controller of
+    yours whose `aggregationRule` selects `duck.knative.dev/addressable: "true"` or
+    `duck.knative.dev/podspecable: "true"` now matches nothing and silently loses those rules,
+    because an aggregated role with no matching source is empty rather than an error. Ship your
+    own labelled ClusterRole, or name the resources directly.
   - **`knative-serving-namespaced-admin` / `-edit` / `-view`.** These aggregated into the
     built-in `admin`, `edit` and `view` roles, so anyone holding one of those in a namespace
-    could read — or, with `admin`/`edit`, write — Knative Serving objects there. After this
-    upgrade they cannot. Grant it explicitly if your users need it; the chart should not be
-    deciding who can create a `Service` in a namespace it does not own.
+    could read (or, with `admin`/`edit`, write) Knative Serving objects there. After this
+    upgrade they cannot. Grant it explicitly if your users need it; the chart should not decide
+    who can create a `Service` in a namespace it does not own.
   - **Anything relying on `knative-serving-admin`'s aggregation.** It conveyed *any*
     ClusterRole in the cluster labelled `serving.knative.dev/controller: "true"`, so a
-    third-party add-on that grants itself reach by adding that label to its own role no longer
-    reaches the Knative binaries through it.
+    third-party add-on that grants itself reach by labelling its own role no longer reaches
+    the Knative binaries through it.
 
-- **The webhook's grant narrows sharply, and this is the change to review before upgrading.**
+- **The webhook's grant narrows sharply; this is the change to review before upgrading.**
   Because it ran as the shared `controller` account, `knative-webhook` previously held the
   whole of `knative-serving-core` by aggregation. It now declares only what its own informers
   and reconcilers use: ConfigMaps and Secrets in the release namespace, the two
   webhook-configuration kinds, a `get` on the release Namespace, and the two
-  `resourceNames`-scoped writes. Measured, that is **167 of its 208 capability tuples
-  withdrawn** — every CRD, `pods`, `serviceaccounts`, `namespaces` and Knative-API-group grant
-  it never asked for. The `certificates`, `defaulting`, `validation` and `config-validation`
-  controllers it runs need none of them, and admission review does not require RBAC on the
-  objects being admitted. **Nothing in this chart can confirm that from the image**, and no
-  snapshot can catch it: if a code path we did not find reads one of those, the webhook stays
-  `1/1 Running` and every `serving.knative.dev` write is rejected by its own fail-closed
-  configuration.
+  `resourceNames`-scoped writes. Measured, **167 of its 208 capability tuples are withdrawn**:
+  every CRD, `pods`, `serviceaccounts`, `namespaces` and Knative-API-group grant it never asked
+  for. The `certificates`, `defaulting`, `validation` and `config-validation` controllers it
+  runs need none of them, and admission review does not require RBAC on the objects being
+  admitted. **Nothing in this chart can confirm that from the image, and no snapshot can catch
+  it.** If a code path we did not find reads one of those, the webhook stays `1/1 Running` and
+  every `serving.knative.dev` write is rejected by its own fail-closed configuration.
 
-  The activator narrows the same way and much less: it loses `get` on `services` and
-  `revisions`, keeping `list`/`watch`, which is what its informers use.
+  The activator narrows the same way, much less: it loses `get` on `services` and `revisions`
+  and keeps `list`/`watch`, which its informers use.
 
 - **BREAKING: `clusterresourcesync.clusterRoleRules` now defaults to `[]`, and a `*` verb in
   it fails the render.** It used to default to twelve resources at `verbs: ['*']`, granted
   cluster-wide: `clusterrolebindings`, `configmaps`, `limitranges`, `namespaces`,
   `podtemplates`, `pods`, `resourcequotas`, `rolebindings`, `roles`, `secrets`,
-  `serviceaccounts` and `services`. That was a permission set nothing derived — it was simply
-  the default nobody changed — and it included the two grants that convey privilege
-  escalation: a verb wildcard on `roles` conveys `escalate`, which switches off Kubernetes'
-  own escalation-prevention check, and on `serviceaccounts` it conveys `impersonate`.
+  `serviceaccounts` and `services`. Nothing derived that permission set, and it included two
+  grants that convey privilege escalation: a verb wildcard on `roles` conveys `escalate`, which
+  switches off Kubernetes' escalation-prevention check, and on `serviceaccounts` it conveys
+  `impersonate`.
 
-  The chart now derives what the component needs from the templates it actually applies:
+  The chart now derives what the component needs from the templates it applies:
   `namespaces`, `serviceaccounts` and `resourcequotas` (the three default
   `clusterresourcesync.templates` entries) plus `rolebindings` and `bind` for the work-ns
-  binding, all at `get`/`create`/`patch` — the controller applies with a create and, when
-  the object exists, a patch, and never updates. `delete` on `namespaces` is added only
-  with `clusterresourcesync.config.cluster_resources.unionProjectSyncConfig.cleanupNamespace`.
-  Those rules are chart-owned and cannot be withdrawn by an override.
+  binding, all at `get`/`create`/`patch`, since the controller applies with a create and, when
+  the object exists, a patch. `delete` on `namespaces` is added only with
+  `clusterresourcesync.config.cluster_resources.unionProjectSyncConfig.cleanupNamespace`.
+  Those rules are chart-owned and an override cannot withdraw them.
 
-  **`clusterRoleRules` is now purely an extension point, and you must set it if your own
+  **`clusterRoleRules` is now only an extension point, and you must set it if your own
   `clusterresourcesync.templates` or `additionalTemplates` entries create anything else.**
-  Eight of the old twelve resources are no longer granted — most likely to matter are
-  `limitranges`, `services`, `roles` and `clusterrolebindings`. Verbs must come from `get`,
-  `list`, `watch`, `create`, `update`, `patch`, `delete`, `deletecollection`; anything else,
-  including `*`, `escalate`, `impersonate` and `bind`, fails the render with the offending
-  verb named. **The failure mode if you miss this is not a failed render** — the sync is
-  refused per template, per namespace, at runtime. Check your overlay for a
-  `clusterresourcesync.templates` or `additionalTemplates` entry before upgrading.
+  Eight of the old twelve resources are no longer granted; `limitranges`, `services`, `roles`
+  and `clusterrolebindings` are the most likely to matter. Verbs must come from `get`, `list`,
+  `watch`, `create`, `update`, `patch`, `delete`, `deletecollection`; anything else, including
+  `*`, `escalate`, `impersonate` and `bind`, fails the render with the offending verb named.
+  **A missed entry does not fail the render.** The sync is refused per template, per namespace,
+  at runtime. Check your overlay for a `clusterresourcesync.templates` or `additionalTemplates`
+  entry before upgrading.
 
-- **BREAKING: `union-webhook-role` / `union-webhook-binding`, `union-nodeobserver` and
-  `union-clustersync-resource` no longer exist.** Their rules are in the destination roles
-  described above (`union-work-ns`, `union-webhook-work-ns-cluster-read`,
+- **BREAKING: these roles and bindings no longer exist.** Their rules moved into the
+  destination roles described above (`union-work-ns`, `union-webhook-work-ns-cluster-read`,
   `union-webhook-cluster-write`, `union-nodeobserver-cluster-{read,write}` and
-  `union-clusterresourcesync-cluster-write`). `union-clustersync-auth-delegator` is removed
-  outright; see above.
-  Any external tooling, audit policy or binding outside this chart that names the old objects
-  must be updated.
+  `union-clusterresourcesync-cluster-write`). Any tooling, audit policy or `RoleBinding`
+  outside this chart that names them must be updated.
+  - `union-webhook-role` / `union-webhook-binding`, `union-nodeobserver` and
+    `union-clustersync-resource`.
+  - `union-clustersync-auth-delegator`, which is removed outright (see above).
+  - The roles `operator-system`, `proxy-system`, `<release-ns>-leaseworker` and
+    `flytepropeller-role`, and the bindings `operator-system`, `proxy-system`,
+    `<release-ns>-leaseworker` and `flytepropeller-binding`.
 
-- **At `singleNamespace: true` with `flytepropellerwebhook.managedConfig: false`, the webhook no
-  longer gets `mutatingwebhookconfigurations` write.** It was never usable: the propeller
-  config template sets `disableCreateMutatingWebhookConfig` whenever `singleNamespace` is true,
-  so the binary does not self-register in that mode. This exposes rather than causes a gap in
-  that combination — with `managedConfig: false` under `singleNamespace`, neither Helm nor the
+- **At `singleNamespace: true` with `flytepropellerwebhook.managedConfig: false`, the webhook
+  no longer gets `mutatingwebhookconfigurations` write.** The propeller config template sets
+  `disableCreateMutatingWebhookConfig` whenever `singleNamespace` is true, so the binary never
+  self-registered in that mode and the grant was unusable. This exposes a gap in that
+  combination: with `managedConfig: false` under `singleNamespace`, neither Helm nor the
   webhook creates the `MutatingWebhookConfiguration`. If you run those two settings together,
   either set `managedConfig: true` or create the object yourself.
 
 - **BREAKING: something must bind `union-work-ns` in each work namespace at
   `singleNamespace: false`, and the chart cannot check that it happened.** No Union role is
-  bound cluster-wide to reach work namespaces any more, so the binding is what grants
-  access. Ways to arrange it:
+  bound cluster-wide to reach work namespaces any more, so the binding is what grants access.
+  The routes are additive; see
+  [Who creates the work-namespace binding](docs/rbac-union.md#who-creates-the-work-namespace-binding).
 
-  - **`clusterresourcesync.enabled: true` (the usual answer, and it is now automatic).** It
-    already creates the work namespaces as projects are registered; it now creates the
-    `union-work-ns` `RoleBinding` in each one as well. The chart adds the binding to
-    `union-clusterresource-template` as `ab_work_ns_binding.yaml` — keyed to sort ahead of
-    the ServiceAccount and ResourceQuota entries, so a new project is reachable before the
-    objects that depend on that access are created — and grants its ServiceAccount `bind` on
-    the `union-work-ns` `ClusterRole`, restricted to that one role by `resourceNames`. No
-    configuration is needed and nothing is added to `clusterresourcesync.templates`, which
-    stays yours to override.
-  - **Static** — `namespaces.enabled: true` with a non-empty `namespaces.static`. This chart
-    emits one `RoleBinding` per listed namespace. It is a single pooled role, so the count
-    does not grow with the number of components or with `commonServiceAccount.enabled: false`.
-    **This covers the listed names only.** `namespaces.static` is a pre-seeded subset, not the
-    full set a dataplane uses, so if projects are registered after install you still need
-    `clusterresourcesync` (or your own tooling) for their namespaces — the two are additive,
-    not alternatives, and the grants above stay in place when both are on.
-  - **Your own tooling** — if you provision work namespaces yourself, create the binding
-    alongside each one: a `RoleBinding` named `union-work-ns` in that namespace, `roleRef`
-    pointing at the `ClusterRole` of the same name, with one `ServiceAccount` subject per
-    Union identity in the release namespace. Whatever creates that `RoleBinding` also needs
-    `bind` on the `union-work-ns` `ClusterRole` — Kubernetes refuses to let a caller grant
-    permissions it does not itself hold, unless it holds `bind` on the referenced role.
+  - **`clusterresourcesync.enabled: true` (the usual answer, and now automatic).** It creates
+    the work namespaces as projects are registered and now creates the `union-work-ns`
+    `RoleBinding` in each one. The chart adds the binding to `union-clusterresource-template`
+    as `ab_work_ns_binding.yaml`, keyed to sort ahead of the ServiceAccount and ResourceQuota
+    entries so a new project is reachable before the objects that depend on that access are
+    created. It also grants the controller's ServiceAccount `bind` on the `union-work-ns`
+    `ClusterRole`, restricted to that role by `resourceNames`. No configuration is needed, and
+    `clusterresourcesync.templates` stays yours to override.
+  - **Static** (`namespaces.enabled: true` with a non-empty `namespaces.static`). This chart
+    emits one `RoleBinding` per listed namespace; the count does not grow with the number of
+    components or with `commonServiceAccount.enabled: false`. **This covers the listed names
+    only.** `namespaces.static` is a pre-seeded subset, so namespaces for projects registered
+    later still need `clusterresourcesync` or your own tooling.
+  - **Your own tooling.** If you provision work namespaces yourself, create the binding
+    alongside each one: a `RoleBinding` named `union-work-ns` in that namespace, with `roleRef`
+    pointing at the `ClusterRole` of the same name and one `ServiceAccount` subject per Union
+    identity in the release namespace. Whatever creates that `RoleBinding` also needs `bind` on
+    the `union-work-ns` `ClusterRole`, because Kubernetes refuses to let a caller grant
+    permissions it does not hold unless it holds `bind` on the referenced role.
 
-  If nothing creates it, the install renders clean and task pods fail with `Forbidden` the
-  first time they run, not at deploy time. `singleNamespace: true` deployments need no action:
-  the release namespace is the work namespace and the chart binds there itself.
+  If nothing creates the binding, the install renders clean and task pods fail with
+  `Forbidden` the first time they run, not at deploy time. `singleNamespace: true` deployments
+  need no action: the release namespace is the work namespace and the chart binds there itself.
 
-- **BREAKING: the per-component role names `operator-system`, `proxy-system`,
-  `<release-ns>-leaseworker` and `flytepropeller-role` no longer exist**, nor do their
-  bindings — `operator-system`, `proxy-system`, `<release-ns>-leaseworker` and
-  `flytepropeller-binding`. Their rules moved into the destination roles above. Any external
-  tooling, audit policy or `RoleBinding` outside this chart that references them by name must
-  be updated.
-
-- **At `singleNamespace: false`, the operator no longer reads or writes Secrets and Deployments
-  in the release namespace unless a feature that needs them is on.** It previously held
+- **At `singleNamespace: false`, the operator reads and writes Secrets and Deployments in the
+  release namespace only when a feature that needs them is on.** It previously held
   `get`/`list`/`watch`/`create`/`update` on both there, unconditionally. They now sit in
   `union-operator-comp-ns-read` / `union-operator-comp-ns-write` behind
   `config.operator.secretsWatcher.enabled` and `config.operator.syncClusterConfig.enabled`,
-  which are both off by default. `singleNamespace: true` is unaffected — there the release
-  namespace is the work namespace, and `union-work-ns` covers both.
+  both off by default. `singleNamespace: true` is unaffected: the release namespace is the work
+  namespace there, and `union-work-ns` covers both.
 
 - **Two new render refusals, both at `singleNamespace: false`.** Listing the release namespace
-  in `namespaces.static` is refused: it would bind the work-ns role where Union's own
-  components run, with nothing in the render to show it. `namespaces.enabled: true` with an
-  empty `namespaces.static` is refused too — it creates no bindings and pre-seeds no
-  namespaces, so the render looks clean while every task fails at first execution. Both are
-  ignored under `singleNamespace: true`, which does not read `namespaces.static` at all.
+  in `namespaces.static` is refused, because it would bind the work-ns role where Union's own
+  components run. `namespaces.enabled: true` with an empty `namespaces.static` is refused too:
+  it creates no bindings and pre-seeds no namespaces, so the render looks clean while every
+  task fails at first execution. Under `singleNamespace: true`, `namespaces.static` is ignored
+  and neither applies.
 
-- **BREAKING for `namespaces.enabled: false` + `singleNamespace: false` — this mode becomes a
-  genuine multi-namespace deployment.** If you were running that combination and relying on it
-  behaving as single-namespace, it will not any more: task pods are no longer pinned to the
-  release namespace (propeller returns to `limit-namespace: all`, and `namespace_mapping`
-  falls back to its `{{ project }}-{{ domain }}` default unless you set
-  `namespace_mapping.template`), and the single-namespace task PodTemplate, the `union`
-  task ServiceAccount and the image-builder ConfigMap stop being rendered. Union's own RBAC
-  does not change *because of this* — it already keyed on `singleNamespace`, which this
-  combination already had set to `false`; what does change it is the destination split
-  above, which applies to every privilege mode. ServiceAccounts are unaffected too:
-  `commonServiceAccount.enabled` defaults to `true`, so components keep sharing
-  `union-system`. The one privilege
-  increase is `clusterresourcesync` itself: once you enable it (see the next entry) it
-  brings a ClusterRole and two ClusterRoleBindings, which is how it creates namespaces.
-  **If you actually want single-namespace
-  behavior, set `singleNamespace: true`** — that is now the flag that means it, and
+- **BREAKING for `namespaces.enabled: false` + `singleNamespace: false`: this mode becomes a
+  genuine multi-namespace deployment.** If you ran that combination and relied on it behaving
+  as single-namespace, it no longer does. Task pods are no longer pinned to the release
+  namespace (propeller returns to `limit-namespace: all`, and `namespace_mapping` falls back to
+  its `{{ project }}-{{ domain }}` default unless you set `namespace_mapping.template`), and
+  the single-namespace task PodTemplate, the `union` task ServiceAccount and the image-builder
+  ConfigMap stop rendering. Union's own RBAC does not change *because of this*: it already
+  keyed on `singleNamespace`, which this combination already had set to `false`. The
+  destination split above, which applies to every privilege mode, is what changes it.
+  ServiceAccounts are unaffected too, since `commonServiceAccount.enabled` defaults to `true`
+  and components keep sharing `union-system`. The one privilege increase is
+  `clusterresourcesync` itself, once you enable it (next entry): it brings a ClusterRole and
+  two ClusterRoleBindings, which is how it creates namespaces. **If you want single-namespace
+  behavior, set `singleNamespace: true`.** That is now the flag that means it;
   `namespaces.enabled: false` on its own never did.
 
 - **A `singleNamespace: false` dataplane must now enable `clusterresourcesync` (or pre-create
-  namespaces).** It defaults to `false` and was previously suppressed entirely in the
-  `namespaces.enabled: false` mode by the `singleNamespace` gate, so leaving it off looked
-  harmless. Now that the mode is genuinely multi-namespace, something has to create the
-  per-project/domain namespaces as projects are registered. Either set
-  `clusterresourcesync.enabled: true`, or pre-create every namespace your
-  `namespace_mapping.template` can produce and enumerate them in `namespaces.static` with
-  `namespaces.enabled: true`. Task pods land in `Forbidden` / `namespace not found` otherwise.
+  namespaces).** It defaults to `false`, and the `singleNamespace` gate used to suppress it
+  entirely in the `namespaces.enabled: false` mode, so leaving it off looked harmless. Now
+  that the mode is genuinely multi-namespace, something has to create the per-project/domain
+  namespaces as projects are registered. Either set `clusterresourcesync.enabled: true`, or
+  pre-create every namespace your `namespace_mapping.template` can produce and list them in
+  `namespaces.static` with `namespaces.enabled: true`. Otherwise task pods fail with
+  `Forbidden` / `namespace not found`.
 
 - **If you relied on `helm uninstall` deleting the pre-seeded namespaces, delete them with
   `kubectl` instead.** Helm still owns them for install and upgrade. If your namespaces are
@@ -984,109 +885,107 @@ Also, in both modes:
 
 - **Do not drop a pre-existing namespace from the manifest in the same upgrade that lands on
   this version.** Helm reads `helm.sh/resource-policy` off the live object, not off the chart
-  it is about to apply. Namespaces created by an earlier version carry no annotation yet, so
-  the upgrade that would first add it will happily delete them instead — with their contents —
-  if that same upgrade also removes them from the render. Migrate in two steps: upgrade once
-  with `namespaces.static` and `namespaces.enabled` unchanged so the annotation lands, then
-  make the change that drops them (`namespaces.enabled: false`, `singleNamespace: true`, or a
-  shorter `static` list). GitOps users get no protection from the annotation on either step —
-  see the retention note above.
+  it is about to apply. Namespaces created by an earlier version do not have the annotation yet, so
+  an upgrade that also removes them from the render deletes them, with their contents, before
+  the annotation lands. Migrate in two steps: upgrade once with `namespaces.static` and
+  `namespaces.enabled` unchanged so the annotation lands, then make the change that drops them
+  (`namespaces.enabled: false`, `singleNamespace: true`, or a shorter `static` list). The
+  annotation protects GitOps users on neither step; see the retention note above.
 
 - **Quoted booleans are a silent hazard on most boolean keys, and the chart does not reject
   them.** Go's template engine treats any non-empty string as true, so `"false"` means
   **true**. `singleNamespace` and `low_privilege` are the exception: a string there fails the
-  render. `namespaces.enabled: "false"` does not — it creates every namespace in `namespaces.static`
-  while the values file reads `false`. `commonServiceAccount.enabled: "false"` collapses
+  render. `namespaces.enabled: "false"` creates every namespace in `namespaces.static` while
+  the values file reads `false`, and `commonServiceAccount.enabled: "false"` collapses
   per-component identities back onto the shared ServiceAccount. **If your values are
-  generated, confirm the generator emits real booleans** — a `templatefile`/heredoc pipeline
-  stringifies scalars, `yamlencode` does not.
+  generated, confirm the generator emits real booleans**: a `templatefile`/heredoc pipeline
+  stringifies scalars, and `yamlencode` does not.
 
 - **At `singleNamespace: false`, layer `examples/values.full-privilege.yaml`.** The flag grants
-  the cluster-wide read; this file uses it (nodes + namespaces collectors, every namespace).
-  Without it: no `kube_node_*`, no `kube_namespace_labels`, no requests/limits for task pods.
-  Task pod CPU and memory are unaffected. `examples/values-legacy.yaml` already includes it.
+  the cluster-wide read, and this file uses it (nodes and namespaces collectors, every
+  namespace). Without it there is no `kube_node_*`, no `kube_namespace_labels`, and no
+  requests/limits for task pods; task pod CPU and memory are unaffected.
+  `examples/values-legacy.yaml` already includes it.
 
 - **ingress-nginx now watches only the release namespace**, where every Ingress this chart
-  creates lives. An Ingress outside it stops being reconciled, silently. To serve one from
+  creates lives. An Ingress outside it silently stops being reconciled. To serve one from
   elsewhere, set both `ingress-nginx.rbac.scope: false` and
   `ingress-nginx.controller.scope.enabled: false`; the chart errors if only one is set.
-  Under scoped RBAC, `ingress-nginx.controller.scope.namespace` must be empty (the default)
-  or name the release namespace; anything else now fails the render. The literal
-  `$(POD_NAMESPACE)` is refused too, though it is what an empty value becomes — the guard
-  compares namespaces, not the expressions producing them. Leave it empty.
+  Under scoped RBAC, `ingress-nginx.controller.scope.namespace` must be empty (the default) or
+  name the release namespace; anything else fails the render. The literal `$(POD_NAMESPACE)`
+  is refused too, though it is what an empty value becomes, because the guard compares
+  namespaces rather than the expressions producing them. Leave it empty.
 
 - **One dataplane per cluster at `singleNamespace: false`.** prometheus's ClusterRole and
   ClusterRoleBinding have a fixed name (`union-operator-prometheus-rbac`) but a
   release-namespace subject, so a second release contends for them. `helm install` refuses;
-  ArgoCD does not unless the Application sets `FailOnSharedResource=true` — the later sync
-  rewrites the subject and the first release's prometheus loses its permissions.
+  ArgoCD refuses only if the Application sets `FailOnSharedResource=true`. Otherwise the later
+  sync rewrites the subject and the first release's prometheus loses its permissions.
 
 - **Remove `prometheus.rbac.create` and `prometheus.kube-state-metrics.rbac.create`** from your
-  values. Both must stay false; the chart now refuses to render otherwise.
+  values. Both must stay false, and the chart refuses to render otherwise.
 
 - **A templated `prometheus.kube-state-metrics.namespaces` entry now fails the render** under
   `singleNamespace: true`. The subchart resolves it against its *own* context, so this chart
   cannot tell which namespace it becomes, and a wrong guess passes a namespace the Role never
-  covers. The refusal is blanket — including `'{{ .Release.Namespace }}'`, which would in fact
+  covers. The refusal is blanket, including `'{{ .Release.Namespace }}'`, which would in fact
   resolve correctly. Use `releaseNamespace: true` instead.
 
 - **Four kube-state-metrics features now fail the render:** `kubeRBACProxy`,
   `customResourceState`, `autosharding` and `rbac.extraRules`. `rbac.create: false` switches
-  off the permissions half of each while the feature half still deploys, so none of them was
-  working — `kubeRBACProxy` additionally took the Prometheus target down by serving HTTPS to a
+  off the permissions half of each while the feature half still deploys, so none of them
+  worked; `kubeRBACProxy` additionally took the Prometheus target down by serving HTTPS to a
   plain-HTTP scrape job. Remove them. To add metrics, name the collector in
   `prometheus.kube-state-metrics.collectors`, which grants and collects together.
 
 - **Removed keys:** `prometheus.kube-state-metrics.metricRelabelings` and
-  `dcgm-exporter.namespace` — neither had any effect. If you used the latter to scrape an
+  `dcgm-exporter.namespace`, both of which had no effect. If you used the latter to scrape an
   exporter outside the release namespace, that job no longer matches. Two more go with the
   app-serving work: `gateway.config.certmanager` and `gateway.config.network`. Helm does not
-  error on a values key nothing reads, so an overlay still setting either is silently
-  ignored rather than refused; drop them.
+  error on a values key nothing reads, so an overlay that still sets either is silently
+  ignored; drop them.
 
 - **App serving is now off by default under `singleNamespace`.** `apps.enabled` (and the
-  deprecated `serving.enabled`) previously defaulted to *on*, so every install that set neither
-  got Knative Serving — 32 of the 37 dataplane snapshot fixtures did. With both unset it is now
-  on unless `singleNamespace` is true, which is the default, because the vendored gateway cannot
-  run app serving under `singleNamespace` (see the next entry). **A single-namespace deployment
-  relying on the default loses app serving on upgrade**, on the vendored-gateway *and* the
-  legacy knative-operator path. Set `singleNamespace: false` to keep it; on the legacy path,
-  `apps.enabled: true` also does.
-  Check the generated overlays in `unionai/cloud` for environments that never set it
-  explicitly before pinning this revision. `serving.enabled: true` still works and still takes
-  effect — `apps.enabled` is left null rather than false precisely so the deprecated key keeps
-  being consulted.
+  deprecated `serving.enabled`) previously defaulted to *on*, so every install that set
+  neither got Knative Serving; 32 of the 37 dataplane snapshot fixtures did. With both unset
+  it is now on unless `singleNamespace` is true, which is the default, because the vendored
+  gateway cannot run app serving under `singleNamespace` (see the next entry). **A
+  single-namespace deployment relying on the default loses app serving on upgrade**, on the
+  vendored-gateway *and* the legacy knative-operator path. Set `singleNamespace: false` to
+  keep it; on the legacy path, `apps.enabled: true` also works. Check the generated overlays
+  in `unionai/cloud` for environments that never set it explicitly before pinning this
+  revision. `serving.enabled: true` still takes effect: `apps.enabled` is left null rather
+  than false so the deprecated key keeps being consulted.
 
 - **App serving now requires `singleNamespace: false`, and the chart refuses the alternative.**
-  The vendored Knative Serving / Kourier stack under `templates/gateway/` is 10 ClusterRoles
-  and 4 ClusterRoleBindings with no namespaced form — `controller` gets its whole grant
-  through an aggregated ClusterRole, `knative-serving-core` needs namespaces, CRDs and the
-  webhook configurations, and the deployments take no watch-scope flag — so `singleNamespace`
-  cannot scope it. **An existing install that sets `apps.enabled: true` (or `serving.enabled:
-  true`) on the vendored gateway without `singleNamespace: false` will fail to render on
-  upgrade** with a message naming both exits: set `singleNamespace: false` to keep app
-  serving, or `apps.enabled: false` to run without it. On the ArgoCD path this surfaces as a
-  sync failure rather than a silent degradation, which is the intent — the alternative was a dataplane whose apps never start
-  and nothing saying why. The Envoy gateway, dataproxy and tunnel-service ingress gate on
+  The vendored Knative Serving / Kourier stack under `templates/gateway/` has no namespaced
+  form: `controller` gets its whole grant through an aggregated ClusterRole,
+  `knative-serving-core` needs namespaces, CRDs and the webhook configurations, and the
+  deployments take no watch-scope flag. `singleNamespace` therefore cannot scope it. **An
+  existing install that sets `apps.enabled: true` (or `serving.enabled: true`) on the
+  vendored gateway without `singleNamespace: false` fails to render on upgrade** with a
+  message naming both exits: set `singleNamespace: false` to keep app serving, or
+  `apps.enabled: false` to run without it. On the ArgoCD path this surfaces as a sync
+  failure, which is the intent, since the alternative was a dataplane whose apps never start
+  with no explanation. The Envoy gateway, dataproxy and tunnel-service ingress gate on
   `serving.renderGateway` (`gateway.enabled` with either app serving or zero trust), so
   `apps.enabled: false` leaves the zero-trust dataplane fully working.
   ([docs/rbac.md](docs/rbac.md#app-serving))
 
-- **App serving: Knative TLS certificate provisioning is gone**, on the vendored gateway.
-  The `config-certmanager` ConfigMap and the `routing-serving-certs` `Certificate`
-  are removed; TLS terminates at the Envoy gateway. `config-network` is now written
-  literally — the Kourier `ingress-class` this chart vendors, and nothing else — so
-  `external-domain-tls`, `cluster-local-domain-tls`, `system-internal-tls`,
-  `namespace-wildcard-cert-selector` and the legacy `auto-tls` and `internal-encryption` can
-  no longer be turned on. All six defaulted off, so nothing that was working stops. The
-  controller's grants go with the reconciler: `knative-serving-core` no longer carries write
-  on `cert-manager.io` (including cluster-scoped `clusterissuers`) or
-  `acme.cert-manager.io/challenges`, nor `delete` on the `knative-serving-certmanager`
-  `ClusterRole`.
+- **App serving: Knative TLS certificate provisioning is removed** on the vendored gateway.
+  The `config-certmanager` ConfigMap and the `routing-serving-certs` `Certificate` are gone,
+  and TLS terminates at the Envoy gateway. `config-network` is now written literally, with
+  only the Kourier `ingress-class` this chart vendors, so `external-domain-tls`,
+  `cluster-local-domain-tls`, `system-internal-tls`, `namespace-wildcard-cert-selector` and
+  the legacy `auto-tls` and `internal-encryption` can no longer be turned on. All six
+  defaulted off, so every working install keeps working. The controller's grants go with the
+  reconciler: `knative-serving-core` no longer carries write on `cert-manager.io` (including
+  cluster-scoped `clusterissuers`) or `acme.cert-manager.io/challenges`, nor `delete` on the
+  `knative-serving-certmanager` `ClusterRole`.
 
-- **remote_write volume shifts.** Under `singleNamespace`, `kube_*` starts flowing while the nine
-  dropped jobs cut the other way. At `singleNamespace: false`, `container_*` joins it but the
-  collector list shrinks — layer the full-privilege overlay to keep `kube_node_*`.
+- **remote_write volume shifts.** Under `singleNamespace`, `kube_*` starts flowing while the
+  nine dropped jobs cut the other way. At `singleNamespace: false`, `container_*` joins it but
+  the collector list shrinks; layer the full-privilege overlay to keep `kube_node_*`.
 
 ### Nydus lazy image pulls (opt-in)
 
