@@ -1823,8 +1823,8 @@ expect-resource-group "and its endpointslices rule is in discovery.k8s.io, not c
 expect-resource-group "as is the restricted subresource it pairs with" \
   union-knative-autoscaler-comp-ns-write "endpointslices/restricted" "discovery.k8s.io" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
-expect-verb-resources "the knative webhook's is one Secret it creates and renews" \
-  union-knative-webhook-comp-ns-write create "secrets" \
+expect-verb-resources "the knative webhook's is one Secret it creates and renews, and its leader-election lease" \
+  union-knative-webhook-comp-ns-write create "leases,secrets" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
 for v in patch delete deletecollection; do
   expect-verb-resources "and it grants no ${v} on it" \
