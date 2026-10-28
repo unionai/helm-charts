@@ -30,8 +30,21 @@ support.
 
 ### Operational impact
 
-- **CRDs** are applied by ArgoCD (or `kubectl apply --server-side -f crds/dataplane/`); the
-  1.23 Serving CRDs are additive supersets of 1.16.
+- **CRDs are NOT updated by `helm upgrade`**: By Helm 3 design, manifests in `crds/` are only
+  installed during the initial chart install and skipped on all subsequent upgrades. Environments
+  deploying via plain Helm, Terraform (`helm_release`), or Helmfile must apply CRDs out-of-band:
+  ```bash
+  # Apply updated CRDs via server-side apply from the cloned repo (or checkout at the matching tag):
+  kubectl apply --server-side --force-conflicts -f crds/dataplane/
+  ```
+  ArgoCD applications should configure a dedicated application pointing to `crds/dataplane/`
+  with `ServerSideApply=true`.
+- **Degradation if CRDs are not updated**: The 1.23 Serving CRDs are additive supersets of 1.16.
+  If a cluster runs dataplane >=2026.9.4 with stale 1.16 CRDs:
+  - **Inline CSI volumes fail**: Serving pods mounting Union Volumes (`volumes.union.ai`, `allow_volumes`)
+    will be rejected by the Knative webhook with schema validation errors.
+  - Basic Knative App revision scaling (to/from zero) remains functional, as the `*/scale` permission
+    rule lives in the chart RBAC templates rather than the CRD schemas.
 - **This skips seven minor versions.** Knative's supported upgrade path is sequential; here it
   is a direct manifest/CRD replacement. **Validate on a canary dataplane before fleet rollout.**
 - **net-kourier / Envoy are union-built** (tag-based, coupled to `union.unionoperator.image.tag`,
