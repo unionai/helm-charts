@@ -390,6 +390,32 @@ platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
+{{- define "nodeBootstrap.selectorLabels" -}}
+app.kubernetes.io/name: union-node-bootstrap
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "nodeBootstrap.labels" -}}
+{{- include "nodeBootstrap.selectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/*
+The CLOUD_PROVIDER node-bootstrap installs for: it picks the image's
+/union/install.d/<cloud> tree (registry credential helpers, and on aws the
+criu/gvisor extras). nodeBootstrap.cloudProvider wins; else the top-level
+`provider`. Only aws, gcp and azure have an install tree, so anything else
+(custom, oci, metal) fails here rather than crash-looping on every node.
+*/}}
+{{- define "nodeBootstrap.cloudProvider" -}}
+{{- $p := .Values.nodeBootstrap.cloudProvider | default (.Values.provider | default "") -}}
+{{- if not (has $p (list "aws" "gcp" "azure")) -}}
+{{- fail (printf "nodeBootstrap.enabled needs a cloud provider of aws, gcp or azure (got %q from nodeBootstrap.cloudProvider / provider); node-bootstrap has no install tree for other platforms" $p) -}}
+{{- end -}}
+{{- $p -}}
+{{- end -}}
+
 {{/*
 Effective PriorityClass name for the uvol broker (only invoked when the broker
 is enabled): explicit name wins; else when the chart creates the class, a
@@ -803,8 +829,9 @@ access the storage is injected.
 union-operator-prometheus
 {{- end -}}
 
+{{- /* Prometheus serves every route, its health check too, under prometheus.server.prefixURL. */ -}}
 {{- define "prometheus.health.url" -}}
-http://{{ include "prometheus.service.name" . }}:80/-/healthy
+http://{{ include "prometheus.service.name" . }}:80{{ trimSuffix "/" (dig "server" "prefixURL" "" (.Values.prometheus | default dict)) }}/-/healthy
 {{- end -}}
 
 {{- define "prometheus.service.url" -}}
@@ -1265,6 +1292,11 @@ Appends "-rootless" to the tag when rootless mode is enabled, unless the tag alr
 {{- define "imagebuilder.buildkit.image" -}}
 {{- $repo := .Values.imageBuilder.buildkit.image.repository -}}
 {{- $tag := .Values.imageBuilder.buildkit.image.tag -}}
+{{- $nydus := .Values.imageBuilder.buildkit.nydus | default dict -}}
+{{- if or $nydus.enabled .Values.imageBuilder.enableImageOptimization -}}
+  {{- $repo = $nydus.image.repository -}}
+  {{- $tag = $nydus.image.tag | default .Chart.AppVersion -}}
+{{- end -}}
 {{- $rootless := .Values.imageBuilder.buildkit.rootless -}}
 {{- $suffix := "" -}}
 {{- if and $rootless (not (hasSuffix "-rootless" $tag)) (ne $tag "rootless") -}}
@@ -1745,4 +1777,80 @@ selector is immutable. Call with the id, e.g.
 */}}
 {{- define "dataplane.componentLabel" -}}
 platform.union.ai/component: {{ . }}
+{{- end -}}
+
+{{/*
+dataplane.configMapDataChecksum is the config hash the cluster health contract shares
+with the operator: the hex sha256 of the ConfigMap's data serialized as JSON, with the
+keys sorted (helm's toJson is Go's json.Marshal, which the operator uses too, see
+unionai/cloud operator/common/componentconfig). Stamped as the configChecksum
+annotation on the pod template of every workload that runs from a ConfigMap the
+operator tracks, so the pods carry the hash of the data they were started on and the
+operator can compare it with the live ConfigMap: ComponentConfig.config_hash in the
+snapshot is the same value over the ConfigMap's current data, and a pod whose
+PodInstanceInfo.config_hash differs from it does not run that data. The config syncer
+stamps the same value when it rolls a workload onto a synced config. The same helper
+lives in the union-operator and flyte-core charts of unionai/cloud; a change here is a
+change there too.
+
+Takes a dict: root (the top-level context), path (the rendered ConfigMap template's
+path, as print .Template.BasePath "/propeller/configmap.yaml" gives it) and name (the
+ConfigMap to hash, since a template may render several). Only the data is hashed,
+never the manifest text, so a change of labels or whitespace does not roll the pods.
+
+The data must be read exactly as the API server stores it, so the include output is
+treated the way helm treats a rendered file: "<no value>" becomes "" (helm does that on
+the final render but not on include), and each document keeps the newline that ends
+it, which the split removes and a trailing block scalar's final line break needs.
+
+A name that matches none of the ConfigMaps the template rendered is a template error,
+not a hash: the stamp would otherwise be the constant sha256 of "{}", the pods would
+stop rolling on config change and the snapshot would report them drifted for good. So
+the helper fails the render then, and on a document that does not parse. A template
+that rendered nothing (gated off by values) still hashes "{}", as the workload that
+uses it is gated off with it.
+*/}}
+{{- define "dataplane.configMapDataChecksum" -}}
+{{- $data := dict -}}
+{{- $found := false -}}
+{{- $seen := list -}}
+{{- range $doc := splitList "\n---" (include .path .root | replace "<no value>" "") -}}
+{{- $obj := fromYaml (print $doc "\n") -}}
+{{- if hasKey $obj "Error" -}}
+{{- fail (printf "configMapDataChecksum: %s does not parse: %s" $.path (get $obj "Error")) -}}
+{{- end -}}
+{{- if eq (get $obj "kind") "ConfigMap" -}}
+{{- $cmName := dig "metadata" "name" "" $obj -}}
+{{- $seen = append $seen $cmName -}}
+{{- if eq $cmName $.name -}}
+{{- $data = (get $obj "data") | default dict -}}
+{{- $found = true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if and (not $found) $seen -}}
+{{- fail (printf "configMapDataChecksum: %s renders no ConfigMap named %q (found %v)" $.path $.name $seen) -}}
+{{- end -}}
+{{- toJson $data | sha256sum -}}
+{{- end -}}
+
+{{/*
+imageBuilder.enableImageOptimization makes every image the dataplane builds a
+Nydus-only image, which a node without the Nydus snapshotter unpacks into a
+broken root filesystem. So it requires nodeBootstrap.enabled, named on its own
+rather than implied: node-bootstrap is a privileged DaemonSet that restarts
+containerd and kubelet, and two flags let a cluster roll the snapshotter out
+first and turn optimization on after. The in-chart builders (primary and ARM)
+switch to the Nydus BuildKit image by themselves (imagebuilder.buildkit.image);
+an external buildkitUri / buildkitUriArm must carry nydus-image already.
+*/}}
+{{- define "imagebuilder.imageOptimization" -}}
+{{- if .Values.imageBuilder.enableImageOptimization -}}
+{{- if not .Values.nodeBootstrap.enabled -}}
+{{- fail "imageBuilder.enableImageOptimization needs nodeBootstrap.enabled: every image the dataplane builds becomes Nydus-only, and nodes without the Nydus snapshotter cannot run it" -}}
+{{- end -}}
+true
+{{- else -}}
+false
+{{- end -}}
 {{- end -}}

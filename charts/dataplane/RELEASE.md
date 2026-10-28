@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+### Nydus lazy image pulls (opt-in)
+
+Self-managed dataplanes can now pull images lazily with Nydus, as the managed
+BYOC dataplanes already do. Two switches, both off by default, turned on in
+this order:
+
+- `nodeBootstrap.enabled` deploys the `union-node-bootstrap` DaemonSet, which
+  installs the Nydus snapshotter on each node and restarts containerd and
+  kubelet there. It is privileged, uses `hostPID`/`hostNetwork` and writes to
+  the host's `/etc` and `/home/kubernetes`. It needs an aws, gcp or azure node
+  image with systemd and a writable `/etc` (not Bottlerocket). Put
+  `nodeBootstrap.startupTaintKey` on worker nodepools as a startup taint. On
+  GKE it also needs the `union-node-bootstrap-critical` ResourceQuota the chart
+  now creates (`nodeBootstrap.priorityClassQuota`), and GKE image streaming off
+  on those nodepools.
+- `imageBuilder.enableImageOptimization` then builds **every** image the
+  dataplane builds in Nydus format, and switches the in-chart BuildKit (and its
+  ARM builder) to Union's image that bundles `nydus-image`. It refuses to render
+  without `nodeBootstrap.enabled`. Those images run only on nodes with the
+  snapshotter: keep every nodepool a task pod can land on inside
+  `nodeBootstrap.nodeSelector`, and expect them not to run where they are
+  pulled elsewhere (CI, a laptop, another cluster).
+
+Both images default to the appVersion tag, which releases publish from
+unionai/cloud#19504 onward; earlier releases have no such tag, so set
+`nodeBootstrap.image.tag` / `imageBuilder.buildkit.nydus.image.tag` to a commit
+SHA to try this on one.
+
+## 2026.10.1
+
+`version` moves `2026.10.0` → `2026.10.1`. `appVersion` stays `2026.10.0`: this is
+a chart-only release, so the Union images are unchanged.
+
+**Read "Zero trust is the default" before upgrading** — self-hosted installs must
+set `zero_trust.enabled: false` first.
+
+### Prometheus enables `auto-gomemlimit` by default
+
+`prometheus.server.extraFlags` now includes `enable-feature=auto-gomemlimit`. In
+Prometheus 2.55+ (dataplane chart bundles Prometheus v2.55.1), this automatically
+configures Go runtime `GOMEMLIMIT` to 90% of the container cgroup memory limit,
+preventing the Go memory allocator from retaining freed heap and causing
+cgroup-level OOM kills at nightly load peaks.
+
+If your installation overrides `prometheus.server.extraFlags`, ensure you include
+`enable-feature=auto-gomemlimit` along with the baseline flags `web.enable-lifecycle`
+and `enable-feature=expand-external-labels`. Alternatively, use `prometheus.server.extraArgs`
+(a map, which merges cleanly in Helm) to append custom flags without replacing defaults.
+
 ### Zero trust is the default
 
 `zero_trust.enabled` now defaults to `true`, so the Envoy gateway, the dataproxy
@@ -23,6 +72,40 @@ Enable `secrets.admin`.
 On OpenShift, the Kourier gateway SCC and its RBAC now also render under zero trust.
 
 `examples/values.zero-trust.yaml` is removed because the defaults now match it.
+
+### `configChecksum` is the hash of the ConfigMap's data
+
+No values change. Every Union workload the operator tracks (propeller, the pod
+webhook, the leaseworker, the operator, its proxy, the dataproxy and syncresources)
+now stamps `configChecksum` on its pod template with the config hash of the cluster
+health contract: the hex sha256 of its ConfigMap's `data` serialized as JSON with the
+keys sorted, which is what the operator computes over the live ConfigMap for
+`ComponentConfig.config_hash` ([cloud#19176](https://github.com/unionai/cloud/pull/19176),
+[cloud#19218](https://github.com/unionai/cloud/pull/19218)). Before, the stamp was the
+sha256 of the rendered manifest text, truncated to 63 characters, which equalled
+nothing the operator could compute, so the control plane could not tell whether a pod
+ran its ConfigMap's current data. With this release it can, and the console's
+per-component config state ([cloud#19250](https://github.com/unionai/cloud/pull/19250))
+lights up for these workloads instead of reading "unknown". Until a dataplane runs
+this release its pods read "unknown", never "restart required".
+
+Each of those workloads rolls once on the upgrade, since the annotation value
+changes. Only the `data` is hashed now, so a later change to a ConfigMap's labels or
+to template whitespace no longer rolls its pods; a change to the data still does.
+`union-nodeobserver` and `union-uvol-broker` keep the old stamp: the operator does not
+track their ConfigMaps, and re-stamping them would roll both DaemonSets for nothing.
+
+To check a stamp by hand:
+
+```sh
+kubectl -n union get cm leaseworker -o json \
+  | jq -j '.data // {} | tojson | gsub("<";"\\u003c") | gsub(">";"\\u003e") | gsub("&";"\\u0026")' \
+  | shasum -a 256
+kubectl -n union get deploy leaseworker -o jsonpath='{.spec.template.metadata.annotations.configChecksum}'
+```
+
+The three `gsub`s matter: Go's `json.Marshal`, and so helm's `toJson`, HTML-escapes
+`<`, `>` and `&`; jq does not.
 
 ### Every Union workload carries `platform.union.ai/component`
 
@@ -56,14 +139,33 @@ ConfigMaps on every push. As in the leaseworker ConfigMap, the connector section
 rendered only while `flyteconnector.enabled`.
 
 The operator pod also mounts the `connector-config` ConfigMap, where the apps
-controller keeps the connector apps' endpoints, at `/etc/union/connector-config`
-(`operator.clusterHealth.connectorConfigPath`). The mount is optional: this chart does
-not ship that ConfigMap, so the directory stays empty and the operator reads it as no
-apps.
+controller keeps the connector apps' endpoints, at `operator.connectorConfigMountPath`
+(default `/etc/union/connector-config`). The mount is optional: this chart does not ship
+that ConfigMap, so the directory stays empty and the operator reads it as no apps.
 
-An operator older than cloud#19143 ignores the new key; an operator at or after it on
-a chart without it reports no plugins or connectors in the snapshot until the chart is
-upgraded.
+The operator defaults to that same path, so its ConfigMap sets
+`clusterHealth.connectorConfigPath` only when `operator.connectorConfigMountPath` is
+changed. An operator older than cloud#19143 decodes its config strictly and fails at
+startup on that key, so set a non-default mount path only with an operator at or after
+it. An operator at or after cloud#19143 on a chart without `plugins.yaml` reports no
+plugins or connectors in the snapshot until the chart is upgraded.
+
+### Zero-trust metrics `remote_write` authenticates as `secrets.admin.clientId`
+
+In zero-trust mode the Prometheus `remote_write` oauth2 `client_id` was derived as
+`<global.ORG_NAME>-<global.CLUSTER_NAME>-operator`, while its `client_secret_file`
+is the secret of the `secrets.admin` app. The two matched only when the admin app
+happened to follow that naming; otherwise every batch failed with
+`400 invalid_client` (and with the globals unset it rendered `--operator`). The
+`client_id` is now `secrets.admin.clientId`, the same app id the operator reports
+in its heartbeat, and the chart fails at render time when it is empty.
+
+### `telemetry.enabled: false` opts task pods out of telemetry
+
+New value `telemetry.enabled` (default `true`). Setting it to `false` injects
+`DO_NOT_TRACK=1` ([donottrack.sh](https://donottrack.sh)) into every task pod
+through the k8s plugin's `default-env-vars`, which turns off flyte-sdk's crash
+reports and usage counts. Defaults render unchanged.
 
 ## 2026.10.0
 

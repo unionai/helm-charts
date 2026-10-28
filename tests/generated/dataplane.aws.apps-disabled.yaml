@@ -3372,9 +3372,6 @@ data:
       type: Authorizer
     operator:
       enableTunnelService: true
-      clusterHealth:
-        # Where operator/deployment.yaml mounts the connector-config ConfigMap.
-        connectorConfigPath: /etc/union/connector-config
       #  enableDepot: false
       tunnel:
         enableDirectToAppIngress: false
@@ -3488,7 +3485,7 @@ metadata:
   name: release-name-prometheus
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.10.0
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "2026.10.0"
@@ -4915,6 +4912,9 @@ rules:
       - patch
       - post
       - deletecollection
+  # nodes are cluster-scoped and so cannot be granted by a namespaced Role. Node access
+  # comes from the <namespace>-<operator>-node-capacity ClusterRole, rendered independently
+  # of low_privilege.
   - apiGroups:
       - '*'
     resources:
@@ -4924,7 +4924,6 @@ rules:
       - podtemplates
       - secrets
       - namespaces
-      - nodes
     verbs:
       - get
       - list
@@ -5877,6 +5876,7 @@ spec:
             - --web.console.templates=/etc/prometheus/consoles
             - --web.enable-lifecycle
             - --enable-feature=expand-external-labels
+            - --enable-feature=auto-gomemlimit
             - --web.route-prefix=/prometheus
             - --web.external-url=/prometheus/
           ports:
@@ -6136,7 +6136,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "99723b4ed327ccf408481282e00f5c7ccd98f194332df6b74c17c7700fcc654"
+        configChecksum: "ef84f4220415e8803248f2ece8ca59f52446f52d22cc35348ad40794ab3fd922"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -6244,7 +6244,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "0dbc71ea437b9764741d98505a2845519a106988ad51025688ebe8c0d007401"
+        configChecksum: "8dbe79a92c037d868fae77d1d4e1ec811ec841662927dd603c62765bec63cc24"
         karpenter.sh/do-not-disrupt: "true"
         
       labels:
@@ -6385,7 +6385,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "0dbc71ea437b9764741d98505a2845519a106988ad51025688ebe8c0d007401"
+        configChecksum: "8dbe79a92c037d868fae77d1d4e1ec811ec841662927dd603c62765bec63cc24"
         
       labels:
         
@@ -6433,12 +6433,12 @@ spec:
               name: config-volume
             - mountPath: /etc/union/secret
               name: secret-volume
-            - mountPath: /etc/union/connector-config
+            - mountPath: "/etc/union/connector-config"
               name: connector-config-volume
               readOnly: true
           env:
             - name: HELM_CHART_VERSION
-              value: "2026.10.0"
+              value: "2026.10.1"
             - name: HELM_APP_VERSION
               value: "2026.10.0"
             - name: POD_NAME
@@ -6526,7 +6526,7 @@ spec:
         app.kubernetes.io/managed-by: Helm
         platform.union.ai/component: webhook
       annotations:
-        configChecksum: "99723b4ed327ccf408481282e00f5c7ccd98f194332df6b74c17c7700fcc654"
+        configChecksum: "ef84f4220415e8803248f2ece8ca59f52446f52d22cc35348ad40794ab3fd922"
         
     spec:
       securityContext:

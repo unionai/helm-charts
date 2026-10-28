@@ -36,9 +36,30 @@ data:
       # self-reports on every UpdateStatus call. Empty path = disabled.
       connectionConfigPath: /etc/union/connection-config/connection_config.json
       {{- end }}
+      {{- /*
+        Where operator/deployment.yaml mounts the connector-config ConfigMap. Named only
+        when it differs from the operator's built-in default, /etc/union/connector-config:
+        the operator decodes its config strictly, so an image that predates the key fails
+        at startup on it, while an image that knows it already defaults to that path.
+      */}}
+      {{- $customConnectorConfigPath := ne .Values.operator.connectorConfigMountPath "/etc/union/connector-config" }}
+      {{- $nodeCapacity := .Values.config.operator.clusterHealth.nodeCapacity }}
+      {{- if or $customConnectorConfigPath $nodeCapacity.enabled }}
       clusterHealth:
-        # Where operator/deployment.yaml mounts the connector-config ConfigMap.
-        connectorConfigPath: /etc/union/connector-config
+        {{- if $customConnectorConfigPath }}
+        connectorConfigPath: {{ .Values.operator.connectorConfigMountPath | quote }}
+        {{- end }}
+        {{- if $nodeCapacity.enabled }}
+        nodeCapacity:
+          # Paired with the node-capacity ClusterRole in operator/serviceaccount.yaml:
+          # the collector needs cluster-scoped read on nodes, and omits node_pools
+          # rather than failing the push when it does not have it.
+          enabled: true
+          {{- if $nodeCapacity.clusterWidePods }}
+          clusterWidePods: true
+          {{- end }}
+        {{- end }}
+      {{- end }}
       #  enableDepot: {{ include "operator.enableDepot" . | default "false" }}
       tunnel:
         enableDirectToAppIngress: {{ if and (include "apps.enabled" .) .Values.tunnelService.apps.enableGlobalIngress }}true{{ else }}false{{ end }}
@@ -172,4 +193,7 @@ data:
 {{- end }}
   image-builder.default-repository: {{ include "imagebuilder.defaultRepository" . | quote }}
   image-builder.authentication-type: {{ .Values.imageBuilder.authenticationType | quote }}
+{{- if eq (include "imagebuilder.imageOptimization" .) "true" }}
+  image-builder.enable-image-optimization: "true"
+{{- end }}
 {{- end }}
