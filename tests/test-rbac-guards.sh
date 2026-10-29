@@ -500,7 +500,7 @@ expect-render "watch namespace set but the subchart renders no controller RBAC" 
   --set ingress-nginx.rbac.create=false \
   --set ingress-nginx.controller.scope.namespace=elsewhere
 
-echo "- app serving under singleNamespace renders only when asked for"
+echo "- app serving is on by default in either mode, and off only when asked"
 zt=(--set zero_trust.enabled=true --set knative-operator.enabled=false --set orgName=test-org)
 expect-manifest "the stack renders with apps on and singleNamespace off" present "name: union-knative-controller-cluster-read" \
   "${zt[@]}" --set apps.enabled=true --set singleNamespace=false
@@ -509,11 +509,13 @@ expect-manifest "and its Kourier half with it" present "name: union-knative-kour
 expect-manifest "apps on at the singleNamespace default renders the stack" present "name: union-knative-controller-cluster-read" \
   "${zt[@]}" --set apps.enabled=true
 
-expect-manifest "the default zero-trust install renders, with no Knative stack" \
-  absent "name: union-knative-controller-cluster-read" "${zt[@]}"
+expect-manifest "the default zero-trust install renders the Knative stack, as before" \
+  present "name: union-knative-controller-cluster-read" "${zt[@]}"
+expect-manifest "apps.enabled: false at the singleNamespace default renders no Knative stack" \
+  absent "name: union-knative-controller-cluster-read" "${zt[@]}" --set apps.enabled=false
 
 expect-manifest "and keeps the Envoy gateway" \
-  present "union-operator-gateway-envoy-bootstrap" "${zt[@]}"
+  present "union-operator-gateway-envoy-bootstrap" "${zt[@]}" --set apps.enabled=false
 
 expect-manifest "the deprecated serving.enabled still turns app serving on" \
   present "name: union-knative-controller-cluster-read" \
@@ -521,8 +523,8 @@ expect-manifest "the deprecated serving.enabled still turns app serving on" \
 expect-manifest "and an explicit apps.enabled still overrides it" absent "name: union-knative-controller-cluster-read" \
   "${zt[@]}" --set serving.enabled=true --set apps.enabled=false --set singleNamespace=false
 
-expect-manifest "a stock install renders no Knative stack" \
-  absent "name: union-knative-controller-cluster-read"
+expect-manifest "a stock install renders the Knative stack" \
+  present "name: union-knative-controller-cluster-read"
 expect-manifest "with both keys unset, app serving is on outside singleNamespace" \
   present "name: union-knative-controller-cluster-read" \
   "${zt[@]}" --set singleNamespace=false
@@ -604,7 +606,7 @@ expect-manifest "and the shared identity is still the default there" \
 
 expect-binding-subject "the pooled work-ns role binds every declarer under singleNamespace" \
   RoleBinding union-work-ns leaseworker,operator-system,proxy-system,union-webhook-system \
-  --set commonServiceAccount.enabled=false
+  --set commonServiceAccount.enabled=false --set apps.enabled=false
 expect-binding-subject "and collapses to one subject when they share an identity" \
   RoleBinding union-work-ns union-system
 expect-binding-subject "a per-component cluster role binds the per-component identity" \
@@ -769,7 +771,8 @@ expect-role-resource "confined by resourceNames to the proxy Deployment" \
   present union-operator-comp-ns-write union-operator-proxy
 expect-manifest "and is absent once the tunnel is off, where nothing declares" \
   absent "name: union-operator-comp-ns-write" \
-  --set operator.enableTunnelService=false --set config.operator.apiKey.enabled=false
+  --set operator.enableTunnelService=false --set config.operator.apiKey.enabled=false \
+  --set apps.enabled=false
 expect-manifest "no component shares a comp-ns Role with another" \
   absent "name: union-comp-ns-write" \
   --set config.operator.secretsWatcher.enabled=true
@@ -824,11 +827,11 @@ expect-manifest "and flytepropeller-role with it" \
 
 expect-binding-subject "both join the pooled work-ns role, in registry order" \
   RoleBinding union-work-ns leaseworker,operator-system,proxy-system,union-webhook-system,flytepropeller-system \
-  --set commonServiceAccount.enabled=false --set flytepropeller.enabled=true
+  --set commonServiceAccount.enabled=false --set flytepropeller.enabled=true --set apps.enabled=false
 expect-binding-subject "and drop out of it when disabled" \
   RoleBinding union-work-ns operator-system,proxy-system,union-webhook-system \
   --set commonServiceAccount.enabled=false \
-  --set leaseworker.enabled=false --set flytepropeller.enabled=false
+  --set leaseworker.enabled=false --set flytepropeller.enabled=false --set apps.enabled=false
 
 echo
 echo "- the secrets watcher stays inside the namespaces it is granted"
@@ -1773,26 +1776,26 @@ done
 
 READ_SET="'*',configmaps,deployments,events,flyteworkflows,pods,pods/log,podtemplates,rayjobs,replicasets/finalizers,resourcequotas,secrets"
 for v in get list watch; do
-  expect-verb-resources "work-ns grants ${v} on its full default resource set" \
-    union-work-ns "${v}" "${READ_SET}"
+  expect-verb-resources "work-ns grants ${v} on its full resource set with app serving off" \
+    union-work-ns "${v}" "${READ_SET}" --set apps.enabled=false
 done
 expect-verb-resources "work-ns grants create on the writable subset" \
   union-work-ns create \
-  "'*',configmaps,deployments,flyteworkflows,pods,podtemplates,replicasets/finalizers,resourcequotas,secrets"
+  "'*',configmaps,deployments,flyteworkflows,pods,podtemplates,replicasets/finalizers,resourcequotas,secrets" --set apps.enabled=false
 expect-verb-resources "and update on the same subset less flyteworkflows" \
   union-work-ns update \
-  "'*',configmaps,deployments,pods,podtemplates,replicasets/finalizers,resourcequotas,secrets"
+  "'*',configmaps,deployments,pods,podtemplates,replicasets/finalizers,resourcequotas,secrets" --set apps.enabled=false
 expect-verb-resources "work-ns grants patch only where something patches" \
   union-work-ns patch \
-  "'*',pods,replicasets/finalizers,secrets"
+  "'*',pods,replicasets/finalizers,secrets" --set apps.enabled=false
 expect-verb-resources "work-ns grants delete on less than it creates" \
   union-work-ns delete \
-  "'*',configmaps,deployments,flyteworkflows,pods,podtemplates,resourcequotas,secrets"
+  "'*',configmaps,deployments,flyteworkflows,pods,podtemplates,resourcequotas,secrets" --set apps.enabled=false
 expect-verb-resources "and deletecollection on nothing" \
-  union-work-ns deletecollection ""
+  union-work-ns deletecollection "" --set apps.enabled=false
 expect-verb-resources "until propeller is on, whose garbage collector is the one caller" \
   union-work-ns deletecollection "flyteworkflows,flyteworkflows/finalizers" \
-  --set flytepropeller.enabled=true
+  --set flytepropeller.enabled=true --set apps.enabled=false
 
 expect-verb-resources "work-ns grants get on its full app-serving resource set" \
   union-work-ns get \

@@ -207,11 +207,11 @@ Out of scope: the deprecated knative-operator and kube-prometheus-stack subchart
 
 ## App serving
 
-Left unset, `apps.enabled` is on unless `singleNamespace` is true, so the default install,
-which is single-namespace, runs without app serving. Under `singleNamespace: true`, setting
-`apps.enabled: true` (or the deprecated `serving.enabled: true`) turns it on, and with it the
-Knative stack's cluster-wide reads described below. That is the one exception to
-single-namespace mode's fixed list of cluster-scoped grants, and it is opt-in.
+Left unset, `apps.enabled` is on in either mode, as it has always been, so the default
+install, which is single-namespace, runs app serving. Under `singleNamespace: true` that brings
+the Knative stack's cluster-wide reads described below, the one exception to single-namespace
+mode's fixed list of cluster-scoped grants. Set `apps.enabled: false` (or the deprecated
+`serving.enabled: false`) to hold the install to that list.
 
 The recommended way to run app serving is multi-namespace. Layer this over the zero-trust
 default:

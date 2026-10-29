@@ -731,7 +731,7 @@ Also, in both modes:
   | `activator` | `knative-activator` |
   | `net-kourier` | `net-kourier` (unchanged) |
 
-  Installs with `apps.enabled` off (the default under `singleNamespace`) and installs serving
+  Installs with `apps.enabled: false` and installs serving
   apps through the legacy knative-operator path (`gateway.enabled: false`) need no action
   here; the Knative Operator owns those accounts.
 
@@ -955,25 +955,19 @@ Also, in both modes:
   error on a values key nothing reads, so an overlay that still sets either is silently
   ignored; drop them.
 
-- **BREAKING: app serving is now off by default under `singleNamespace`.** `apps.enabled`
-  (and the deprecated `serving.enabled`) previously defaulted to *on*, so every install that
-  set neither got Knative Serving; 32 of the 37 dataplane snapshot fixtures did. With both
-  unset it is now on unless `singleNamespace` is true, which is the default. The vendored
-  Knative Serving / Kourier stack under `templates/gateway/` has no namespaced form: the
-  binaries' informers are not namespace-scoped, `knative-serving-core` needs namespaces, CRDs
-  and the webhook configurations, and the deployments take no watch-scope flag, so
-  `singleNamespace` cannot scope it, and the chart no longer turns it on implicitly in a mode
-  that promises a fixed list of cluster-scoped reads. **A single-namespace deployment
-  relying on the default loses app serving on upgrade**, on the vendored-gateway *and* the
-  legacy knative-operator path. Set `apps.enabled: true` to keep it in single-namespace mode,
-  which keeps Knative's cluster-wide reads as the one opt-in exception to the mode's list, or
-  move to `singleNamespace: false`. Check the generated overlays in `unionai/cloud` for
-  environments that never set it explicitly before pinning this revision.
-  `serving.enabled: true` still takes effect: `apps.enabled` is left null rather than false
-  so the deprecated key keeps being consulted. The Envoy gateway, dataproxy and
-  tunnel-service ingress gate on `serving.renderGateway` (`gateway.enabled` with either app
-  serving or zero trust), so `apps.enabled: false` leaves the zero-trust dataplane fully
-  working. ([docs/rbac.md](docs/rbac.md#app-serving))
+- **App serving stays on by default in either mode.** With `apps.enabled` and the deprecated
+  `serving.enabled` both unset, app serving is on, as before. Under `singleNamespace: true` it
+  brings the Knative stack's cluster-wide reads, the one exception to the mode's fixed list of
+  cluster-scoped grants: the vendored Knative Serving / Kourier binaries' informers are not
+  namespace-scoped and the deployments take no watch-scope flag, so `singleNamespace` cannot
+  scope them. Those reads are narrower than before: no cluster-wide Secret access (see
+  [App-serving (Knative) RBAC](#app-serving-knative-rbac-vendored-gateway-only)). Set
+  `apps.enabled: false` to hold a single-namespace install to the fixed list.
+  `serving.enabled` still takes effect: `apps.enabled` is left null rather than set, so the
+  deprecated key keeps being consulted. The Envoy gateway, dataproxy and tunnel-service ingress
+  gate on `serving.renderGateway` (`gateway.enabled` with either app serving or zero trust), so
+  `apps.enabled: false` leaves the zero-trust dataplane fully working.
+  ([docs/rbac.md](docs/rbac.md#app-serving))
 
 - **App serving: Knative TLS certificate provisioning is removed** on the vendored gateway.
   The `config-certmanager` ConfigMap and the `routing-serving-certs` `Certificate` are gone,

@@ -470,11 +470,10 @@ kube-state-metrics settings from the flag.
 Set `singleNamespace` or `low_privilege`, or both to the same value; the chart refuses to
 render if they disagree.
 
-**App serving is on by default only at `singleNamespace: false`.** Unset, `apps.enabled` is
-the inverse of `singleNamespace`. Under `singleNamespace: true`, `apps.enabled: true` turns it
-on, and because the Knative binaries read cluster-wide however their RBAC is written, it
-brings their cluster-scoped reads with it: the one opt-in exception to single-namespace
-mode's fixed list.
+**App serving is on by default in either mode.** Under `singleNamespace: true`, the Knative
+binaries read cluster-wide however their RBAC is written, so app serving brings their
+cluster-scoped reads with it: the one exception to single-namespace mode's fixed list. Set
+`apps.enabled: false` to hold the install to that list.
 
 With `gateway.enabled: false`, app serving comes from the deprecated `knative-operator`
 subchart, which brings its own cluster-scoped RBAC (see the table below) and renders at either
