@@ -465,6 +465,9 @@ jobs:
           # operator pins app pods under low_privilege). verify_app's endpoint poll
           # resolves here.
           APP_NAMESPACE: ${{ matrix.namespaces || 'dataplane' }}
+        # Below the job's 90 min, so a hang fails this step and the dumps below
+        # still run (a job-level timeout cancels the job and skips them).
+        timeout-minutes: 50
         run: pytest tests/functional -n "${FUNCTIONAL_PARALLELISM:-2}" ${FUNCTIONAL_ARGS:-}
 
       # Debug dump on failure. NOTE: public repo -> public logs; contract config values
@@ -483,8 +486,25 @@ jobs:
           kubectl -n "$ns" logs deploy/union-operator --tail=2000 2>&1 | grep -iE 'tunnel|ingress|probe|endpoint|cloudflare' | grep -viE 'token' | tail -120 || true
 
       - name: Debug dump (on failure)
-        if: failure()
+        if: failure() || cancelled()
         run: |
+          # Image builds run as task pods (<run>-a<n>-<attempt>) against the
+          # operator's BuildKit; a failing build is retried until its run fails,
+          # and each attempt's pod is gone by the time the namespace loop below
+          # looks. Dump the latest attempts, BuildKit, and the node.
+          echo "===== image build ====="
+          kubectl get pods -A -o wide | grep -E -- '-a[0-9]+-[0-9]+|buildkit|registry' || true
+          kubectl -n dataplane logs deploy/union-operator-buildkit --tail=300 2>&1 | tail -300 || true
+          for p in $(kubectl get pods -A --sort-by=.metadata.creationTimestamp --no-headers 2>/dev/null | awk '$2 ~ /-a[0-9]+-[0-9]+$/ {print $1"/"$2}' | tail -3); do
+            ns=${p%%/*}; pod=${p#*/}
+            echo "--- describe $ns/$pod ---"; kubectl -n "$ns" describe pod "$pod" | tail -40 || true
+            echo "--- logs $ns/$pod ---"; kubectl -n "$ns" logs "$pod" --all-containers --tail=150 2>&1 | tail -150 || true
+            echo "--- previous logs $ns/$pod ---"; kubectl -n "$ns" logs "$pod" --all-containers --previous --tail=150 2>&1 | tail -150 || true
+          done
+          if [ "${{ matrix.cloud }}" = k3d ]; then
+            echo "--- k3d registry ---"; docker logs --tail=150 k3d-registry 2>&1 | tail -150 || true
+            echo "--- node ---"; kubectl describe nodes | grep -A12 -E 'Conditions:|Allocated resources:' || true; df -h / || true
+          fi
           for ns in ${{ matrix.namespaces || matrix.charts }}; do
             echo "===== namespace $ns ====="
             kubectl -n "$ns" get pods -o wide || true
