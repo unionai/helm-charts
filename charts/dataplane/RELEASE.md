@@ -693,6 +693,9 @@ Also, in both modes:
   `prometheus.extraScrapeConfigs` if you need one.
 - The "deployments available" dashboard panel gets its data again: the kube-state-metrics
   scrape filter had dropped the two series behind it.
+- Prometheus scrapes itself again. Its `prometheus` job asked for `/metrics`, but the server
+  serves under `server.prefixURL` (`/prometheus`), so the target was down with `404` on main
+  too. The job now uses `/prometheus/metrics`; change it along with `prefixURL`.
 - `gpu-metrics` now looks in the release namespace, where dcgm-exporter runs (was
   `kube-system`).
 - FluentBit no longer creates a ClusterRole; it never calls the Kubernetes API here.
