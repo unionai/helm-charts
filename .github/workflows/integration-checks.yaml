@@ -485,6 +485,14 @@ jobs:
           echo "--- operator: tunnel / ingress / probe lines ---"
           kubectl -n "$ns" logs deploy/union-operator --tail=2000 2>&1 | grep -iE 'tunnel|ingress|probe|endpoint|cloudflare' | grep -viE 'token' | tail -120 || true
 
+      # Whether BuildKit's public.ecr.aws pulls went through the authenticated
+      # mirror (tools/dataplane/k3d/up.sh); 0 means they went anonymous.
+      - name: BuildKit mirror requests (k3d)
+        if: always() && matrix.cloud == 'k3d'
+        run: |
+          echo "k3d-ecr-proxy manifest requests: $(docker logs k3d-ecr-proxy 2>&1 | grep -cE '"GET /v2/[^ ]+/manifests/' || true)"
+          docker logs k3d-ecr-proxy 2>&1 | grep -oE '"GET /v2/[^ ]+/manifests/[^ "]+" [0-9]{3}' | sort | uniq -c | head -20 || true
+
       - name: Debug dump (on failure)
         if: failure() || cancelled()
         run: |
