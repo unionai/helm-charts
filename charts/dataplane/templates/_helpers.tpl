@@ -510,6 +510,41 @@ Create the name of the clusterresources service account
 {{- default "clustersync-system" .Values.clusterresourcesync.serviceAccount.name }}
 {{- end }}
 
+{{/*
+Rules for the kinds clusterresourcesync.templates and additionalTemplates create,
+beyond the chart-owned namespaces, serviceaccounts, resourcequotas and rolebindings,
+at the get/create/patch the controller applies with. The resource is guessed from
+the kind the way client-go's UnsafeGuessKindToResource does. Secrets and the RBAC
+group are never derived, since a cluster-wide get on Secrets reads every Secret in
+the cluster; grant those through clusterRoleRules.
+*/}}
+{{- define "clusterresourcesync.templateRules" -}}
+{{- $owned := list "/namespaces" "/serviceaccounts" "/resourcequotas" "/secrets" }}
+{{- $byGroup := dict }}
+{{- range concat (.Values.clusterresourcesync.templates | default list) (.Values.clusterresourcesync.additionalTemplates | default list) }}
+{{- range regexSplit `(?m)^---[ \t]*$` (toString .value) -1 }}
+{{- $kind := regexReplaceAll `^kind:[ \t]*` (regexFind `(?m)^kind:[ \t]*\S+` .) "" | trimAll `"'` }}
+{{- $apiVersion := regexReplaceAll `^apiVersion:[ \t]*` (regexFind `(?m)^apiVersion:[ \t]*\S+` .) "" | trimAll `"'` }}
+{{- if and $kind $apiVersion }}
+{{- $group := "" }}
+{{- if contains "/" $apiVersion }}{{- $group = first (splitList "/" $apiVersion) }}{{- end }}
+{{- $resource := lower $kind }}
+{{- if hasSuffix "s" $resource }}{{- $resource = printf "%ses" $resource }}
+{{- else if hasSuffix "y" $resource }}{{- $resource = printf "%sies" (trimSuffix "y" $resource) }}
+{{- else }}{{- $resource = printf "%ss" $resource }}{{- end }}
+{{- if not (or (eq $group "rbac.authorization.k8s.io") (has (printf "%s/%s" $group $resource) $owned)) }}
+{{- $_ := set $byGroup $group (append (get $byGroup $group | default list) $resource | uniq | sortAlpha) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- range $group := keys $byGroup | sortAlpha }}
+- apiGroups: [{{ $group | quote }}]
+  resources: [{{ join ", " (get $byGroup $group) }}]
+  verbs: [get, create, patch]
+{{- end }}
+{{- end -}}
+
 {{- define "clusterresourcesync.serviceAccount.annotations" -}}
 {{- include "global.serviceAccountAnnotations" . }}
 {{- with .Values.clusterresourcesync.serviceAccount.annotations }}

@@ -1477,6 +1477,41 @@ expect-render "and an explicitly null unionProjectSyncConfig" \
   --set-json 'clusterresourcesync.config.cluster_resources.unionProjectSyncConfig=null'
 
 echo
+echo "- clusterresourcesync is granted the kinds its own templates create"
+crs_tpl=(--set singleNamespace=false --set clusterresourcesync.enabled=true
+  --set 'clusterresourcesync.additionalTemplates[0].key=d_pv'
+  --set-string 'clusterresourcesync.additionalTemplates[0].value=apiVersion: v1
+kind: PersistentVolume'
+  --set 'clusterresourcesync.additionalTemplates[1].key=e_pvc'
+  --set-string 'clusterresourcesync.additionalTemplates[1].value=apiVersion: "v1"
+kind: PersistentVolumeClaim
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy'
+  --set 'clusterresourcesync.additionalTemplates[2].key=f_secret'
+  --set-string 'clusterresourcesync.additionalTemplates[2].value=apiVersion: v1
+kind: Secret'
+  --set 'clusterresourcesync.additionalTemplates[3].key=g_role'
+  --set-string 'clusterresourcesync.additionalTemplates[3].value=apiVersion: rbac.authorization.k8s.io/v1
+kind: Role')
+expect-verb-resources "the kinds its own templates create are granted at create" \
+  union-clusterresourcesync-cluster-write create \
+  "namespaces,networkpolicies,persistentvolumeclaims,persistentvolumes,resourcequotas,rolebindings,serviceaccounts" \
+  "${crs_tpl[@]}"
+expect-verb-resources "and at patch" \
+  union-clusterresourcesync-cluster-write patch \
+  "namespaces,networkpolicies,persistentvolumeclaims,persistentvolumes,resourcequotas,rolebindings,serviceaccounts" \
+  "${crs_tpl[@]}"
+expect-role-resource "but never Secrets, which would read every Secret in the cluster" \
+  absent union-clusterresourcesync-cluster-write secrets "${crs_tpl[@]}"
+expect-role-resource "nor RBAC objects beyond its own rolebindings" \
+  absent union-clusterresourcesync-cluster-write roles "${crs_tpl[@]}"
+expect-verb-resources "and the default templates add nothing beyond the chart-owned four" \
+  union-clusterresourcesync-cluster-write create \
+  "namespaces,resourcequotas,rolebindings,serviceaccounts" \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true
+
+echo
 echo "- clusterresourcesync's grant is derived, not an operator default"
 
 expect-role-resource "cluster-wide secrets are no longer granted" \

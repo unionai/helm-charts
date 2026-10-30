@@ -342,8 +342,9 @@ namespace, and so is the replacement; the change there is packaging plus the ide
 consequence above.
 
 **Cluster-wide, the write-capable cluster-scoped grants Union's identities hold after this
-release** are below, at the default `clusterresourcesync.clusterRoleRules: []`. Anything you
-add to that key is appended to `union-clusterresourcesync-cluster-write` and granted
+release** are below, at the default `clusterresourcesync.clusterRoleRules: []` and the default
+templates. Each kind your own `clusterresourcesync` templates create, and anything you add to
+`clusterRoleRules`, is appended to `union-clusterresourcesync-cluster-write` and granted
 cluster-wide, so add it to your own copy of this table:
 
 | ServiceAccount | Grant | When |
@@ -801,15 +802,20 @@ Also, in both modes:
   `clusterresourcesync.config.cluster_resources.unionProjectSyncConfig.cleanupNamespace`.
   Those rules are chart-owned and an override cannot withdraw them.
 
-  **`clusterRoleRules` is now only an extension point, and you must set it if your own
-  `clusterresourcesync.templates` or `additionalTemplates` entries create anything else.**
-  Eight of the old twelve resources are no longer granted; `limitranges`, `services`, `roles`
-  and `clusterrolebindings` are the most likely to matter. Verbs must come from `get`, `list`,
-  `watch`, `create`, `update`, `patch`, `delete`, `deletecollection`; anything else, including
-  `*`, `escalate`, `impersonate` and `bind`, fails the render with the offending verb named.
-  **A missed entry does not fail the render.** The sync is refused per template, per namespace,
-  at runtime. Check your overlay for a `clusterresourcesync.templates` or `additionalTemplates`
-  entry before upgrading.
+  Every other kind your own `clusterresourcesync.templates` or `additionalTemplates` entries
+  create is granted the same way, at `get`/`create`/`patch`, with the resource taken from each
+  manifest's `apiVersion` and `kind`. The documented gcsfuse recipe's PersistentVolume and
+  PersistentVolumeClaim, for example, need no extra values.
+
+  **`clusterRoleRules` is now only an extension point, and you must set it if your templates
+  create Secrets or RBAC objects** (`roles`, `clusterroles`, `clusterrolebindings`, or
+  `rolebindings` beyond the chart's own). Those are never derived: a cluster-wide `get` on
+  Secrets reads every Secret in the cluster, and RBAC grants deserve an explicit line. A kind
+  whose plural isn't its lowercased name plus `s`, `es` or `ies` (`Endpoints`) also needs an
+  entry. Verbs must come from `get`, `list`, `watch`, `create`, `update`, `patch`, `delete`,
+  `deletecollection`; anything else, including `*`, `escalate`, `impersonate` and `bind`, fails
+  the render with the offending verb named. **A missed entry does not fail the render.** The
+  sync is refused per template, per namespace, at runtime.
 
 - **BREAKING: these roles and bindings no longer exist.** Their rules moved into the
   destination roles described above (`union-work-ns`, `union-webhook-work-ns-cluster-read`,
