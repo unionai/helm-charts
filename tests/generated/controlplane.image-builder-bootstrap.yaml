@@ -1803,16 +1803,17 @@ metadata:
     helm.sh/chart: controlplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
 data:
-  db.yaml: | 
-    database:
-      connMaxLifeTime: 120s
-      dbname: cacheservice
-      host: ''
-      maxIdleConnections: 10
-      maxOpenConnections: 20
-      passwordPath: /etc/db/pass.txt
+  db.yaml: |
+    db:
+      host: ""
       port: 5432
-      username: ''
+      dbname: "cacheservice"
+      username: ""
+      passwordPath: "/etc/db/pass.txt"
+      connectionPool:
+        maxIdleConnections: 10
+        maxOpenConnections: 20
+        maxConnectionLifetime: "120s"
   logger.yaml: | 
     formatter:
       type: json
@@ -1830,26 +1831,30 @@ data:
           insecure: true
       type: Authorizer
       useExternalIdentity: 'false'
-    cache-server:
-      grpcPort: 8089
-      grpcServerReflection: true
-      httpPort: 8080
-    cacheservice:
-      heartbeat-grace-period-multiplier: 3
-      max-reservation-heartbeat: 30s
-      metrics-scope: flyte
-      profiler-port: 10254
-      storage-prefix: cached_outputs
     otel:
       type: noop
-    private:
-      app:
-        cacheProviderConfig:
-          kind: bypass
     union:
       internalConnectionConfig:
         enabled: true
         urlPattern: '_SERVICE_.union.svc.cluster.local:80'
+  cacheservice.yaml: |
+    sharedService:
+      connectPort: 8089
+      httpPort: 8088
+      metrics:
+        scope: 'flyte:'
+      port: 8090
+      profilerPort: 10254
+      security:
+        singleTenantOrgID: 'test-org'
+      selfServeConfig:
+        legacyHosts:
+        - 'test-org'
+    cacheService:
+      storagePrefix: "cached_outputs"
+      heartbeatGracePeriodMultiplier: 3
+      maxReservationHeartbeat: "30s"
+      maxInlineSizeBytes: 0
   storage.yaml: | 
     storage:
       enable-multicontainer: false
@@ -13090,7 +13095,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "53c9f086ed8b4822538fec36ee9f505407c5d4a018a5bef26f44fc17f07640f"
+        configChecksum: "1007b28a5c8a6b5676302dedb20eb12e6c09a6458f895d4601fb39beb0215de"
         linkerd.io/inject: disabled
         prometheus.io/path: /metrics
         prometheus.io/port: "10254"
@@ -13111,11 +13116,10 @@ spec:
           type: spc_t
       initContainers:
       - command:
-        - cacheservice
+        - cloudcacheservice
         - --config
         - /etc/cacheservice/config/*.yaml
         - migrate
-        - run
         image: "registry.unionai.cloud/controlplane/services:"
         imagePullPolicy: "IfNotPresent"
         name: run-migrations
@@ -13130,7 +13134,7 @@ spec:
             drop: ["ALL"]
       containers:
       - command:
-        - cacheservice
+        - cloudcacheservice
         - --config
         - /etc/cacheservice/config/*.yaml
         - serve
@@ -15887,6 +15891,20 @@ spec:
                 port:
                   name: grpc
           - path: /flyteidl.cacheservice.v2.CacheService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cacheservice
+                port:
+                  name: grpc
+          - path: /flyteidl2.cacheservice.v2.CacheService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cacheservice
+                port:
+                  name: grpc
+          - path: /flyteidl2.cacheservice.v2.CacheService
             pathType: ImplementationSpecific
             backend:
               service:

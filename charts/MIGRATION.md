@@ -4,6 +4,34 @@ Tracking the migration story for the helm-charts cloud overlays. New entries at 
 
 ---
 
+## controlplane — the cache service runs `cloudcacheservice`
+
+### What changed
+
+The `cacheservice` Deployment runs `cloudcacheservice` (`migrate` in the init container, then
+`serve`) instead of the old `cacheservice` binary, against the same `cacheservice` database. Its
+names, labels, ports and `flyte.cacheservice.*` values are unchanged. It also serves
+`flyteidl2.cacheservice.v2.CacheService`, which the ingress and `GRPCRoute` now route.
+
+- The config is derived from `flyte.db.cacheservice.database` and
+  `flyte.configmap.cacheserviceServer.cacheservice`, so existing overrides keep working.
+  `sharedService` starts from `configMap.sharedService` like the other Union services, and
+  `cacheserviceServer.sharedService` overrides it.
+- `cacheserviceServer.cache-server` and `cacheserviceServer.private` are no longer read.
+
+### Who needs to act
+
+`flyte.cacheservice.image.tag` must name a `services` image that ships `cloudcacheservice`
+(built from `unionai/cloud` after #19192). On an older image the pod fails with
+`exec: "cloudcacheservice": executable file not found`. On a fresh install the image's `migrate`
+must also create the missing `cacheservice` database, as the old binary did.
+
+### Rollback
+
+Revert the chart change. Both binaries read the same tables.
+
+---
+
 ## dataplane — vendored Knative Serving gateway bumped 1.16.0 → 1.23.0
 
 ### What changed
