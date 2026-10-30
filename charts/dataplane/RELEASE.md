@@ -1005,9 +1005,11 @@ Also, in both modes:
   cluster-scoped `clusterissuers`) or `acme.cert-manager.io/challenges`, nor `delete` on the
   `knative-serving-certmanager` `ClusterRole`.
 
-- **remote_write volume shifts.** Under `singleNamespace`, `kube_*` starts flowing while the
-  nine dropped jobs cut the other way. At `singleNamespace: false`, `container_*` joins it but
-  the collector list shrinks; layer the full-privilege overlay to keep `kube_node_*`.
+- **remote_write volume shifts.** Under `singleNamespace`, `kube_*`, `container_*` and the
+  API server series start flowing; main's cluster-wide jobs were refused there. At
+  `singleNamespace: false`, kube-state-metrics sends 6 resources instead of 28, and targets
+  found only through `prometheus.io/scrape` annotations are no longer scraped (see
+  [Third-party subchart RBAC](#third-party-subchart-rbac)).
 
 ### flyteconnector image default bumped to py3.13-v2.12.1
 
