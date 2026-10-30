@@ -446,7 +446,10 @@ Two documents cover this in full:
 | `namespaces.enabled` / `namespaces.static` | `false` / a six-name list | Which work namespaces exist at install time, and so where the work-namespace role is bound. Role rules stay the same. |
 | `commonServiceAccount.enabled` | `true` | How many identities hold the grants. The rules stay the same; only which workload can use which grant changes. |
 
-`singleNamespace: true`, the default, promises three things:
+`singleNamespace: true`, the default, does not mean no cluster-scoped permissions. Some
+features need access that has no namespaced form, such as node reads, node-level metrics and
+Knative's informers. The mode reduces the permission set to what those features need while
+keeping them working. It promises three things:
 
 - Union's workloads, including tasks and apps, run in the release namespace, and every grant
   that can be namespaced is — for Union's components, prometheus and kube-state-metrics alike.

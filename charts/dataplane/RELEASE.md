@@ -62,8 +62,9 @@ are untangled. Several of these changes are breaking: read the sections below, e
   - Either key set to a non-boolean. A quoted `"false"` used to be a non-empty string and so
     meant **true**.
 
-- **`singleNamespace: true` promises the following, and `tests/test-rbac-guards.sh` enforces
-  it.**
+- **`singleNamespace: true` does not mean no cluster-scoped permissions.** It reduces the
+  permission set to what the chart's features need while keeping them working. It promises
+  the following, and `tests/test-rbac-guards.sh` enforces it.
   - Union's workloads, tasks and apps included, run in the release namespace, and every grant
     that can be namespaced is.
   - Cluster-scoped reads come only from a fixed allowlist, each entry tied to the code that
