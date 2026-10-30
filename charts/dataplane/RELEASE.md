@@ -1009,6 +1009,23 @@ Also, in both modes:
   nine dropped jobs cut the other way. At `singleNamespace: false`, `container_*` joins it but
   the collector list shrinks; layer the full-privilege overlay to keep `kube_node_*`.
 
+### flyteconnector image default bumped to py3.13-v2.12.1
+
+The default was `py3.13-2.0.0b50.dev3-g695bb1db3.d20260122`, built 22 January 2026
+and set once, as a side effect of an unrelated PR (#443). Nothing bumps it, so it
+drifted about nine months behind the chart.
+
+That matters because it predates every connector plugin's release. A fresh install
+using BigQuery, Snowflake, Databricks, Spark or Slurm gets a connector image without
+the plugin in it: the deployment starts, the connector never advertises the task type
+in ListConnectors, and tasks sit unroutable rather than failing with anything that
+names the cause. Every connector user has to override `flyteconnector.image` today.
+
+`py3.13-v2.12.1` ships flyteplugins-{bigquery,databricks,slurm,snowflake,spark} —
+verified by running the image rather than by reading the build file.
+
+Operators who pin `flyteconnector.image` are unaffected.
+
 ### Nydus lazy image pulls (opt-in)
 
 Self-managed dataplanes can now pull images lazily with Nydus, as the managed
