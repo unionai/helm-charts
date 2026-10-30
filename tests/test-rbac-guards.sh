@@ -9,7 +9,7 @@ RELEASE="release-name"
 NAMESPACE="union"
 
 echo "Vendoring subchart dependencies..."
-helm dependency build "${CHART}"
+helm dependency update "${CHART}"
 echo
 
 failures=0
