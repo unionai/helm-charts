@@ -465,7 +465,9 @@ jobs:
           # operator pins app pods under low_privilege). verify_app's endpoint poll
           # resolves here.
           APP_NAMESPACE: ${{ matrix.namespaces || 'dataplane' }}
-        run: pytest tests/functional -n "${FUNCTIONAL_PARALLELISM:-2}" ${FUNCTIONAL_ARGS:-}
+        # SCRATCH (never merge): only the image build, with room left for the dump.
+        timeout-minutes: 45
+        run: pytest tests/functional/test_images.py -k test_image_builder -n 1 -p no:rerunfailures
 
       # Debug dump on failure. NOTE: public repo -> public logs; contract config values
       # may appear (secrets stay in external-secrets, never printed).
@@ -483,8 +485,23 @@ jobs:
           kubectl -n "$ns" logs deploy/union-operator --tail=2000 2>&1 | grep -iE 'tunnel|ingress|probe|endpoint|cloudflare' | grep -viE 'token' | tail -120 || true
 
       - name: Debug dump (on failure)
-        if: failure()
+        if: failure() || cancelled()
         run: |
+          echo "===== SCRATCH: image build diagnostics ====="
+          kubectl get pods -A -o wide | grep -E -- '-a[0-9]+-[0-9]+|buildkit|registry' || true
+          echo "--- buildkit logs ---"
+          kubectl -n dataplane logs deploy/union-operator-buildkit --tail=400 2>&1 | tail -400 || true
+          for p in $(kubectl get pods -A --sort-by=.metadata.creationTimestamp --no-headers 2>/dev/null | awk '$2 ~ /-a[0-9]+-[0-9]+$/ {print $1"/"$2}' | tail -3); do
+            ns=${p%%/*}; pod=${p#*/}
+            echo "--- describe $ns/$pod ---"; kubectl -n "$ns" describe pod "$pod" | tail -60 || true
+            echo "--- logs $ns/$pod ---"; kubectl -n "$ns" logs "$pod" --all-containers --tail=200 2>&1 | tail -200 || true
+            echo "--- previous logs $ns/$pod ---"; kubectl -n "$ns" logs "$pod" --all-containers --previous --tail=200 2>&1 | tail -200 || true
+          done
+          echo "--- k3d registry ---"
+          docker logs --tail=200 k3d-registry 2>&1 | tail -200 || true
+          echo "--- node ---"
+          kubectl describe nodes | grep -A12 -E 'Conditions:|Allocated resources:' || true
+          df -h / || true
           for ns in ${{ matrix.namespaces || matrix.charts }}; do
             echo "===== namespace $ns ====="
             kubectl -n "$ns" get pods -o wide || true
