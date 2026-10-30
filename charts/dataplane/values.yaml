@@ -155,6 +155,11 @@ userRoleAnnotationValue: "arn:aws:iam::ACCOUNT_ID:role/flyte_project_role"
 
 # -- clusterresourcesync contains the configuration information for the syncresources service.
 clusterresourcesync:
+  # -- Run the syncresources service. As projects are registered, it creates a
+  # namespace per project and domain, applies `templates` there, and binds Union's
+  # work-namespace role in each one. Required at `singleNamespace: false` unless
+  # your own tooling creates those namespaces and bindings. Rendered only at
+  # `singleNamespace: false`.
   enabled: false
   # -- Override service account values for the syncresources service
   serviceAccount:
@@ -578,6 +583,9 @@ config:
   operator:
     # -- Restrict operator to a single namespace. Auto-set in singleNamespace mode.
     limitNamespace: ""
+    # -- Stop the operator's node informer, and with it node-based billing,
+    # serverless usage aggregation and GPU attribution by node label. Drops the
+    # operator's cluster-wide `nodes` read. Independent of `singleNamespace`.
     disableClusterPermissions: false
     # -- Cluster-health snapshot reporting. The snapshot push itself is on by
     # default in the operator; these values tune what it collects.
@@ -587,6 +595,9 @@ config:
       # unknown key and exits on startup. The operator image tag defaults to the
       # chart appVersion; when that is older, set image.union.tag before enabling this.
       nodeCapacity:
+        # -- Report the cluster's capacity from its Nodes, instead of the namespace
+        # ResourceQuota ceilings. Grants the operator a cluster-wide `nodes` read,
+        # in either scope mode and regardless of `disableClusterPermissions`.
         enabled: false
         # -- Read pods cluster-wide for per-pool usage, and add pods to the
         # operator's cluster-read ClusterRole. Required for usage on a singleNamespace install,
@@ -842,6 +853,10 @@ dcgm-exporter:
   # -- Enable or disable the dcgm exporter
   enabled: false
 
+  # At these defaults dcgm-exporter maps GPUs to pods through the kubelet's
+  # podresources socket, not the Kubernetes API, so the chart gives it no RBAC.
+  # docs/rbac.md lists the options that need API access.
+
   # -- It's common practice to taint and label  to not run dcgm exporter on all nodes, so we can use node selectors and
   #    tolerations to ensure it only runs on GPU nodes.
   # affinity: {}
@@ -1007,6 +1022,9 @@ fluentbit:
     platform.union.ai/component: logging
   podLabels:
     platform.union.ai/component: logging
+  # With this chart's config, Fluent Bit only tails container log files on the
+  # node, so the chart gives it no RBAC. If you add a `kubernetes` filter, or
+  # rbac.nodeAccess or rbac.eventsAccess, set create: true as well.
   rbac:
     create: false
   # Upstream defaults this to a bare `busybox`, which resolves against the
@@ -1907,10 +1925,14 @@ prometheus:
   # subchart puts commonMetaLabels on every resource it renders, pods included.
   commonMetaLabels:
     platform.union.ai/component: prometheus
+  # This must stay false; true fails the render. The chart writes Prometheus's RBAC
+  # itself, granting only what its scrape jobs discover. See docs/rbac.md.
   rbac:
     create: false
 
   server:
+    # Health checks, opencost and ingress address the server by this fixed name,
+    # and the chart's RBAC binds its ServiceAccount by it.
     fullnameOverride: "union-operator-prometheus"
     clusterRoleNameOverride: "union-operator-prometheus"
     useExistingClusterRoleName: ""
@@ -1983,6 +2005,10 @@ prometheus:
         cpu: "1"
         memory: "1Gi"
 
+  # The complete scrape_configs list, since Helm replaces lists wholesale. It
+  # replaces the subchart's default jobs, which discover every pod, service and
+  # endpoint in the cluster. Add jobs under extraScrapeConfigs; a job that
+  # discovers outside the release namespace needs its own Role there.
   serverFiles:
     prometheus.yml:
       scrape_configs:
@@ -2211,8 +2237,15 @@ prometheus:
   # (monitoring-kube-state-metrics) — both can coexist.
   kube-state-metrics:
     enabled: true
+    # This must stay false; true fails the render. The chart writes this RBAC itself
+    # from `collectors` and the namespaces collected.
     rbac:
       create: false
+    # The whole list, since Helm replaces lists wholesale. The chart grants each
+    # collector what it reads; a collector outside the chart's rule set fails the
+    # render.
+    # `nodes` and `namespaces` are cluster-scoped and read cluster-wide in either
+    # scope mode.
     collectors:
       - namespaces
       - nodes
@@ -2220,16 +2253,71 @@ prometheus:
       - deployments
       - daemonsets
       - resourcequotas
+    # When true, kube-state-metrics collects namespaced resources from the release
+    # namespace only. This key is independent of singleNamespace: at
+    # `singleNamespace: false`, layer examples/values.full-privilege.yaml to collect
+    # from the namespaces tasks run in.
     releaseNamespace: true
   prometheus-node-exporter:
     enabled: false
   prometheus-pushgateway:
     enabled: false
 
+# -- Run Union in the release namespace (true) or across a namespace per project
+# and domain (false). Unset means true. `low_privilege` is the older name for this
+# key and still works as an alias; set one of the two, or both to the same value.
+# Write it as an unquoted boolean: a quoted string fails the render.
+#
+# `singleNamespace: true` does not mean no cluster-scoped permissions. It reduces
+# the permission set to what the chart's features need while keeping them working:
+# - Union's workloads, tasks and apps included, run in the release namespace, and
+#   every grant that can be namespaced is.
+# - Cluster-scoped reads come only from a fixed allowlist, each entry tied to the
+#   code that needs it: node reads, node and API server metrics, and Knative's
+#   informers while app serving is on, among others. tests/test-rbac-guards.sh
+#   enforces the list; docs/rbac.md explains each entry.
+# - Cluster-scoped writes are pinned to named objects. nodeobserver and
+#   node-bootstrap, both off by default, are the exceptions: each removes a
+#   startup taint from its own node.
+#
+# At `singleNamespace: false`, Union's components reach each work namespace through
+# a RoleBinding there to the `<release-ns>-work-ns` ClusterRole. clusterresourcesync
+# creates that binding in the namespaces it creates. This chart creates it in
+# `namespaces.static` when `namespaces.enabled` is true. If you provision work
+# namespaces yourself, create the binding too, with `roleRef` to that ClusterRole
+# and one ServiceAccount subject per Union identity in the release namespace. If
+# the binding is missing, the install renders clean and tasks fail with Forbidden
+# on their first run.
 singleNamespace: null
 
+# -- Cluster-wide list/watch for the CRDs your task plugins use, at
+# `singleNamespace: false`. A CRD-backed plugin (Spark, Ray, Dask, Kubeflow and
+# so on) watches its resource in every namespace, and only a ClusterRole can
+# authorize that watch. The plugin's writes inside work namespaces are already
+# granted. Each entry names `apiGroups` and `resources`; `verbs` defaults to
+# [list, watch] and may name only get, list and watch. Wildcards and built-in API
+# groups fail the render.
+# Entries for the stock plugins:
+#
+#   taskPluginClusterReadRules:
+#     - apiGroups: [sparkoperator.k8s.io]
+#       resources: [sparkapplications]
+#     - apiGroups: [ray.io]
+#       resources: [rayjobs, rayclusters]
+#     - apiGroups: [kubernetes.dask.org]
+#       resources: [daskjobs]
+#     - apiGroups: [kubeflow.org]
+#       resources: [pytorchjobs, tfjobs, mpijobs]
+#     - apiGroups: [jobset.x-k8s.io]
+#       resources: [jobsets]
 taskPluginClusterReadRules: []
 
+# -- Zero-trust dataplane mode, on by default. Installs the Envoy gateway, the
+# dataproxy backend and the tunnel-service dataplane ingress, and has Prometheus
+# remote-write to the control plane. Requires `gateway.enabled`.
+# `knative-operator.enabled` must stay false, because Helm evaluates that subchart
+# condition at parse time and can't derive it from this flag. Set false for
+# deployments with self-hosted control planes.
 zero_trust:
   enabled: true
 
@@ -2237,6 +2325,13 @@ zero_trust:
 # When set and secretsWatcher is enabled, RBAC roles are created in this namespace for cross-namespace access.
 controlplaneNamespace: ""
 
+# -- Run every component under one ServiceAccount, `name`. Set false to give each
+# component its own; each new account then needs its own workload-identity binding
+# in your cloud (an IRSA trust subject on AWS, a Workload Identity member on GCP, a
+# federated credential on Azure) before it can authenticate. fluentbit keeps the
+# shared account unless you also set `fluentbit.serviceAccount.name`. This
+# separates cloud identities; the RBAC rules are the same either way. Honored in
+# both scope modes.
 commonServiceAccount:
   enabled: true
   name: union-system
@@ -2422,6 +2517,7 @@ apps:
 
 # -- Configure app serving and knative.
 serving:
+  # -- DEPRECATED: use `apps.enabled`. Honored only when `apps.enabled` is unset.
   enabled: null
   # -- The number of replicas to create for all components for high availability.
   replicas: 2
@@ -2693,6 +2789,10 @@ ingress-nginx:
   enabled: false
   fullnameOverride: "dataplane-nginx"
 
+  # Confine the controller to the release namespace, where every Ingress this chart
+  # renders lives, instead of reading Secrets, ConfigMaps, pods, endpoints and nodes
+  # cluster-wide. To reconcile Ingresses in other namespaces, set this and
+  # controller.scope.enabled below to false together.
   rbac:
     scope: true
 
@@ -2762,10 +2862,24 @@ ingress-nginx:
 extraObjects: []
 
 namespaces:
+  # -- Pre-create the work namespaces listed in `static`, and bind Union's
+  # work-namespace role in each. Off by default: clusterresourcesync creates work
+  # namespaces as projects are registered. Scope is set by `singleNamespace` alone,
+  # and this key applies only at `singleNamespace: false`. Leave it false when the
+  # namespaces are managed outside this chart.
   enabled: false
+  # -- Labels for every Namespace in `static`. Namespaces clusterresourcesync
+  # creates take theirs from its `templates`.
   labels: {}
+  # -- Annotations for every Namespace in `static`. `helm.sh/resource-policy: keep`
+  # stops `helm uninstall` from deleting each namespace and everything in it. Only
+  # Helm honors it; a GitOps controller prunes a Namespace that leaves the manifest,
+  # so add its own retention key here, such as
+  # `argocd.argoproj.io/sync-options: Prune=false,Delete=false`. Set the key to null
+  # to let your tooling own the namespaces' lifecycle.
   annotations:
     helm.sh/resource-policy: keep
+  # -- Work namespaces to pre-create when `enabled` is true.
   static:
     - flytesnacks-development
     - flytesnacks-staging
@@ -2775,6 +2889,9 @@ namespaces:
     - union-health-monitoring-production
 
 monitoring:
+  # -- kube-prometheus-stack subchart. Off by default, since the monitoring stack is
+  # commonly managed outside this chart. The chart's own Prometheus (`prometheus`
+  # above) is separate and on by default.
   enabled: false
 
   # The following flags control Union monitoring resources independently
@@ -2930,6 +3047,7 @@ monitoring:
           cpu: "500m"
           memory: "1Gi"
 
+# Vendored Knative Serving, Kourier and the Envoy gateway.
 gateway:
   # -- Deliver app serving via this chart's vendored Knative Serving + Kourier +
   # Envoy gateway (raw manifests under templates/gateway/*) instead of the
@@ -3255,6 +3373,11 @@ gateway:
       # rejects the revision without this flag ("Volume Mount Propagation support is
       # disabled"). Pairs with podspec-volumes-csi for allow_volumes() serving.
       kubernetes.podspec-volumes-mount-propagation: "enabled"
+      # Off because it works in only one identity mode. Dry-run validation makes the
+      # Knative webhook create a throwaway pod in the app's namespace. The shared
+      # ServiceAccount may create pods there through the work-namespace role; the
+      # webhook's own account, at `commonServiceAccount.enabled: false`, is outside
+      # that role.
       kubernetes.podspec-dryrun: "disabled"
     kourier: {}
     autoscaler: {}
