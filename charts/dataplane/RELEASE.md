@@ -668,15 +668,21 @@ Two broken metrics families are fixed, both under `singleNamespace`:
 
 Also, in both modes:
 
-- `kubernetes-cadvisor` is no longer scraped under `singleNamespace`, because it needs
-  cluster-wide node access. This is the Task-Level Monitoring tradeoff the flag has always
-  described.
-- kube-state-metrics collects 4 resources instead of 28 (pods, deployments, daemonsets,
-  resourcequotas). `examples/values.full-privilege.yaml` adds nodes and namespaces.
-- Nine cluster-wide upstream scrape jobs are dropped (`kubernetes-apiservers`, `-nodes`,
-  `-nodes-cadvisor`, `-service-endpoints(-slow)`, `-services`, `-pods(-slow)`,
-  `prometheus-pushgateway`). Pods and services annotated `prometheus.io/scrape` are no longer
-  discovered; add a job under `prometheus.extraScrapeConfigs` if you need one.
+- `kubernetes-cadvisor` is scraped in both modes, through the API server proxy, so
+  Task-Level Monitoring works under `singleNamespace` too; it needs no network path from
+  Prometheus to the kubelet. Under `singleNamespace` the node reads come from a new read-only
+  `<ns>-prometheus-cluster-read` ClusterRole.
+- `kubernetes-apiservers` is scraped in both modes, as the managed dataplanes scrape it:
+  endpoint discovery in the `default` namespace only (a read-only Role there under
+  `singleNamespace`), keeping request and object-count series for the resources Union drives.
+- kube-state-metrics collects 6 resources instead of 28 (namespaces, nodes, pods,
+  deployments, daemonsets, resourcequotas), the set the managed dataplanes collect. Under
+  `singleNamespace`, `nodes` and `namespaces` are granted by a read-only
+  `<ns>-kube-state-metrics-cluster-read` ClusterRole.
+- Eight cluster-wide upstream scrape jobs are dropped (`kubernetes-nodes`, `-nodes-cadvisor`,
+  `-service-endpoints(-slow)`, `-services`, `-pods(-slow)`, `prometheus-pushgateway`). Pods and
+  services annotated `prometheus.io/scrape` are no longer discovered; add a job under
+  `prometheus.extraScrapeConfigs` if you need one.
 - The "deployments available" dashboard panel gets its data again: the kube-state-metrics
   scrape filter had dropped the two series behind it.
 - `gpu-metrics` now looks in the release namespace, where dcgm-exporter runs (was
@@ -912,9 +918,10 @@ Also, in both modes:
   stringifies scalars, and `yamlencode` does not.
 
 - **At `singleNamespace: false`, layer `examples/values.full-privilege.yaml`.** The flag grants
-  the cluster-wide read, and this file uses it (nodes and namespaces collectors, every
-  namespace). Without it there is no `kube_node_*`, no `kube_namespace_labels`, and no
-  requests/limits for task pods; task pod CPU and memory are unaffected.
+  the cluster-wide read, and this file uses it (every namespace). Without it kube-state-metrics
+  collects namespaced resources only in the release namespace, so task pods and quotas in
+  project namespaces have no requests/limits, phase, container-status reasons or
+  `kube_resourcequota`; task pod CPU and memory are unaffected.
   `examples/values-legacy.yaml` already includes it.
 
 - **ingress-nginx now watches only the release namespace**, where every Ingress this chart

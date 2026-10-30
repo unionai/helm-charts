@@ -80,14 +80,16 @@ release namespace there, which work-ns covers.
 
 ## The rule
 
-`singleNamespace: true` — the chart default — runs Union in the release namespace and
-confines the observability components to it. Prometheus and kube-state-metrics get
-namespaced Roles and lose the metrics that exist only cluster-wide: Task-Level Monitoring,
-`kube_node_*`, and accurate cost data. The full list is on the `singleNamespace` key in
-`values.yaml`. `low_privilege` is the key's older name and still works as an alias.
+`singleNamespace: true` — the chart default — runs Union in the release namespace. Its
+workloads write only there, and any cluster-scoped access is read-only and on a fixed list.
+Prometheus and kube-state-metrics keep their release-namespace scrapes in namespaced Roles,
+and read the node- and cluster-level telemetry that has no namespaced form (cadvisor through
+the API server proxy, the API server's `/metrics`, and the `nodes` and `namespaces`
+collectors) through read-only cluster roles, so Task-Level Monitoring and `kube_node_*` work
+in either mode. `low_privilege` is the key's older name and still works as an alias.
 
-`singleNamespace: false` trades that back: the observability components may read
-cluster-wide, never write, and never touch secrets.
+`singleNamespace: false` widens the observability components to read cluster-wide, still
+never writing and never touching secrets.
 
 The flag is not a whole-chart namespace boundary. It scopes Union-authored workload RBAC
 along with these two subcharts, and gates [app serving](#app-serving), namespace creation
@@ -119,8 +121,11 @@ ClusterRole bound by a ClusterRoleBinding grants anything off the list.
 |---|---|---|---|
 | `<ns>-operator-cluster-read` | `nodes` list, watch | on by default | The operator's node informer (`operator/cmd/root.go`). It runs unless `config.operator.disableClusterPermissions` is set, and whenever any usage collector runs; startup blocks until it syncs. It backs the Legacy/Shadow billing collector and attributes a GPU to the node's accelerator label when the pod spec names none. Nodes are cluster-scoped, so `limitNamespace` cannot confine it. |
 | `<ns>-operator-cluster-read` | `nodes` get, list, watch; `pods` get, list, watch with `clusterWidePods` | `config.operator.clusterHealth.nodeCapacity.enabled` | The cluster health snapshot's capacity report reads node shapes and allocatable resources, and with `clusterWidePods` the pods scheduled on them for per-pool usage, which a namespace-limited operator's own pod cache cannot see. Independent of `disableClusterPermissions` and of the informer's gate; it adds `get` to the same `nodes` rule. |
+| `<ns>-operator-cluster-read` | `/metrics` get | on by default | The operator reads the API server's own metrics for its FlyteWorkflow-count and etcd-size throttles (`operator/pkg/apiserver_stats.go`). Without it the poll fails every interval and the throttles never engage. |
 | `<ns>-nodeobserver-cluster-read` | `nodes` get, `pods` list | `nodeobserver.enabled` | nodeobserver reads the node it runs on, and lists that node's pods with an empty namespace and a `spec.nodeName` field selector — a cluster-scope request. |
 | `<ns>-node-bootstrap-cluster-read` | `nodes` get | `nodeBootstrap.enabled` with `nodeBootstrap.startupTaintKey` set | union-node-readiness reads the node it runs on before removing the startup taint. |
+| `<ns>-prometheus-cluster-read` | `nodes` list, watch; `nodes/proxy` get; `/metrics` get | `prometheus.enabled` | Node discovery and the kubelet's cadvisor endpoint through the API server proxy, which needs no network path from Prometheus to the kubelet, and the API server's own `/metrics`. The API server job's endpoint discovery reads only the `default` namespace, through the Role `<ns>-prometheus-apiserver-discovery` there. |
+| `<ns>-kube-state-metrics-cluster-read` | `nodes`, `namespaces` list, watch | a cluster-scoped collector is listed (both are by default) | `kube_node_*` and `kube_namespace_labels`, which the control plane's metrics gateway accepts. Namespaced collectors stay in the release-namespace Role. |
 | `dataplane-nginx-ingressclass` | `ingressclasses` get, list, watch | `ingress-nginx.enabled` | A scoped ingress-nginx controller still reads IngressClass, which is cluster-scoped; if the read is denied, the controller ignores every Ingress this chart renders. |
 | `flyte-webhook-cleanup-<ns>` | `mutatingwebhookconfigurations` get, delete, on `flyte-pod-webhook` only | pre-upgrade hook | Deletes the webhook configuration chart versions before 2026.4.7 left behind. |
 
@@ -130,9 +135,6 @@ the unpinned exceptions, both off by default: nodeobserver's and node-bootstrap'
 (`<ns>-node-bootstrap-cluster-write`, with a taint key set). Each removes a startup taint from
 the node it runs on, and RBAC has no way to name the caller's own node.
 
-Single-namespace mode withholds what is off the list: the operator's `/metrics` scrape of
-the API server, which feeds its FlyteWorkflow-count and etcd-size throttles (the throttles
-stay off), and prometheus' node and cadvisor discovery.
 
 The leaseworker's Kubernetes event watcher, its fast-task orphan pod lists and the fastray
 idle-cluster reaper need nothing from the list. Since
@@ -176,25 +178,25 @@ so none of our templates can branch on them:
   named ones, plus the release namespace when `releaseNamespace` is set, deduped. When both
   are empty the subchart drops the flag, and kube-state-metrics reads *every* namespace.
 
-The defaults match the namespaced install, so every request is covered by the grant: four
-collectors, release namespace only. Requesting more than the grant covers leaves
-kube-state-metrics running and logging the denial every few seconds for the life of the
-pod. `templates/prometheus/rbac.yaml` refuses to render a cluster-scoped collector under
-`singleNamespace` to prevent that.
+The defaults are covered by the grant in either mode: six collectors, the namespaced ones in
+the release namespace only. Requesting more than the grant covers leaves kube-state-metrics
+running and logging the denial every few seconds for the life of the pod. The cluster-scoped
+collectors, `nodes` and `namespaces`, get their own read-only cluster role under
+`singleNamespace`, so the six match what the managed dataplanes collect in both modes.
 
-`examples/values.full-privilege.yaml` is the other half of `singleNamespace: false`: it adds
-the `nodes` and `namespaces` collectors and drops `--namespaces`, so `kube_node_*`,
-`kube_namespace_labels` and task pods in project namespaces are all collected. Without it,
-`singleNamespace: false` grants the cluster-wide read but collects like a namespaced
-install. Task pod *utilization* is independent of this, because `container_*` comes from
-the cadvisor job, which is node-scoped and namespace-blind; requests and limits depend on it.
+`examples/values.full-privilege.yaml` is the other half of `singleNamespace: false`: it drops
+`--namespaces`, so task pods in project namespaces are collected too. Without it,
+`singleNamespace: false` grants the cluster-wide read but collects namespaced resources only
+in the release namespace. Task pod *utilization* is independent of this, because `container_*`
+comes from the cadvisor job, which is node-scoped and namespace-blind; requests and limits
+depend on it.
 
 ## What each subchart gets
 
 | Subchart | Default | `singleNamespace: true` | `singleNamespace: false` |
 |---|---|---|---|
-| prometheus | on | namespaced Role (ours) | ClusterRole (ours) |
-| kube-state-metrics | on | namespaced Role, 4 collectors | ClusterRole, 6 with the overlay |
+| prometheus | on | namespaced Role, plus a read-only cluster role for nodes, the kubelet proxy and `/metrics` (ours) | ClusterRole (ours) |
+| kube-state-metrics | on | namespaced Role, plus a read-only cluster role for `nodes` and `namespaces`; 6 collectors | ClusterRole, 6 collectors |
 | fluent-bit | on (off on GCP) | none | none |
 | dcgm-exporter | off | none | none |
 | ingress-nginx | off | namespaced Role + IngressClass ClusterRole | same |
@@ -296,15 +298,14 @@ reading it as true would render the Knative stack into that golden.
 ## Notes
 
 **prometheus.** Read-only on services, endpoints, pods, ingresses, configmaps and
-endpointslices, plus nodes and the node metrics endpoints at `singleNamespace: false`. It
-never reads secrets and never writes, in either mode.
+endpointslices, plus nodes, the kubelet proxy and the API server's `/metrics`. It never reads
+secrets and never writes, in either mode.
 
-The namespaced Role drops cluster-scoped resources. Naming them there is legal but never
-matches, which is how `kubernetes-cadvisor` returned 403s for three months. For the same
-reason the chart does not render that scrape job under `singleNamespace`: it needs
-cluster-wide node discovery, and it is the only source of `container_cpu_usage_seconds_total`
-and `container_memory_working_set_bytes`. Those panels read "no data" in single-namespace
-mode, by design.
+Under `singleNamespace` the namespaced Role carries only namespaced resources. Naming a
+cluster-scoped one there is legal but never matches, which is how `kubernetes-cadvisor`
+returned 403s for three months. The node reads live in `<ns>-prometheus-cluster-read`
+instead, so the cadvisor job, the only source of `container_cpu_usage_seconds_total` and
+`container_memory_working_set_bytes`, runs in both modes, as does the API server job.
 
 Verified on a live cluster: with only the namespaced Role, prometheus finds and scrapes
 every target in its own namespace — 4/4 up, no RBAC errors.
@@ -318,22 +319,24 @@ sync can rewrite the binding subject to its own namespace, surfacing at most a
 authorization. Treat this as a constraint to respect, because nothing will reliably stop you.
 
 The cluster-wide read at `singleNamespace: false` is wider than the rendered scrape jobs
-use: every job but `kubernetes-cadvisor` discovers with `own_namespace: true`. That is
+use: every job but `kubernetes-cadvisor` and `kubernetes-apiservers` discovers with
+`own_namespace: true`. That is
 deliberate. `singleNamespace: false` is a choice of permission posture, not a permission set
 derived from the jobs. Helm cannot parse arbitrary `prometheus.extraScrapeConfigs` to work
 out what a job added there needs, so the grant tracks the pinned subchart's own read-only
 discovery profile. That is what lets a job added there reach `prometheus.io/scrape` targets
 outside the release namespace.
 
-**kube-state-metrics.** Four collectors out of 28 by default (`pods`, `deployments`,
-`daemonsets`, `resourcequotas`), list/watch only, chosen to match the series the control
-plane's metrics gateway accepts. Dropping the other 24 also drops `secrets`. The
-full-privilege overlay adds `nodes` and `namespaces`; omitting them costs `kube_node_*` and
+**kube-state-metrics.** Six collectors out of 28 by default (`namespaces`, `nodes`, `pods`,
+`deployments`, `daemonsets`, `resourcequotas`), list/watch only, the set the managed
+dataplanes collect and the series the control plane's metrics gateway accepts. Dropping the
+other 22 also drops `secrets`. Omitting `nodes` and `namespaces` costs `kube_node_*` and
 `kube_namespace_labels`, and the latter is the join key for most pod-level aggregates, so
 pod-level dashboards degrade rather than just losing node panels.
 
 Grants are derived from whatever `collectors` names, so the two always match: an unmapped
-collector fails the render, and so does a cluster-scoped one under `singleNamespace`. See
+collector fails the render, and a cluster-scoped one gets a read-only cluster role under
+`singleNamespace`. See
 [What the flag can't reach](#what-the-flag-cant-reach) for the collection scope.
 
 The binding names kube-state-metrics' real ServiceAccount, derived from the subchart's own

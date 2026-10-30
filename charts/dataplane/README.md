@@ -459,13 +459,12 @@ Two documents cover this in full:
   the legacy `flyte-pod-webhook`. The exceptions are nodeobserver and node-bootstrap, both off
   by default, which each remove a startup taint from their own node.
 
-Usage collection and the operator's node informer run in both modes. The mode's cost is the
-reduced functionality listed under `singleNamespace` in `values.yaml`: no Task-Level
-Monitoring, no node-level metrics, less accurate cost data, and no chart-created leaseworker
-or flytepropeller PriorityClass. The uvol mount broker's PriorityClass is created in both
-modes. `singleNamespace: false` restores that access; layer
-`examples/values.full-privilege.yaml` as well to collect with it, since Helm can't derive its
-kube-state-metrics settings from the flag.
+Usage collection, the operator's node informer and API server throttles, Task-Level
+Monitoring and node-level metrics run in both modes. The mode's cost is that the chart
+creates no leaseworker or flytepropeller PriorityClass. The uvol mount broker's PriorityClass is created in both modes.
+`singleNamespace: false` restores that access; layer `examples/values.full-privilege.yaml` as
+well to collect with it, since Helm can't derive its kube-state-metrics settings from the
+flag.
 
 Set `singleNamespace` or `low_privilege`, or both to the same value; the chart refuses to
 render if they disagree.

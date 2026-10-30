@@ -366,9 +366,21 @@ echo "- collectors stay in step with the grant"
 expect-refusal "a collector with no rule mapped for it" \
   "has no rule for" \
   --set 'prometheus.kube-state-metrics.collectors={pods,secrets}'
-expect-refusal "a cluster-scoped collector under singleNamespace" \
-  "cluster-scoped and cannot be granted" \
+expect-role-resource "a cluster-scoped collector under singleNamespace gets a read-only cluster role" \
+  present union-kube-state-metrics-cluster-read nodes \
   --set 'prometheus.kube-state-metrics.collectors={pods,nodes}'
+expect-role-resource "and stays out of the release-namespace Role" \
+  absent release-name-kube-state-metrics nodes \
+  --set 'prometheus.kube-state-metrics.collectors={pods,nodes}'
+expect-manifest "with only namespaced collectors there is no cluster role" \
+  absent "name: union-kube-state-metrics-cluster-read" \
+  --set 'prometheus.kube-state-metrics.collectors={pods,deployments}'
+expect-role-resource "Prometheus reads nodes cluster-wide under singleNamespace, for cadvisor" \
+  present union-prometheus-cluster-read nodes/proxy
+expect-manifest "and scrapes cadvisor in either mode" \
+  present "job_name: 'kubernetes-cadvisor'"
+expect-manifest "and the API server" \
+  present "job_name: 'kubernetes-apiservers'"
 expect-refusal "an empty collector list, which the subchart reads as all 28" \
   "must name at least one collector" \
   --set prometheus.kube-state-metrics.collectors=null
@@ -677,11 +689,11 @@ expect-role-resource "the node informer's grant appears under singleNamespace wi
 expect-role-resource "and with billing None while collectUsages is on" \
   present union-operator-cluster-read nodes \
   --set config.operator.billing.model=None
-expect-manifest "but not with billing None and both usage collectors off" \
-  absent "name: union-operator-cluster-read" \
+expect-role-resource "but not with billing None and both usage collectors off" \
+  absent union-operator-cluster-read nodes \
   --set config.operator.billing.model=None --set config.operator.collectUsages.enabled=false
-expect-manifest "nor when cluster permissions are disabled outright" \
-  absent "name: union-operator-cluster-read" \
+expect-role-resource "nor when cluster permissions are disabled outright" \
+  absent union-operator-cluster-read nodes \
   --set config.operator.disableClusterPermissions=true
 function expect-collect-usages {
   local desc=$1; shift
@@ -718,11 +730,11 @@ expect-role-resource "a string \"True\" turns collectUsages on for the gate, as 
 expect-role-resource "and so does a string \"1\"" \
   present union-operator-cluster-read nodes \
   --set config.operator.billing.model=None --set-string config.operator.collectUsages.enabled=1
-expect-manifest "a string \"0\" turns it off" \
-  absent "name: union-operator-cluster-read" \
+expect-role-resource "a string \"0\" turns it off" \
+  absent union-operator-cluster-read nodes \
   --set config.operator.billing.model=None --set-string config.operator.collectUsages.enabled=0
-expect-manifest "a string \"T\" disables cluster permissions" \
-  absent "name: union-operator-cluster-read" \
+expect-role-resource "a string \"T\" disables cluster permissions" \
+  absent union-operator-cluster-read nodes \
   --set-string config.operator.disableClusterPermissions=T
 expect-refusal "a value ParseBool rejects is refused" \
   "which the operator cannot read as a boolean" \
@@ -758,6 +770,8 @@ expect-role-resource "an override turns on PDB management when the values key is
 expect-role-resource "the API server /metrics scrape is granted outside singleNamespace" \
   present union-operator-cluster-read /metrics \
   --set singleNamespace=false
+expect-role-resource "and under singleNamespace, where it is a read on the list" \
+  present union-operator-cluster-read /metrics
 expect-role-resource "including with billing and usage collection off" \
   present union-operator-cluster-read /metrics \
   --set singleNamespace=false --set config.operator.billing.model=None \
@@ -2268,6 +2282,7 @@ cat > "${SCOPE_ALLOWLIST}" <<'EOF'
 union-operator-cluster-read read core nodes list,watch
 union-operator-cluster-read read core nodes get
 union-operator-cluster-read read core pods get,list,watch
+union-operator-cluster-read read - /metrics get
 
 union-nodeobserver-cluster-read read core nodes get
 union-nodeobserver-cluster-read read core pods list
@@ -2277,6 +2292,15 @@ union-node-bootstrap-cluster-read read core nodes get
 union-node-bootstrap-cluster-write unpinned-write core nodes update
 
 dataplane-nginx-ingressclass read networking.k8s.io ingressclasses get,list,watch
+
+# Node- and cluster-level telemetry, which has no namespaced form: node discovery and
+# cadvisor through the API server proxy, the API server's /metrics, and kube-state-metrics'
+# cluster-scoped collectors.
+union-prometheus-cluster-read read core nodes list,watch
+union-prometheus-cluster-read read core nodes/proxy get
+union-prometheus-cluster-read read - /metrics get
+union-kube-state-metrics-cluster-read read core nodes list,watch
+union-kube-state-metrics-cluster-read read core namespaces list,watch
 
 flyte-webhook-cleanup-union read admissionregistration.k8s.io mutatingwebhookconfigurations get flyte-pod-webhook
 flyte-webhook-cleanup-union pinned-write admissionregistration.k8s.io mutatingwebhookconfigurations delete flyte-pod-webhook
@@ -2318,6 +2342,7 @@ union-knative-webhook-cluster-write pinned-write admissionregistration.k8s.io va
 union-knative-webhook-cluster-write pinned-write core namespaces/finalizers update union
 
 outside-namespace operator-system-secrets-watcher
+outside-namespace union-prometheus-apiserver-discovery
 
 subchart monitoring
 subchart metrics-server

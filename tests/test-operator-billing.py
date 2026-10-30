@@ -384,6 +384,7 @@ data:
     def test_real_chart_config_and_workload_inventory(self):
         inventories = []
         comp_ns_read = []
+        cluster_read = []
         for model in ("None", "ResourceUsage"):
             result = self.helm(
                 "template",
@@ -416,15 +417,25 @@ data:
                     for resource in rule.get("resources") or []
                 }
             )
+            cluster_read.append(
+                {
+                    (group, resource)
+                    for doc in docs
+                    if doc["kind"] == "ClusterRole"
+                    and doc["metadata"]["name"] == f"{NAMESPACE}-operator-cluster-read"
+                    for rule in doc.get("rules") or []
+                    for group in rule.get("apiGroups") or []
+                    for resource in rule.get("resources") or []
+                }
+            )
         none, resource_usage = inventories
-        self.assertEqual(
-            {
-                ("rbac.authorization.k8s.io/v1", "ClusterRole", f"{NAMESPACE}-operator-cluster-read"),
-                ("rbac.authorization.k8s.io/v1", "ClusterRoleBinding", f"{NAMESPACE}-operator-cluster-read"),
-            },
-            resource_usage - none,
-        )
+        # The cluster read role exists under either model, for the API server's /metrics;
+        # usage collection adds only its nodes read.
+        self.assertEqual(set(), resource_usage - none)
         self.assertEqual(set(), none - resource_usage)
+        none_cluster, resource_usage_cluster = cluster_read
+        self.assertEqual({("", "nodes")}, resource_usage_cluster - none_cluster)
+        self.assertEqual(set(), none_cluster - resource_usage_cluster)
         none_rules, resource_usage_rules = comp_ns_read
         self.assertEqual({("metrics.k8s.io", "pods")}, resource_usage_rules - none_rules)
         self.assertEqual(set(), none_rules - resource_usage_rules)

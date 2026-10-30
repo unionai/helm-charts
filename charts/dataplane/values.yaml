@@ -2067,10 +2067,37 @@ prometheus:
         - source_labels: [__meta_kubernetes_endpoint_port_name]
           regex: debug
           action: keep
-    # cAdvisor container metrics for CPU and memory tracking (Infrastructure panels).
-    # Scrapes the kubelet cadvisor endpoint via the API server proxy.
-    # Needs cluster-scoped node access, so it is only rendered when singleNamespace is false.
-    {{- if not (include "singleNamespace" .) }}
+    # API server metrics, as the managed dataplanes scrape them: object counts and
+    # request rates for the resources Union drives. Discovers each API server endpoint
+    # behind the default/kubernetes Service, so counters from different API servers
+    # stay separate series.
+    - job_name: 'kubernetes-apiservers'
+      scrape_interval: 30s
+      scheme: https
+      kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names: [default]
+      bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecure_skip_verify: false
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+          regex: default;kubernetes;https
+          action: keep
+      metric_relabel_configs:
+        - source_labels: [resource]
+          regex: workqueue_.*
+          target_label: resource
+          replacement: union_cloud_replacement
+          action: replace
+        - source_labels: [__name__, resource]
+          regex: "((apiserver_request_.*|apiserver_response_.*|workqueue_.*);(flyteworkflows\\.flyte\\.lyft\\.com|nodes|pods|events|union_cloud_replacement))|((apiserver_storage_size_bytes|apiserver_storage_objects|apiserver_storage_events_received_total);.*)"
+          action: keep
+    # cAdvisor container metrics for CPU and memory tracking (Infrastructure panels and
+    # task-level monitoring). Scrapes the kubelet cadvisor endpoint through the API server
+    # proxy, so Prometheus needs no network path to the kubelet, in either scope mode.
     - job_name: 'kubernetes-cadvisor'
       metrics_path: /metrics
       scheme: https
@@ -2093,7 +2120,6 @@ prometheus:
           regex: (.+)
           target_label: __metrics_path__
           replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
-    {{- end }}
     # Flyte propeller metrics for execution info and fast task duration.
     # No-op when propeller is not deployed (no pods match the label selector).
     - job_name: 'flytepropeller'
@@ -2185,6 +2211,8 @@ prometheus:
     rbac:
       create: false
     collectors:
+      - namespaces
+      - nodes
       - pods
       - deployments
       - daemonsets

@@ -5810,9 +5810,59 @@ data:
         - source_labels: [__meta_kubernetes_endpoint_port_name]
           regex: debug
           action: keep
-    # cAdvisor container metrics for CPU and memory tracking (Infrastructure panels).
-    # Scrapes the kubelet cadvisor endpoint via the API server proxy.
-    # Needs cluster-scoped node access, so it is only rendered when singleNamespace is false.
+    # API server metrics, as the managed dataplanes scrape them: object counts and
+    # request rates for the resources Union drives. Discovers each API server endpoint
+    # behind the default/kubernetes Service, so counters from different API servers
+    # stay separate series.
+    - job_name: 'kubernetes-apiservers'
+      scrape_interval: 30s
+      scheme: https
+      kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names: [default]
+      bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecure_skip_verify: false
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+          regex: default;kubernetes;https
+          action: keep
+      metric_relabel_configs:
+        - source_labels: [resource]
+          regex: workqueue_.*
+          target_label: resource
+          replacement: union_cloud_replacement
+          action: replace
+        - source_labels: [__name__, resource]
+          regex: "((apiserver_request_.*|apiserver_response_.*|workqueue_.*);(flyteworkflows\\.flyte\\.lyft\\.com|nodes|pods|events|union_cloud_replacement))|((apiserver_storage_size_bytes|apiserver_storage_objects|apiserver_storage_events_received_total);.*)"
+          action: keep
+    # cAdvisor container metrics for CPU and memory tracking (Infrastructure panels and
+    # task-level monitoring). Scrapes the kubelet cadvisor endpoint through the API server
+    # proxy, so Prometheus needs no network path to the kubelet, in either scope mode.
+    - job_name: 'kubernetes-cadvisor'
+      metrics_path: /metrics
+      scheme: https
+      kubernetes_sd_configs:
+        - role: node
+      bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecure_skip_verify: true
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "container_cpu_usage_seconds_total|container_memory_working_set_bytes"
+          action: keep
+      relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_node_label_(.+)
+        - target_label: __address__
+          replacement: kubernetes.default.svc:443
+        - source_labels: [__meta_kubernetes_node_name]
+          regex: (.+)
+          target_label: __metrics_path__
+          replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
     # Flyte propeller metrics for execution info and fast task duration.
     # No-op when propeller is not deployed (no pods match the label selector).
     - job_name: 'flytepropeller'
@@ -6645,6 +6695,10 @@ rules:
     verbs:
     - list
     - watch
+  - nonResourceURLs:
+    - /metrics
+    verbs:
+    - get
 ---
 # Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6839,6 +6893,60 @@ rules:
     verbs:
     - update
 ---
+# Source: dataplane/templates/prometheus/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: union-prometheus-cluster-read
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.10.0"
+    app.kubernetes.io/managed-by: Helm
+    release: release-name
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+    verbs:
+      - list
+      - watch
+  - apiGroups: [""]
+    resources:
+      - nodes/proxy
+    verbs:
+      - get
+  - nonResourceURLs: ["/metrics"]
+    verbs:
+      - get
+---
+# Source: dataplane/templates/prometheus/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: union-kube-state-metrics-cluster-read
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.10.0"
+    app.kubernetes.io/managed-by: Helm
+    release: release-name
+rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+    verbs:
+      - list
+      - watch
+  - apiGroups: [""]
+    resources:
+      - nodes
+    verbs:
+      - list
+      - watch
+---
 # Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -6936,6 +7044,49 @@ subjects:
   - kind: ServiceAccount
     name: union-system
     namespace: union
+---
+# Source: dataplane/templates/prometheus/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: union-prometheus-cluster-read
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.10.0"
+    app.kubernetes.io/managed-by: Helm
+    release: release-name
+subjects:
+  - kind: ServiceAccount
+    name: union-operator-prometheus
+    namespace: union
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-prometheus-cluster-read
+---
+# Source: dataplane/templates/prometheus/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: union-kube-state-metrics-cluster-read
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.10.0"
+    app.kubernetes.io/managed-by: Helm
+    release: release-name
+subjects:
+  - kind: ServiceAccount
+    name: release-name-kube-state-metrics
+    namespace: union
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-kube-state-metrics-cluster-read
+
 ---
 # Source: dataplane/charts/dcgm-exporter/templates/role.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -7621,6 +7772,29 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
+  name: union-prometheus-apiserver-discovery
+  namespace: default
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.10.0"
+    app.kubernetes.io/managed-by: Helm
+    release: release-name
+rules:
+  - apiGroups: [""]
+    resources:
+      - endpoints
+      - services
+      - pods
+    verbs:
+      - list
+      - watch
+---
+# Source: dataplane/templates/prometheus/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
   name: release-name-kube-state-metrics
   namespace: union
   labels:
@@ -7924,6 +8098,28 @@ roleRef:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
+  name: union-prometheus-apiserver-discovery
+  namespace: default
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.10.0"
+    app.kubernetes.io/managed-by: Helm
+    release: release-name
+subjects:
+  - kind: ServiceAccount
+    name: union-operator-prometheus
+    namespace: union
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: union-prometheus-apiserver-discovery
+---
+# Source: dataplane/templates/prometheus/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
   name: release-name-kube-state-metrics
   namespace: union
   labels:
@@ -7941,7 +8137,6 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: release-name-kube-state-metrics
-
 ---
 # Source: dataplane/charts/dcgm-exporter/templates/service.yaml
 # Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
@@ -9048,7 +9243,7 @@ spec:
       - name: kube-state-metrics
         args:
         - --port=8080
-        - --resources=pods,deployments,daemonsets,resourcequotas
+        - --resources=namespaces,nodes,pods,deployments,daemonsets,resourcequotas
         - --namespaces=union
         imagePullPolicy: IfNotPresent
         image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.14.0
