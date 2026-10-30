@@ -1737,7 +1737,7 @@ the caller that emits directly (the operator) applies tpl itself.
 {{- /* The executor was removed from this chart; drop stale overlay entries so
        the operator doesn't heartbeat a nonexistent service. */}}
 {{- else if eq $key "executor" }}
-{{- else if and (eq $key "prometheus") (include "singleNamespace" $) }}
+{{- else if and (eq $key "prometheus") (not $.Values.prometheus.enabled) }}
 {{- else }}
 {{- $_ := set $heartbeat $key $value }}
 {{- end }}

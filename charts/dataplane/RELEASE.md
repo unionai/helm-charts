@@ -31,11 +31,11 @@ are untangled. Several of these changes are breaking: read the sections below, e
   well, the role gains `pods` `get`/`list`/`watch`. Both grants are independent of
   `disableClusterPermissions`, render in both scope modes, and are on the single-namespace
   allowlist. They live in this role; there is no separate `-node-capacity` ClusterRole.
-- **`uvolMountBroker.block.allow` defaults from `singleNamespace`** (#606). With the key
-  unset, block mode is off under `singleNamespace` (the chart default) and allowed for every
-  pod at `singleNamespace: false`. `low_privilege` still works as the alias. The template used
-  to read `low_privilege` directly, which `values.yaml` no longer sets, so on a default
-  install it would have turned block mode on for every pod.
+- **`uvolMountBroker.block.allow` defaults to where Union's tasks run** (#606). With the key
+  unset, block mode is allowed in the release namespace under `singleNamespace` (main turned it
+  off there) and for every pod at `singleNamespace: false`, as on main. An explicit list is
+  rendered through `tpl`, so `{namespace: "{{ .Release.Namespace }}"}` works, and `[]`
+  disables block mode.
 - **node-bootstrap's taint removal is granted through its own cluster slots** (#646). With
   `nodeBootstrap.enabled` and a `startupTaintKey`, `union-node-readiness` holds `nodes` `get`
   in `<release-ns>-node-bootstrap-cluster-read` and `nodes` `update` in
@@ -90,6 +90,13 @@ are untangled. Several of these changes are breaking: read the sections below, e
     [list]` for the usage aggregator that collectUsages starts. (With `ResourceUsage` or
     `Shadow` it was already there.)
   - The operator config changes, so the operator and its proxy roll on upgrade.
+  - The leaseworker's PriorityClass, `union-leaseworker`, is created, and flytepropeller's
+    when it is enabled. Both are cluster-scoped, like the uvol broker's PriorityClass and
+    CSIDriver, which single-namespace installs already create. Set
+    `leaseworker.priorityClass.create: false` (and the same under `flytepropeller`) to bring
+    your own class instead.
+  - The operator's dependency heartbeat checks Prometheus. It is now dropped only when
+    `prometheus.enabled` is false, in either mode.
 
   To keep the old behavior, set `config.operator.disableClusterPermissions: true` and
   `config.operator.collectUsages.enabled: false` explicitly. With cluster permissions

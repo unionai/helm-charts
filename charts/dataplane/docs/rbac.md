@@ -92,14 +92,16 @@ in either mode. `low_privilege` is the key's older name and still works as an al
 never writing and never touching secrets.
 
 The flag is not a whole-chart namespace boundary. It scopes Union-authored workload RBAC
-along with these two subcharts, and gates [app serving](#app-serving), namespace creation
-and the leaseworker and flytepropeller priorityclasses. Outside its reach:
+along with these two subcharts, and gates [app serving](#app-serving) and namespace creation.
+Outside its reach:
 
 - a short list of cluster-scoped reads that remain in single-namespace mode
   ([below](#what-singlenamespace-still-reads-cluster-wide));
 - the Helm hook cleanup job, which creates a ClusterRole in either mode;
 - the uvol mount broker (on by default), which creates a PriorityClass and a CSIDriver in
   either mode;
+- the leaseworker's PriorityClass, and flytepropeller's when it is enabled, created in either
+  mode unless `priorityClass.create` is false;
 - opencost and metrics-server, which are cluster-scoped when enabled;
 - the `knative-operator` subchart, which ships its own cluster-scoped set when enabled.
 

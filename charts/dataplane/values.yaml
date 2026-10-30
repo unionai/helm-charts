@@ -660,7 +660,7 @@ config:
       # -- Define the operator proxy health check endpoint.
       proxy:
         endpoint: '{{ include "proxy.health.url" . }}'
-      # -- Define the prometheus health check endpoint.
+      # -- Define the prometheus health check endpoint. Dropped when prometheus is disabled.
       prometheus:
         endpoint: '{{ include "prometheus.health.url" . }}'
     # -- Configuration for the secrets watcher, which triggers rolling restarts when secrets change.
@@ -1162,14 +1162,11 @@ leaseworker:
   # below. To bring your own existing class, set this to its name and
   # priorityClass.create: false. Set to "" to run without one. Do NOT use a reserved
   # system class (e.g. system-cluster-critical): GKE's gcp-critical-pods
-  # ResourceQuota restricts those to kube-system. The pod still references this class
-  # under singleNamespace when it is externally managed (priorityClass.create: false) —
-  # referencing needs no cluster RBAC; only creation does (see priorityClass.create).
+  # ResourceQuota restricts those to kube-system.
   priorityClassName: union-leaseworker
   # -- Whether the chart creates the (cluster-scoped) PriorityClass named by
-  # priorityClassName above. Skipped under singleNamespace, because a PriorityClass
-  # is cluster-wide scheduling policy — pair with a class you create out-of-band. Set
-  # create: false to bring your own class, or in multi-dataplane-per-cluster setups
+  # priorityClassName above, in either scope mode. Set create: false to bring your
+  # own class, or in multi-dataplane-per-cluster setups
   # (the PriorityClass would otherwise be created once per dataplane). value is used
   # only when create: true.
   priorityClass:
@@ -1192,13 +1189,10 @@ flytepropeller:
   # -- PriorityClass the flytepropeller pod runs under. Defaults to the chart-managed
   # class below. Set to your own existing class to bring your own, or "" for none. Do
   # NOT use a reserved system class (e.g. system-cluster-critical): GKE's
-  # gcp-critical-pods ResourceQuota restricts those to kube-system. The pod still
-  # references this class under singleNamespace when it is externally managed
-  # (priorityClass.create: false) — referencing needs no cluster RBAC; only creation does.
+  # gcp-critical-pods ResourceQuota restricts those to kube-system.
   priorityClassName: "union-flytepropeller"
-  # -- Whether the chart creates the (cluster-scoped) PriorityClass named above. Only
-  # rendered when flytepropeller.enabled. Skipped under singleNamespace, because a
-  # PriorityClass is cluster-wide scheduling policy. Set create: false to bring your own class,
+  # -- Whether the chart creates the (cluster-scoped) PriorityClass named above, in
+  # either scope mode. Only rendered when flytepropeller.enabled. Set create: false to bring your own class,
   # or in multi-dataplane-per-cluster setups. value is used only when create: true.
   priorityClass:
     create: true
@@ -1631,11 +1625,13 @@ uvolMountBroker:
     # namespace. Fields are glob patterns: `*` matches anything and `team-*` a
     # prefix, so `[{namespace: "*"}]` is the blanket opt-in for every pod on the
     # cluster. A rule that sets neither field is rejected at broker start.
-    # Unset (the default): `[{namespace: "*"}]` when `singleNamespace` is false,
-    # and disabled when it is true, which is the chart default. Any list you set
-    # is used as given, and `[]` disables block mode. Attaching makes the node
-    # kernel parse filesystem bytes the task controls, so on a cluster running
-    # untrusted workloads set an explicit list. Example:
+    # Unset (the default): the release namespace under `singleNamespace`, where
+    # every Union task runs, and `[{namespace: "*"}]` outside it, where tasks run
+    # in per-project namespaces. Any list you set is used as given and rendered
+    # through `tpl`, so `{namespace: "{{ .Release.Namespace }}"}` works; `[]`
+    # disables block mode. Attaching makes the node kernel parse filesystem
+    # bytes the task controls, so on a cluster running untrusted workloads set
+    # an explicit list. Example:
     # `[{namespace: builders}, {namespace: ci, serviceAccount: buildkit}]`
     allow: null
     # -- Thaw a block mount the client froze (around a Volume commit) after this

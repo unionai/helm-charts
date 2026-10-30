@@ -568,19 +568,39 @@ expect-manifest "the deprecated serving.enabled on at the singleNamespace defaul
   present "name: union-knative-controller-cluster-read" \
   "${zt[@]}" --set serving.enabled=true
 
-echo "- the uvol broker's block-mode default follows singleNamespace"
-expect-manifest "a default install renders no block-mode allow list" \
-  absent "blockAllow:"
-expect-manifest "nor does low_privilege: true, the alias" \
-  absent "blockAllow:" --set low_privilege=true
-expect-manifest "singleNamespace: false allows block mode for every pod" \
+echo "- the uvol broker's block-mode default follows where tasks run"
+expect-manifest "a default install allows block mode in the release namespace" \
+  present "- namespace: union$"
+expect-manifest "singleNamespace: false allows it for every pod" \
   present "- namespace: '\*'" --set singleNamespace=false
-expect-manifest "and so does low_privilege: false" \
-  present "- namespace: '\*'" --set low_privilege=false
-expect-manifest "an explicit list is used as given under singleNamespace" \
+expect-manifest "an explicit list is used as given" \
   present "- namespace: builders" --set 'uvolMountBroker.block.allow[0].namespace=builders'
-expect-manifest "and an empty list disables block mode outside it" \
+expect-manifest "and rendered through tpl" \
+  present "- namespace: 'union'" --set-json 'uvolMountBroker.block.allow=[{"namespace":"{{ .Release.Namespace }}"}]' \
+  --set singleNamespace=false
+expect-manifest "an empty list disables block mode" \
+  absent "blockAllow:" --set-json 'uvolMountBroker.block.allow=[]'
+expect-manifest "in either mode" \
   absent "blockAllow:" --set singleNamespace=false --set-json 'uvolMountBroker.block.allow=[]'
+
+echo "- the leaseworker and flytepropeller PriorityClasses render in either scope mode"
+expect-manifest "a default install creates the leaseworker's" \
+  present "name: union-leaseworker$"
+expect-manifest "and its pod runs under it" \
+  present "priorityClassName: union-leaseworker"
+expect-manifest "priorityClass.create: false brings your own" \
+  absent "kind: PriorityClass" --set leaseworker.priorityClass.create=false \
+  --set uvolMountBroker.enabled=false
+expect-manifest "flytepropeller's renders under singleNamespace when it is enabled" \
+  present "name: union-flytepropeller$" --set flytepropeller.enabled=true
+
+echo "- the operator heartbeats Prometheus whenever Prometheus is enabled"
+expect-manifest "under singleNamespace" \
+  present "prometheus:80/prometheus/-/healthy"
+expect-manifest "and outside it" \
+  present "prometheus:80/prometheus/-/healthy" --set singleNamespace=false
+expect-manifest "but not when Prometheus is disabled" \
+  absent "/-/healthy'" --set prometheus.enabled=false --set singleNamespace=false
 
 echo "- the scope, namespace and identity axes are independent"
 expect-manifest "namespaces.enabled pre-seeds outside singleNamespace" \
