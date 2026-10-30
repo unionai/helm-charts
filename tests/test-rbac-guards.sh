@@ -375,15 +375,15 @@ expect-role-resource "and stays out of the release-namespace Role" \
 expect-manifest "with only namespaced collectors there is no cluster role" \
   absent "name: union-kube-state-metrics-cluster-read" \
   --set 'prometheus.kube-state-metrics.collectors={pods,deployments}'
-expect-role-resource "Prometheus reads nodes cluster-wide under singleNamespace, for cadvisor" \
-  present union-prometheus-cluster-read nodes/proxy
-expect-manifest "and scrapes cadvisor in either mode" \
-  present "job_name: 'kubernetes-cadvisor'"
-expect-manifest "and the API server" \
-  present "job_name: 'kubernetes-apiservers'"
 
 echo "- prometheus and kube-state-metrics hold the same minimal grant in either mode"
 for mode in true false; do
+  expect-role-resource "singleNamespace=${mode}: Prometheus reads nodes cluster-wide, for cadvisor" \
+    present union-prometheus-cluster-read nodes/proxy --set singleNamespace=${mode}
+  expect-manifest "singleNamespace=${mode}: and scrapes cadvisor" \
+    present "job_name: 'kubernetes-cadvisor'" --set singleNamespace=${mode}
+  expect-manifest "singleNamespace=${mode}: and the API server" \
+    present "job_name: 'kubernetes-apiservers'" --set singleNamespace=${mode}
   expect-role-resource "singleNamespace=${mode}: prometheus discovers pods in the release namespace" \
     present union-operator-prometheus-rbac pods --set singleNamespace=${mode}
   expect-role-resource "singleNamespace=${mode}: and reads no configmaps" \
@@ -399,6 +399,9 @@ expect-binding-subject "kube-state-metrics gets no cluster-wide pod read at sing
   ClusterRoleBinding release-name-kube-state-metrics "" --set singleNamespace=false
 expect-role-resource "the full-privilege overlay, which collects every namespace, gets it" \
   present release-name-kube-state-metrics pods --values "${CHART}/examples/values.full-privilege.yaml"
+expect-binding-subject "bound cluster-wide, not by a Role in the release namespace" \
+  ClusterRoleBinding release-name-kube-state-metrics release-name-kube-state-metrics \
+  --values "${CHART}/examples/values.full-privilege.yaml"
 expect-refusal "an empty collector list, which the subchart reads as all 28" \
   "must name at least one collector" \
   --set prometheus.kube-state-metrics.collectors=null

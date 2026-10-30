@@ -88,11 +88,14 @@ the API server proxy, the API server's `/metrics`, and the `nodes` and `namespac
 collectors) through read-only cluster roles, so Task-Level Monitoring and `kube_node_*` work
 in either mode. `low_privilege` is the key's older name and still works as an alias.
 
-`singleNamespace: false` widens the observability components to read cluster-wide, still
-never writing and never touching secrets.
+Prometheus holds the same grant in either mode. kube-state-metrics' grant follows the
+namespaces it collects from: `singleNamespace: true` holds those to the release namespace,
+and `singleNamespace: false` lets you widen them ([below](#what-the-flag-cant-reach)).
+Neither writes, and neither reads secrets.
 
-The flag is not a whole-chart namespace boundary. It scopes Union-authored workload RBAC
-along with these two subcharts, and gates [app serving](#app-serving) and namespace creation.
+The flag is not a whole-chart namespace boundary. It scopes Union-authored workload RBAC and
+where kube-state-metrics may collect, and gates namespace creation. App serving is on by
+default in either mode.
 Outside its reach:
 
 - a short list of cluster-scoped reads that remain in single-namespace mode
@@ -108,8 +111,8 @@ Outside its reach:
 A namespace-confined install identity is therefore not enough to deploy this chart; the
 README's RBAC section covers what your install identity needs.
 
-The flag decides RBAC by itself. How much kube-state-metrics collects with that access is
-set separately, by layering `examples/values.full-privilege.yaml` (see below).
+kube-state-metrics' grant follows what it is configured to collect rather than the flag:
+`examples/values.full-privilege.yaml` widens both together (see below).
 
 ## What singleNamespace still reads cluster-wide
 
@@ -180,15 +183,16 @@ so none of our templates can branch on them:
   named ones, plus the release namespace when `releaseNamespace` is set, deduped. When both
   are empty the subchart drops the flag, and kube-state-metrics reads *every* namespace.
 
-The defaults are covered by the grant in either mode: six collectors, the namespaced ones in
-the release namespace only. Requesting more than the grant covers leaves kube-state-metrics
-running and logging the denial every few seconds for the life of the pod. The cluster-scoped
-collectors, `nodes` and `namespaces`, get their own read-only cluster role under
-`singleNamespace`, so the six match what the managed dataplanes collect in both modes.
+The defaults are six collectors, the namespaced ones in the release namespace only, in
+either mode. The chart reads both values and grants exactly what they ask for: a Role in each
+named namespace, or a ClusterRole when kube-state-metrics reads every namespace.
+`singleNamespace: true` refuses any namespace but the release namespace. The cluster-scoped
+collectors, `nodes` and `namespaces`, get their own read-only cluster role in either mode, so
+the six match what the managed dataplanes collect.
 
 `examples/values.full-privilege.yaml` is the other half of `singleNamespace: false`: it drops
-`--namespaces`, so task pods in project namespaces are collected too. Without it,
-`singleNamespace: false` grants the cluster-wide read but collects namespaced resources only
+`--namespaces`, so task pods in project namespaces are collected too, and the grant widens to
+a ClusterRole with it. Without it, `singleNamespace: false` collects namespaced resources only
 in the release namespace. Task pod *utilization* is independent of this, because `container_*`
 comes from the cadvisor job, which is node-scoped and namespace-blind; requests and limits
 depend on it.
@@ -270,13 +274,13 @@ be namespaced is. The rest follows from what the *images* do:
   exists to guard on.
 
 So app serving reads every namespace in the cluster. `singleNamespace: true` promises that
-Union's cluster-scoped reads are a fixed list, and Knative's are on it only when app serving
-is explicitly on: the scope allowlist in `tests/test-rbac-guards.sh` names them under that
-condition. The webhook configurations confirm this from the other direction: every rule has
+Union's cluster-scoped reads are a fixed list, and Knative's are on it whenever app serving
+is on, which is the default in both modes: the scope allowlist in `tests/test-rbac-guards.sh`
+names them under that condition. Set `apps.enabled: false` to drop them. The webhook configurations confirm this from the other direction: every rule has
 `scope: "*"` and omits `namespaceSelector`, so admission intercepts cluster-wide regardless
 of RBAC.
 
-The default is all the flag does here; the Knative grants are the same in both modes. The
+The flag changes nothing here; the default and the Knative grants are the same in both modes. The
 release notes give the per-component breakdown.
 
 **Why the stack renders whole or not at all.** Rendering `apps.enabled: true` without the

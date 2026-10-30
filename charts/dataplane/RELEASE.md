@@ -682,7 +682,7 @@ Also, in both modes:
   `<ns>-prometheus-cluster-read` ClusterRole in either mode.
 - `kubernetes-apiservers` is scraped in both modes, as the managed dataplanes scrape it:
   endpoint discovery in the `default` namespace only (a read-only Role there), keeping
-  request and object-count series for the resources Union drives.
+  request and object-count series for the resources Union drives, and its workqueue series.
 - kube-state-metrics collects 6 resources instead of 28 (namespaces, nodes, pods,
   deployments, daemonsets, resourcequotas), the set the managed dataplanes collect. `nodes`
   and `namespaces` are granted by a read-only `<ns>-kube-state-metrics-cluster-read`

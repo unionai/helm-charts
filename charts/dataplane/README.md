@@ -451,8 +451,10 @@ Two documents cover this in full:
 - Union's workloads, including tasks and apps, run in the release namespace, and every grant
   that can be namespaced is — for Union's components, prometheus and kube-state-metrics alike.
   The chart creates no namespaces.
-- Cluster-scoped reads come only from a fixed allowlist: the operator's node informer, plus
-  nodeobserver, node-bootstrap and ingress-nginx when enabled. `tests/test-rbac-guards.sh`
+- Cluster-scoped reads come only from a fixed allowlist: the operator's node informer and
+  API server metrics, Prometheus and kube-state-metrics for node- and cluster-level
+  telemetry, Knative's informers while app serving is on (the default), plus nodeobserver,
+  node-bootstrap and ingress-nginx when enabled. `tests/test-rbac-guards.sh`
   enforces the list; [docs/rbac.md](docs/rbac.md#what-singlenamespace-still-reads-cluster-wide)
   explains each entry.
 - Cluster-scoped writes are pinned to named objects, such as the pre-upgrade hook that deletes
@@ -460,11 +462,12 @@ Two documents cover this in full:
   by default, which each remove a startup taint from their own node.
 
 Usage collection, the operator's node informer and API server throttles, Task-Level
-Monitoring and node-level metrics run in both modes. The mode's cost is that the chart
-creates no leaseworker or flytepropeller PriorityClass. The uvol mount broker's PriorityClass is created in both modes.
-`singleNamespace: false` restores that access; layer `examples/values.full-privilege.yaml` as
-well to collect with it, since Helm can't derive its kube-state-metrics settings from the
-flag.
+Monitoring and node-level metrics run in both modes. The leaseworker, flytepropeller and uvol
+mount broker PriorityClasses are created in both modes too; set `priorityClass.create: false`
+on a component if you manage its class yourself. kube-state-metrics collects namespaced
+resources in the release namespace in both modes. To collect from project namespaces under
+`singleNamespace: false`, layer `examples/values.full-privilege.yaml` as well, since Helm can't
+derive kube-state-metrics settings from the flag; its grant follows.
 
 Set `singleNamespace` or `low_privilege`, or both to the same value; the chart refuses to
 render if they disagree.
