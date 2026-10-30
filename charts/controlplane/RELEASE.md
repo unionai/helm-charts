@@ -1,5 +1,27 @@
 # controlplane — Release Notes
 
+## 2026.10.2
+
+`version` moves `2026.10.1` → `2026.10.2`; `appVersion` moves `2026.10.0` → `2026.10.5`.
+
+### Executions migrations follow the control-plane deployment type
+
+From `2026.10.5`, executions picks its Postgres migrations from `controlPlane.deploymentType` instead
+of per-feature flags (unionai/cloud#19713). The chart now sets it explicitly for the executions
+service:
+
+```yaml
+services:
+  executions:
+    configMap:
+      controlPlane:
+        deploymentType: selfhosted
+```
+
+`selfhosted` (also the image default) applies only the migrations every deployment shares, so
+upgrading adds no indexes. `executions.postgresDashboards.enabled` no longer exists; nothing in this
+chart set it.
+
 ## 2026.10.1
 
 `version` moves `2026.10.0` → `2026.10.1`. `appVersion` stays `2026.10.0`: this is

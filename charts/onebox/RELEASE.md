@@ -1,5 +1,13 @@
 # onebox — Release Notes
 
+## 2026.10.5
+
+`version` and `appVersion` move to `2026.10.5`. The onebox image now sets
+`controlPlane.deploymentType: onebox` in its built-in defaults, and applies the console
+dashboards' `actions (org, created_at)` index as part of that type's migrations
+(unionai/cloud#19713). Existing onebox databases already have the index; the upgrade
+records it under a new version as a no-op.
+
 ## 2026.9.7
 
 First release. Union in one pod: the v2 control plane, the in-process data
