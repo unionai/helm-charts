@@ -67,6 +67,9 @@ ALLOWLIST = {
     "monitoring-operator",
     "monitoring-kube-state-metrics",
     "release-name-grafana",
+    "dataplane-nginx-controller",
+    "release-name-metrics-server",
+    "release-name-opencost",
 }
 
 

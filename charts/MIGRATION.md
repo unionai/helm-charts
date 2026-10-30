@@ -4,6 +4,80 @@ Tracking the migration story for the helm-charts cloud overlays. New entries at 
 
 ---
 
+## dataplane — `low_privilege` becomes `singleNamespace`, and stops disabling usage collection
+
+### What changed
+
+`low_privilege` is renamed `singleNamespace`, because the flag has always decided scope:
+Union in the release namespace with namespaced Roles, or across per-project namespaces with
+ClusterRoles. The dataplane README's [RBAC section](dataplane/README.md#rbac) lists what
+`singleNamespace: true` promises.
+
+**`low_privilege` still works as an alias**, and `true` and `false` resolve as before. Both
+keys are unset in `values.yaml`, which still means single-namespace. Two values now fail the
+render: the two keys set to different values, and a quoted string such as `"false"`, which
+used to read as true.
+
+**Single-namespace mode no longer switches features off.** It used to force
+`config.operator.collectUsages.enabled` to `false` and `config.operator.disableClusterPermissions`
+to `true`. Both now follow their own values:
+
+- `collectUsages` is on by default, so single-namespace operators start collecting usage. The
+  operator confines its pod and pod-metrics reads to `limitNamespace`, so the pod-metrics
+  grant stays a Role in the release namespace.
+- `disableClusterPermissions` defaults to `false`, so the operator's node informer runs in
+  single-namespace mode too. The chart adds the ClusterRole and ClusterRoleBinding
+  `<release-ns>-operator-cluster-read`, granting `nodes` `list` and `watch`. The informer
+  drives GPU attribution by node label, the Legacy/Shadow node-based billing collector, and
+  cloud-provider detection from node labels.
+
+The chart parses those operator flags as the operator does (`strconv.ParseBool`) when
+deciding the grants: a string `"True"` or `"1"` counts as on, and a value the operator cannot
+parse fails the render.
+
+### Operational impact
+
+- **A new cluster-scoped read on every single-namespace dataplane**: `nodes` `list`/`watch`
+  for the operator's ServiceAccount. A namespace-confined install identity already could not
+  deploy this chart; see the dataplane README's RBAC section.
+- **Usage collection starts** on single-namespace dataplanes, and the operator's config
+  checksum changes, so the operator and proxy roll on upgrade.
+- To keep the old behavior, set it explicitly:
+
+  ```yaml
+  config:
+    operator:
+      disableClusterPermissions: true   # no node informer, no nodes grant
+      collectUsages:
+        enabled: false
+  ```
+
+  With cluster permissions disabled, set `config.operator.clusterData.cloudProvider` (it
+  defaults to the top-level `provider`), because the operator can then no longer detect it
+  from node labels.
+- **Use one name for the scope flag across every values file you layer.**
+  `examples/values.full-privilege.yaml`, `examples/values-legacy.yaml` and the app-serving
+  recipe in `dataplane/docs/rbac.md` now set `singleNamespace: false`. Layered with an overlay
+  that sets `low_privilege: true`, the later file used to win; the render now fails with
+  `singleNamespace is false but low_privilege is true`, because either choice would silently
+  flip scope. Migrate overlays to `singleNamespace`, or set the same value under both names
+  until every file is migrated.
+- **Replace `.Values.low_privilege` in your own templated values.** `values.yaml` no longer
+  sets it, so unless an overlay does, `{{ if not .Values.low_privilege }}` is true at the
+  single-namespace default. A guard like that around the `kubernetes-cadvisor` job in a
+  `prometheus.extraScrapeConfigs` override (copied from a pre-release `values.yaml`) renders
+  the job where prometheus holds only a Role, and the scrape fails with `403`. Use
+  `{{ if not (include "singleNamespace" .) }}`, as `values.yaml` now does, in every value the
+  chart renders through `tpl`: `extraObjects` and the `config.*` blocks.
+  `prometheus.serverFiles` is not rendered through `tpl`.
+
+### Rollback
+
+Revert the chart change. Overlays that set `low_privilege` need no edit either way; one that
+switched to `singleNamespace` must switch back.
+
+---
+
 ## dataplane — vendored Knative Serving gateway bumped 1.16.0 → 1.23.0
 
 ### What changed

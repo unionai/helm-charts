@@ -1,12 +1,13 @@
 {{- if .Values.flytepropellerwebhook.enabled }}
 {{- if .Values.flytepropellerwebhook.legacyWebhookCleanup.enabled }}
 {{/*
-Pre-upgrade hook that deletes stale flyte-pod-webhook resources left behind from
-old chart versions. These cannot be updated in-place by Kubernetes or Helm:
+Pre-upgrade hook that deletes objects left behind by chart versions before
+2026.4.7. These cannot be updated in-place by Kubernetes or Helm:
   1. MutatingWebhookConfiguration/flyte-pod-webhook — cluster-scoped orphan causing
      "service not found" errors on pod creation.
   2. Deployment/flytepropeller-webhook — selector label changed (immutable field).
   3. Secret/flyte-pod-webhook — marked immutable:true; blocks TLS cert renewal.
+  4. Deployment/union-operator-prometheus — same selector problem.
 */}}
 ---
 apiVersion: v1
@@ -20,6 +21,46 @@ metadata:
     helm.sh/hook-weight: "-5"
 ---
 apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: flyte-webhook-cleanup-{{ .Release.Namespace }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames:
+      - flytepropeller-webhook
+      - union-operator-prometheus
+    verbs: ["get", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - flyte-pod-webhook
+    verbs: ["get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: flyte-webhook-cleanup-{{ .Release.Namespace }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: flyte-webhook-cleanup-{{ .Release.Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: flyte-webhook-cleanup
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: flyte-webhook-cleanup-{{ .Release.Namespace }}
@@ -30,12 +71,8 @@ metadata:
 rules:
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["mutatingwebhookconfigurations"]
-    verbs: ["get", "delete"]
-  - apiGroups: ["apps"]
-    resources: ["deployments"]
-    verbs: ["get", "delete"]
-  - apiGroups: [""]
-    resources: ["secrets"]
+    resourceNames:
+      - flyte-pod-webhook
     verbs: ["get", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

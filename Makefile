@@ -18,11 +18,15 @@ generate-expected: $(GEN_DIR) vendor-crds
 	./tests/run.sh generate
 
 .PHONY: test
-test: check-vendored-crds helm-test kubeconform-test check-image-paths
+test: check-vendored-crds helm-test kubeconform-test check-image-paths rbac-guard-test
 
 .PHONY: snapshot-generator-test
 snapshot-generator-test:
 	bash ./tests/test-atomic-render.sh
+
+.PHONY: rbac-guard-test
+rbac-guard-test: requirements
+	bash ./tests/test-rbac-guards.sh
 
 # Gate on fully qualified image references. Reads the checked-in
 # tests/generated/ corpus, so it needs neither network nor helm — but that
@@ -60,7 +64,7 @@ check-vendored-crds:
 	exit $${fail}
 
 .PHONY: helm-test
-helm-test: $(TMP_DIR) snapshot-generator-test k3d-storage-test billing-test buildkit-arm-test workload-labels-test
+helm-test: $(TMP_DIR) snapshot-generator-test k3d-storage-test billing-test buildkit-arm-test workload-labels-test rbac-guard-test
 	./tests/run.sh helm
 
 # Every Union workload the dataplane chart renders carries the component label the

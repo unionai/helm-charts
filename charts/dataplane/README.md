@@ -429,6 +429,93 @@ For full monitoring documentation, see [Monitoring](https://docs.union.ai/deploy
 
 ---
 
+## RBAC
+
+Two documents cover this in full:
+
+- **[docs/rbac-union.md](docs/rbac-union.md)** — Union's own components: the slot model, who
+  creates the per-namespace bindings, and what to check after registering a project.
+- **[docs/rbac.md](docs/rbac.md)** — the observability subcharts, the cluster-scoped reads
+  single-namespace mode still makes, and their cost in metrics.
+
+### Three independent keys
+
+| Key | Default | What it decides |
+| --- | --- | --- |
+| `singleNamespace` | `true` | Whether Union runs in the release namespace with namespaced `Role`s, or across per-project namespaces with `ClusterRole`s. `low_privilege` is its older name and still works as an alias. |
+| `namespaces.enabled` / `namespaces.static` | `false` / a six-name list | Which work namespaces exist at install time, and so where the work-namespace role is bound. Role rules stay the same. |
+| `commonServiceAccount.enabled` | `true` | How many identities hold the grants. The rules stay the same; only which workload can use which grant changes. |
+
+`singleNamespace: true`, the default, does not mean no cluster-scoped permissions. Some
+features need access that has no namespaced form, such as node reads, node-level metrics and
+Knative's informers. The mode reduces the permission set to what those features need while
+keeping them working. It promises three things:
+
+- Union's workloads, including tasks and apps, run in the release namespace, and every grant
+  that can be namespaced is — for Union's components, prometheus and kube-state-metrics alike.
+  The chart creates no namespaces.
+- Cluster-scoped reads come only from a fixed allowlist: the operator's node informer and
+  API server metrics, Prometheus and kube-state-metrics for node- and cluster-level
+  telemetry, Knative's informers while app serving is on (the default), plus nodeobserver,
+  node-bootstrap and ingress-nginx when enabled. `tests/test-rbac-guards.sh`
+  enforces the list; [docs/rbac.md](docs/rbac.md#what-singlenamespace-still-reads-cluster-wide)
+  explains each entry.
+- Cluster-scoped writes are pinned to named objects, such as the pre-upgrade hook that deletes
+  the legacy `flyte-pod-webhook`. The exceptions are nodeobserver and node-bootstrap, both off
+  by default, which each remove a startup taint from their own node.
+
+Usage collection, the operator's node informer and API server throttles, Task-Level
+Monitoring and node-level metrics run in both modes. The leaseworker, flytepropeller and uvol
+mount broker PriorityClasses are created in both modes too; set `priorityClass.create: false`
+on a component if you manage its class yourself. kube-state-metrics collects namespaced
+resources in the release namespace in both modes. To collect from project namespaces under
+`singleNamespace: false`, layer `examples/values.full-privilege.yaml` as well, since Helm can't
+derive kube-state-metrics settings from the flag; its grant follows.
+
+Set `singleNamespace` or `low_privilege`, or both to the same value; the chart refuses to
+render if they disagree.
+
+**App serving is on by default in either mode.** Under `singleNamespace: true`, the Knative
+binaries read cluster-wide however their RBAC is written, so app serving brings their
+cluster-scoped reads with it: the one exception to single-namespace mode's fixed list. Set
+`apps.enabled: false` to hold the install to that list.
+
+With `gateway.enabled: false`, app serving comes from the deprecated `knative-operator`
+subchart, which brings its own cluster-scoped RBAC (see the table below) and renders at either
+setting. `gateway.enabled` defaults to `true` whether zero trust is on or off, so turning zero
+trust off keeps the vendored gateway. The Envoy gateway, dataproxy and tunnel ingress work
+regardless of `apps.enabled`. See [docs/rbac.md](docs/rbac.md#app-serving).
+
+### `singleNamespace` is not a whole-chart namespace boundary
+
+The components below hold cluster-scoped permissions in either mode, so deploying the chart
+takes more than a namespace-confined install identity. `singleNamespace` leaves the subcharts'
+own RBAC alone:
+
+| Component | Default | Cluster-scoped grant |
+| --- | --- | --- |
+| operator | **on** | `nodes` list and watch, for its node informer. Off with `config.operator.disableClusterPermissions: true`, which also stops the Legacy/Shadow billing collector and GPU attribution by node label |
+| Helm hook cleanup | **on** | one ClusterRole, pinned by `resourceNames` to a single MutatingWebhookConfiguration |
+| `knative-operator` subchart | off | 7 ClusterRoles and 7 ClusterRoleBindings of its own. Leave it off on the zero-trust path, where this chart provides app serving instead. |
+| nodeobserver | off | `nodes` get and `update`, plus cluster-wide `pods` list. `nodes` is cluster-scoped, and the API server authorizes a pod list with an empty namespace and a `spec.nodeName` selector as cluster-scoped too. The `update` removes a startup taint from its own node and is unpinned by name |
+| node-bootstrap | off | `nodes` get and `update` when `nodeBootstrap.startupTaintKey` is set. The `update` removes the startup taint from its own node and is unpinned by name |
+| opencost | off | cluster-wide read; it prices the whole cluster, and no key narrows it |
+| metrics-server | off | cluster-wide read plus a RoleBinding written into `kube-system` |
+| `monitoring` (kube-prometheus-stack) | off | its operator, prometheus, grafana and kube-state-metrics ClusterRoles |
+| ingress-nginx | off | one IngressClass ClusterRole (IngressClass has no namespaced form) |
+
+### If you run `singleNamespace: false`
+
+Every work namespace needs a `RoleBinding` to the `<release-ns>-work-ns` ClusterRole, created
+by this chart (`namespaces.enabled: true`), by `clusterresourcesync` as projects are
+registered, or by your own tooling. `namespaces.enabled` and `clusterresourcesync.enabled`
+both default to `false`, so setting only `singleNamespace: false` renders the ClusterRole
+unbound, and the render still succeeds. After registering a project, confirm the RoleBinding
+exists in its namespace. See
+[docs/rbac-union.md](docs/rbac-union.md#the-union-work-ns-clusterrole-can-render-present-but-unbound).
+
+---
+
 ## Requirements
 
 Kubernetes: `>= 1.28.0-0`
@@ -450,8 +537,8 @@ Kubectl hook cleanup jobs use `image.kubectl`:
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `image.kubectl.repository` | `bitnami/kubectl` | Kubectl image repository used by dataplane Helm hook cleanup jobs. |
-| `image.kubectl.tag` | `latest` | Kubectl image tag used by dataplane Helm hook cleanup jobs. |
+| `image.kubectl.repository` | `docker.io/alpine/k8s` | Kubectl image repository used by dataplane Helm hook cleanup jobs. |
+| `image.kubectl.tag` | `1.32.3` | Kubectl image tag used by dataplane Helm hook cleanup jobs. |
 | `image.kubectl.pullPolicy` | `""` | Optional imagePullPolicy for dataplane Helm hook cleanup jobs. Omit when empty. |
 | `image.kubectl.imagePullSecrets` | `[]` | Optional imagePullSecrets for dataplane Helm hook cleanup jobs. |
 

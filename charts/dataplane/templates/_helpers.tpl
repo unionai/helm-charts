@@ -510,6 +510,41 @@ Create the name of the clusterresources service account
 {{- default "clustersync-system" .Values.clusterresourcesync.serviceAccount.name }}
 {{- end }}
 
+{{/*
+Rules for the kinds clusterresourcesync.templates and additionalTemplates create,
+beyond the chart-owned namespaces, serviceaccounts, resourcequotas and rolebindings,
+at the get/create/patch the controller applies with. The resource is guessed from
+the kind the way client-go's UnsafeGuessKindToResource does. Secrets and the RBAC
+group are never derived, since a cluster-wide get on Secrets reads every Secret in
+the cluster; grant those through clusterRoleRules.
+*/}}
+{{- define "clusterresourcesync.templateRules" -}}
+{{- $owned := list "/namespaces" "/serviceaccounts" "/resourcequotas" "/secrets" }}
+{{- $byGroup := dict }}
+{{- range concat (.Values.clusterresourcesync.templates | default list) (.Values.clusterresourcesync.additionalTemplates | default list) }}
+{{- range regexSplit `(?m)^---[ \t]*$` (toString .value) -1 }}
+{{- $kind := regexReplaceAll `^kind:[ \t]*` (regexFind `(?m)^kind:[ \t]*\S+` .) "" | trimAll `"'` }}
+{{- $apiVersion := regexReplaceAll `^apiVersion:[ \t]*` (regexFind `(?m)^apiVersion:[ \t]*\S+` .) "" | trimAll `"'` }}
+{{- if and $kind $apiVersion }}
+{{- $group := "" }}
+{{- if contains "/" $apiVersion }}{{- $group = first (splitList "/" $apiVersion) }}{{- end }}
+{{- $resource := lower $kind }}
+{{- if hasSuffix "s" $resource }}{{- $resource = printf "%ses" $resource }}
+{{- else if hasSuffix "y" $resource }}{{- $resource = printf "%sies" (trimSuffix "y" $resource) }}
+{{- else }}{{- $resource = printf "%ss" $resource }}{{- end }}
+{{- if not (or (eq $group "rbac.authorization.k8s.io") (has (printf "%s/%s" $group $resource) $owned)) }}
+{{- $_ := set $byGroup $group (append (get $byGroup $group | default list) $resource | uniq | sortAlpha) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- range $group := keys $byGroup | sortAlpha }}
+- apiGroups: [{{ $group | quote }}]
+  resources: [{{ join ", " (get $byGroup $group) }}]
+  verbs: [get, create, patch]
+{{- end }}
+{{- end -}}
+
 {{- define "clusterresourcesync.serviceAccount.annotations" -}}
 {{- include "global.serviceAccountAnnotations" . }}
 {{- with .Values.clusterresourcesync.serviceAccount.annotations }}
@@ -730,6 +765,22 @@ Create the name of the service account to use
 
 {{- define "proxy.secretsNamespace" -}}
 {{- default .Release.Namespace .Values.proxy.secretManager.namespace }}
+{{- end }}
+
+{{- define "operator.secretsWatcher.namespaces" -}}
+{{- $sw := .Values.config.operator.secretsWatcher -}}
+{{- if hasKey $sw "namespaces" -}}
+{{- if and $sw.enabled (not $sw.namespaces) (include "singleNamespace" .) -}}
+{{- fail "config.operator.secretsWatcher.namespaces is set to an empty list under singleNamespace. The operator reads an empty list as every namespace and lists pods cluster-wide, and singleNamespace grants no cluster-wide pod read, so the operator would exit at startup. List the namespaces to watch, or remove the key to watch the release namespace (and controlplaneNamespace, when set)." -}}
+{{- end -}}
+{{- toYaml ($sw.namespaces | default list) -}}
+{{- else -}}
+{{- $ns := list .Release.Namespace -}}
+{{- if .Values.controlplaneNamespace -}}
+{{- $ns = append $ns .Values.controlplaneNamespace -}}
+{{- end -}}
+{{- toYaml $ns -}}
+{{- end -}}
 {{- end }}
 
 {{- define "proxy.selectorLabels" -}}
@@ -1364,11 +1415,28 @@ Get the webhook service name
 union-pod-webhook
 {{- end -}}
 
+{{- define "flytepropellerwebhook.registeredConfigName" -}}
+{{- if .Values.flytepropeller.enabled -}}
+{{- $webhook := (.Values.config.core | default dict).webhook | default dict -}}
+{{- tpl (dig "serviceName" "flyte-pod-webhook" $webhook | toString) . -}}
+{{- else -}}
+{{- include "flytepropellerwebhook.serviceName" . -}}
+{{- end -}}
+{{- end -}}
+
 {{/*
 Get the webhook secret name
 */}}
 {{- define "flytepropellerwebhook.secretName" -}}
 union-pod-webhook
+{{- end -}}
+
+{{- define "flytepropellerwebhook.initCertsSecretName" -}}
+{{- if .Values.flytepropeller.enabled -}}
+{{- dig "secretName" "flyte-pod-webhook" (.Values.config.core.webhook | default dict) -}}
+{{- else -}}
+{{- include "flytepropellerwebhook.secretName" . -}}
+{{- end -}}
 {{- end -}}
 
 {{/*
@@ -1461,12 +1529,8 @@ This returns the base64-encoded CA certificate based on the certificate provider
 {{- /* Return empty to signal that cainjector should handle it */ -}}
 {{- end -}}
 {{- end -}}
-{{/*
-Returns "true" when a common service account should be used for all components.
-Enabled explicitly via commonServiceAccount.enabled or implicitly via singleNamespace mode.
-*/}}
 {{- define "useCommonServiceAccount" -}}
-{{- if or .Values.commonServiceAccount.enabled (include "singleNamespace" .) -}}true{{- end -}}
+{{- if .Values.commonServiceAccount.enabled -}}true{{- end -}}
 {{- end -}}
 
 {{/*
@@ -1521,6 +1585,46 @@ Returns the buildkit service account name, using the common SA when enabled.
 {{- include "common.serviceAccountName" . -}}
 {{- else -}}
 {{- .Values.imageBuilder.buildkit.serviceAccount.name | default "union-imagebuilder" -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "knative.controller.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+knative-controller
+{{- end -}}
+{{- end -}}
+
+{{- define "knative.webhook.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+knative-webhook
+{{- end -}}
+{{- end -}}
+
+{{- define "knative.autoscaler.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+knative-autoscaler
+{{- end -}}
+{{- end -}}
+
+{{- define "knative.activator.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+knative-activator
+{{- end -}}
+{{- end -}}
+
+{{- define "knative.kourier.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+net-kourier
 {{- end -}}
 {{- end -}}
 
@@ -1596,13 +1700,44 @@ Otherwise, build it from imagebuilder.defaultRegistry plus the provider-specific
 {{- end -}}
 {{- end -}}
 
-{{/*
-Returns "true" when namespaces.enabled is false, indicating single-namespace mode.
-In this mode, templates auto-inject namespace-scoping config (limitNamespace, limit-namespace,
-namespace_mapping) so users only need to set namespaces.enabled: false.
-*/}}
 {{- define "singleNamespace" -}}
-{{- if or (not .Values.namespaces.enabled) .Values.low_privilege -}}true{{- end -}}
+{{- $set := dict -}}
+{{- range $key := list "singleNamespace" "low_privilege" -}}
+{{- $v := index $.Values $key -}}
+{{- if not (kindIs "invalid" $v) -}}
+{{- if not (kindIs "bool" $v) -}}
+{{- fail (printf "%s must be a YAML boolean (true or false), not %q. A quoted string is truthy whatever it says, so the chart refuses it rather than guess which scope was meant." $key (toString $v)) -}}
+{{- end -}}
+{{- $_ := set $set $key $v -}}
+{{- end -}}
+{{- end -}}
+{{- if and (hasKey $set "singleNamespace") (hasKey $set "low_privilege") (ne $set.singleNamespace $set.low_privilege) -}}
+{{- fail (printf "singleNamespace is %v but low_privilege is %v. low_privilege is the older name for singleNamespace, so the two cannot disagree. Set singleNamespace alone, or set both to the same value." $set.singleNamespace $set.low_privilege) -}}
+{{- end -}}
+{{- $single := true -}}
+{{- if hasKey $set "singleNamespace" -}}
+{{- $single = $set.singleNamespace -}}
+{{- else if hasKey $set "low_privilege" -}}
+{{- $single = $set.low_privilege -}}
+{{- end -}}
+{{- if $single -}}true{{- end -}}
+{{- end -}}
+
+{{- define "dataplane.parseBool" -}}
+{{- $v := .value -}}
+{{- if kindIs "bool" $v -}}
+{{- if $v -}}true{{- end -}}
+{{- else if kindIs "string" $v -}}
+{{- $s := tpl $v .ctx -}}
+{{- if has $s (list "1" "t" "T" "TRUE" "true" "True") -}}true
+{{- else if not (has $s (list "" "0" "f" "F" "FALSE" "false" "False")) -}}
+{{- fail (printf "%s is %q, which the operator cannot read as a boolean. Use true or false." .key $s) -}}
+{{- end -}}
+{{- else if or (kindIs "int" $v) (kindIs "int64" $v) (kindIs "float64" $v) -}}
+{{- if ne (float64 $v) 0.0 -}}true{{- end -}}
+{{- else if not (kindIs "invalid" $v) -}}
+{{- fail (printf "%s is %v, which the operator cannot read as a boolean. Use true or false." .key $v) -}}
+{{- end -}}
 {{- end -}}
 
 {{/*
@@ -1637,7 +1772,7 @@ the caller that emits directly (the operator) applies tpl itself.
 {{- /* The executor was removed from this chart; drop stale overlay entries so
        the operator doesn't heartbeat a nonexistent service. */}}
 {{- else if eq $key "executor" }}
-{{- else if and (eq $key "prometheus") $.Values.low_privilege }}
+{{- else if and (eq $key "prometheus") (not $.Values.prometheus.enabled) }}
 {{- else }}
 {{- $_ := set $heartbeat $key $value }}
 {{- end }}
@@ -1660,7 +1795,7 @@ union-pod-webhook
 {{- $_ := set $webhook "serviceName" (include "flytepropellerwebhook.serviceName" .) }}
 {{- $_ := set $webhook "secretName" (include "flytepropellerwebhook.secretName" .) }}
 {{- $_ := set $webhook "localCert" true }}
-{{- if or .Values.low_privilege (and .Values.flytepropellerwebhook.enabled .Values.flytepropellerwebhook.managedConfig) }}
+{{- if or (include "singleNamespace" .) (and .Values.flytepropellerwebhook.enabled .Values.flytepropellerwebhook.managedConfig) }}
 {{- $_ := set $webhook "disableCreateMutatingWebhookConfig" true }}
 {{- end }}
 {{- if include "singleNamespace" . }}
