@@ -2,7 +2,6 @@
 
 {{- $prom := .Values.prometheus }}
 {{- $ksm := index $prom "kube-state-metrics" }}
-{{- $single := eq (include "singleNamespace" .) "true" }}
 
 {{- $promSA := default ($prom.server.fullnameOverride | trunc 63 | trimSuffix "-") ((($prom.serviceAccounts).server).name) }}
 {{- $ksmName := "" }}
@@ -33,66 +32,63 @@
 {{- $ksmNamespaced := list }}
 {{- $ksmCluster := list }}
 {{- range $c := $ksmCollectors }}
-{{- if and $single (has $c $ksmClusterScoped) }}
+{{- if has $c $ksmClusterScoped }}
 {{- $ksmCluster = append $ksmCluster $c }}
 {{- else }}
 {{- $ksmNamespaced = append $ksmNamespaced $c }}
 {{- end }}
 {{- end }}
+
+{{- /* kube-state-metrics asks for namespaced resources in the namespaces its subchart turns
+       into --namespaces: the namespaces list plus the release namespace when releaseNamespace
+       is set, or every namespace when both are empty. Grant exactly that. A templated entry
+       renders against the subchart's own context, which this chart cannot resolve, so it
+       falls back to the cluster-wide read. */}}
+{{- $ksmNamespaces := list }}
+{{- $ksmAllNamespaces := false }}
+{{- if $ksm.namespaces }}
+{{- range $n := splitList "," (join "," $ksm.namespaces) }}
+{{- if contains (printf "%s%s" "{" "{") $n }}
+{{- $ksmAllNamespaces = true }}
+{{- else if $n }}
+{{- $ksmNamespaces = append $ksmNamespaces $n }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if $ksm.releaseNamespace }}
+{{- $ksmNamespaces = append $ksmNamespaces $.Release.Namespace }}
+{{- end }}
+{{- if not $ksmNamespaces }}
+{{- $ksmAllNamespaces = true }}
+{{- end }}
+
+{{- /* Prometheus is granted what the chart's scrape jobs discover, in either scope mode:
+       endpoints and pods in the release namespace, the API server's endpoints in default,
+       nodes for cadvisor through the API server proxy, and the API server's own /metrics. */}}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: {{ ternary "Role" "ClusterRole" $single }}
+kind: Role
 metadata:
   name: union-operator-prometheus-rbac
-  {{- if $single }}
   namespace: {{ .Release.Namespace }}
-  {{- end }}
   labels:
     {{- include "unionai-dataplane.labels" . | nindent 4 }}
     release: {{ .Release.Name }}
 rules:
   - apiGroups: [""]
     resources:
-      {{- if not $single }}
-      - nodes
-      - nodes/proxy
-      - nodes/metrics
-      {{- end }}
-      - services
       - endpoints
+      - services
       - pods
-      - configmaps
     verbs:
-      - get
       - list
       - watch
-  - apiGroups: ["extensions", "networking.k8s.io"]
-    resources:
-      - ingresses/status
-      - ingresses
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups: ["discovery.k8s.io"]
-    resources:
-      - endpointslices
-    verbs:
-      - get
-      - list
-      - watch
-  {{- if not $single }}
-  - nonResourceURLs: ["/metrics"]
-    verbs: ["get"]
-  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: {{ ternary "RoleBinding" "ClusterRoleBinding" $single }}
+kind: RoleBinding
 metadata:
   name: union-operator-prometheus-rbac
-  {{- if $single }}
   namespace: {{ .Release.Namespace }}
-  {{- end }}
   labels:
     {{- include "unionai-dataplane.labels" . | nindent 4 }}
     release: {{ .Release.Name }}
@@ -102,53 +98,9 @@ subjects:
     namespace: {{ .Release.Namespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: {{ ternary "Role" "ClusterRole" $single }}
+  kind: Role
   name: union-operator-prometheus-rbac
-{{- if $single }}
-{{- /* Node- and cluster-level telemetry has no namespaced form, so under singleNamespace
-       Prometheus reads it through a read-only cluster role: node discovery and the
-       kubelet's cadvisor endpoint through the API server proxy, and the API server's own
-       /metrics. Endpoint discovery for the API server job is confined to the default
-       namespace, where the kubernetes Service lives. */}}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: {{ .Release.Namespace }}-prometheus-cluster-read
-  labels:
-    {{- include "unionai-dataplane.labels" . | nindent 4 }}
-    release: {{ .Release.Name }}
-rules:
-  - apiGroups: [""]
-    resources:
-      - nodes
-    verbs:
-      - list
-      - watch
-  - apiGroups: [""]
-    resources:
-      - nodes/proxy
-    verbs:
-      - get
-  - nonResourceURLs: ["/metrics"]
-    verbs:
-      - get
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: {{ .Release.Namespace }}-prometheus-cluster-read
-  labels:
-    {{- include "unionai-dataplane.labels" . | nindent 4 }}
-    release: {{ .Release.Name }}
-subjects:
-  - kind: ServiceAccount
-    name: {{ $promSA }}
-    namespace: {{ .Release.Namespace }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: {{ .Release.Namespace }}-prometheus-cluster-read
+{{- if ne .Release.Namespace "default" }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -185,15 +137,52 @@ roleRef:
   kind: Role
   name: {{ .Release.Namespace }}-prometheus-apiserver-discovery
 {{- end }}
-{{- if $ksm.enabled }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: {{ ternary "Role" "ClusterRole" $single }}
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Namespace }}-prometheus-cluster-read
+  labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
+    release: {{ .Release.Name }}
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+    verbs:
+      - list
+      - watch
+  - apiGroups: [""]
+    resources:
+      - nodes/proxy
+    verbs:
+      - get
+  - nonResourceURLs: ["/metrics"]
+    verbs:
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Namespace }}-prometheus-cluster-read
+  labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
+    release: {{ .Release.Name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $promSA }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Namespace }}-prometheus-cluster-read
+{{- if and $ksm.enabled $ksmNamespaced }}
+{{- if $ksmAllNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
 metadata:
   name: {{ $ksmName }}
-  {{- if $single }}
-  namespace: {{ .Release.Namespace }}
-  {{- end }}
   labels:
     {{- include "unionai-dataplane.labels" . | nindent 4 }}
     release: {{ .Release.Name }}
@@ -201,17 +190,19 @@ rules:
 {{- range $c := $ksmNamespaced }}
 {{- $rule := index $ksmRules $c }}
   - apiGroups: [{{ range $i, $g := $rule.apiGroups }}{{ if $i }}, {{ end }}{{ $g | quote }}{{ end }}]
-    resources: [{{ range $i, $r := $rule.resources }}{{ if $i }}, {{ end }}{{ $r | quote }}{{ end }}]
-    verbs: ["list", "watch"]
+    resources:
+      {{- range $rule.resources }}
+      - {{ . }}
+      {{- end }}
+    verbs:
+      - list
+      - watch
 {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: {{ ternary "RoleBinding" "ClusterRoleBinding" $single }}
+kind: ClusterRoleBinding
 metadata:
   name: {{ $ksmName }}
-  {{- if $single }}
-  namespace: {{ .Release.Namespace }}
-  {{- end }}
   labels:
     {{- include "unionai-dataplane.labels" . | nindent 4 }}
     release: {{ .Release.Name }}
@@ -221,11 +212,53 @@ subjects:
     namespace: {{ .Release.Namespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: {{ ternary "Role" "ClusterRole" $single }}
+  kind: ClusterRole
   name: {{ $ksmName }}
-{{- if $ksmCluster }}
-{{- /* Cluster-scoped collectors (nodes, namespaces) have no namespaced form, so under
-       singleNamespace they get their own read-only cluster role. */}}
+{{- else }}
+{{- range $ns := $ksmNamespaces | uniq }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $ksmName }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "unionai-dataplane.labels" $ | nindent 4 }}
+    release: {{ $.Release.Name }}
+rules:
+{{- range $c := $ksmNamespaced }}
+{{- $rule := index $ksmRules $c }}
+  - apiGroups: [{{ range $i, $g := $rule.apiGroups }}{{ if $i }}, {{ end }}{{ $g | quote }}{{ end }}]
+    resources:
+      {{- range $rule.resources }}
+      - {{ . }}
+      {{- end }}
+    verbs:
+      - list
+      - watch
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $ksmName }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "unionai-dataplane.labels" $ | nindent 4 }}
+    release: {{ $.Release.Name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $ksmSA }}
+    namespace: {{ $.Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $ksmName }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if and $ksm.enabled $ksmCluster }}
+{{- /* Cluster-scoped collectors (nodes, namespaces) have no namespaced form. */}}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -262,6 +295,5 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: {{ .Release.Namespace }}-kube-state-metrics-cluster-read
-{{- end }}
 {{- end }}
 {{- end }}

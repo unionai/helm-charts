@@ -381,6 +381,24 @@ expect-manifest "and scrapes cadvisor in either mode" \
   present "job_name: 'kubernetes-cadvisor'"
 expect-manifest "and the API server" \
   present "job_name: 'kubernetes-apiservers'"
+
+echo "- prometheus and kube-state-metrics hold the same minimal grant in either mode"
+for mode in true false; do
+  expect-role-resource "singleNamespace=${mode}: prometheus discovers pods in the release namespace" \
+    present union-operator-prometheus-rbac pods --set singleNamespace=${mode}
+  expect-role-resource "singleNamespace=${mode}: and reads no configmaps" \
+    absent union-operator-prometheus-rbac configmaps --set singleNamespace=${mode}
+  expect-role-resource "singleNamespace=${mode}: its cluster role reads no pods" \
+    absent union-prometheus-cluster-read pods --set singleNamespace=${mode}
+  expect-role-resource "singleNamespace=${mode}: nor nodes/metrics, since cadvisor goes through the proxy" \
+    absent union-prometheus-cluster-read nodes/metrics --set singleNamespace=${mode}
+  expect-role-resource "singleNamespace=${mode}: kube-state-metrics reads pods in the release namespace" \
+    present release-name-kube-state-metrics pods --set singleNamespace=${mode}
+done
+expect-binding-subject "kube-state-metrics gets no cluster-wide pod read at singleNamespace: false" \
+  ClusterRoleBinding release-name-kube-state-metrics "" --set singleNamespace=false
+expect-role-resource "the full-privilege overlay, which collects every namespace, gets it" \
+  present release-name-kube-state-metrics pods --values "${CHART}/examples/values.full-privilege.yaml"
 expect-refusal "an empty collector list, which the subchart reads as all 28" \
   "must name at least one collector" \
   --set prometheus.kube-state-metrics.collectors=null

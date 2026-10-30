@@ -158,11 +158,11 @@ them. All are off by default except fluent-bit, which renders no RBAC here.
 
 ## Why we write prometheus and kube-state-metrics RBAC ourselves
 
-A subchart cannot see `singleNamespace`, because Helm values are static. Leaving RBAC to
-those two subcharts would need a second values file that moves with the flag, and nothing at
-render time would catch the two drifting apart. So both are pinned to `rbac.create: false`
-and `templates/prometheus/rbac.yaml` writes the grant instead, since a template can branch
-and a value cannot. `templates/prometheus/validate.yaml` stops the render if either
+The subcharts' own RBAC grants their upstream discovery profile: cluster-wide reads of pods,
+services, endpoints, configmaps and every kube-state-metrics resource, whatever the chart's
+scrape jobs use. So both are pinned to `rbac.create: false` and `templates/prometheus/rbac.yaml`
+writes the grant instead, holding each to what this chart's configuration asks for, the same
+in either scope mode. `templates/prometheus/validate.yaml` stops the render if either
 subchart's RBAC is switched back on.
 
 The kube-state-metrics rules come from the `collectors` list, so a new collector cannot end
@@ -195,8 +195,8 @@ depend on it.
 
 | Subchart | Default | `singleNamespace: true` | `singleNamespace: false` |
 |---|---|---|---|
-| prometheus | on | namespaced Role, plus a read-only cluster role for nodes, the kubelet proxy and `/metrics` (ours) | ClusterRole (ours) |
-| kube-state-metrics | on | namespaced Role, plus a read-only cluster role for `nodes` and `namespaces`; 6 collectors | ClusterRole, 6 collectors |
+| prometheus | on | namespaced Roles for discovery, plus a read-only cluster role for nodes, the kubelet proxy and `/metrics` (ours) | same |
+| kube-state-metrics | on | a Role where it collects namespaced resources, plus a read-only cluster role for `nodes` and `namespaces`; 6 collectors | same; a ClusterRole for the namespaced collectors when it collects every namespace |
 | fluent-bit | on (off on GCP) | none | none |
 | dcgm-exporter | off | none | none |
 | ingress-nginx | off | namespaced Role + IngressClass ClusterRole | same |
@@ -297,35 +297,29 @@ reading it as true would render the Knative stack into that golden.
 
 ## Notes
 
-**prometheus.** Read-only on services, endpoints, pods, ingresses, configmaps and
-endpointslices, plus nodes, the kubelet proxy and the API server's `/metrics`. It never reads
-secrets and never writes, in either mode.
+**prometheus.** The same grant in either mode, read-only, exactly what the scrape jobs
+discover: `list` and `watch` on endpoints, services and pods in the release namespace
+(`union-operator-prometheus-rbac`) and in `default` for the API server's endpoints
+(`<ns>-prometheus-apiserver-discovery`), and in `<ns>-prometheus-cluster-read`, nodes `list`
+and `watch` for cadvisor discovery, `nodes/proxy` `get` to reach the kubelet through the API
+server, and `/metrics` `get` for the API server. It never reads secrets or configmaps and
+never writes.
 
-Under `singleNamespace` the namespaced Role carries only namespaced resources. Naming a
-cluster-scoped one there is legal but never matches, which is how `kubernetes-cadvisor`
-returned 403s for three months. The node reads live in `<ns>-prometheus-cluster-read`
-instead, so the cadvisor job, the only source of `container_cpu_usage_seconds_total` and
-`container_memory_working_set_bytes`, runs in both modes, as does the API server job.
+A namespaced Role cannot carry a cluster-scoped resource; naming one there is legal but never
+matches, which is how `kubernetes-cadvisor` returned 403s for three months. The node reads
+live in the cluster role instead, so the cadvisor job, the only source of
+`container_cpu_usage_seconds_total` and `container_memory_working_set_bytes`, runs in both
+modes, as does the API server job.
 
 Verified on a live cluster: with only the namespaced Role, prometheus finds and scrapes
 every target in its own namespace — 4/4 up, no RBAC errors.
 
-At `singleNamespace: false` the ClusterRole name is a fixed string, so **one dataplane per
-cluster** is the supported model. Nothing enforces it: `helm install` refuses a second
-release on ownership, but ArgoCD — the deployment path this chart is built for — applies
-shared resources unless the Application sets `FailOnSharedResource=true`. There, the later
-sync can rewrite the binding subject to its own namespace, surfacing at most a
-`SharedResourceWarning` condition, and the first release's prometheus loses its
-authorization. Treat this as a constraint to respect, because nothing will reliably stop you.
+The cluster-scoped names carry the release namespace, so two dataplanes in one cluster do not
+contend for them.
 
-The cluster-wide read at `singleNamespace: false` is wider than the rendered scrape jobs
-use: every job but `kubernetes-cadvisor` and `kubernetes-apiservers` discovers with
-`own_namespace: true`. That is
-deliberate. `singleNamespace: false` is a choice of permission posture, not a permission set
-derived from the jobs. Helm cannot parse arbitrary `prometheus.extraScrapeConfigs` to work
-out what a job added there needs, so the grant tracks the pinned subchart's own read-only
-discovery profile. That is what lets a job added there reach `prometheus.io/scrape` targets
-outside the release namespace.
+A job added under `prometheus.extraScrapeConfigs` that discovers outside the release
+namespace, or outside `default` for endpoints, is not covered: Helm cannot parse it to work
+out what it needs. Grant its discovery reads yourself, in that namespace.
 
 **kube-state-metrics.** Six collectors out of 28 by default (`namespaces`, `nodes`, `pods`,
 `deployments`, `daemonsets`, `resourcequotas`), list/watch only, the set the managed

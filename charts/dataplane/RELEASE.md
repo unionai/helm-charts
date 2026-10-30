@@ -655,8 +655,8 @@ Dataplanes without app serving are unaffected, as is the `knative-operator` path
 ### Third-party subchart RBAC
 
 The chart now writes prometheus and kube-state-metrics RBAC itself (both pinned to
-`rbac.create: false`), so `singleNamespace` governs it in both directions: narrowing to one
-namespace when true, widening to cluster-wide read when false. Rationale and per-subchart
+`rbac.create: false`), and grants each the reads its scrape jobs and collectors use, the
+same in either scope mode. Rationale and per-subchart
 detail: [docs/rbac.md](docs/rbac.md).
 
 Two broken metrics families are fixed, both under `singleNamespace`:
@@ -670,15 +670,15 @@ Also, in both modes:
 
 - `kubernetes-cadvisor` is scraped in both modes, through the API server proxy, so
   Task-Level Monitoring works under `singleNamespace` too; it needs no network path from
-  Prometheus to the kubelet. Under `singleNamespace` the node reads come from a new read-only
-  `<ns>-prometheus-cluster-read` ClusterRole.
+  Prometheus to the kubelet. The node reads come from a read-only
+  `<ns>-prometheus-cluster-read` ClusterRole in either mode.
 - `kubernetes-apiservers` is scraped in both modes, as the managed dataplanes scrape it:
-  endpoint discovery in the `default` namespace only (a read-only Role there under
-  `singleNamespace`), keeping request and object-count series for the resources Union drives.
+  endpoint discovery in the `default` namespace only (a read-only Role there), keeping
+  request and object-count series for the resources Union drives.
 - kube-state-metrics collects 6 resources instead of 28 (namespaces, nodes, pods,
-  deployments, daemonsets, resourcequotas), the set the managed dataplanes collect. Under
-  `singleNamespace`, `nodes` and `namespaces` are granted by a read-only
-  `<ns>-kube-state-metrics-cluster-read` ClusterRole.
+  deployments, daemonsets, resourcequotas), the set the managed dataplanes collect. `nodes`
+  and `namespaces` are granted by a read-only `<ns>-kube-state-metrics-cluster-read`
+  ClusterRole in either mode.
 - Eight cluster-wide upstream scrape jobs are dropped (`kubernetes-nodes`, `-nodes-cadvisor`,
   `-service-endpoints(-slow)`, `-services`, `-pods(-slow)`, `prometheus-pushgateway`). Pods and
   services annotated `prometheus.io/scrape` are no longer discovered; add a job under
@@ -933,11 +933,13 @@ Also, in both modes:
   is refused too, though it is what an empty value becomes, because the guard compares
   namespaces rather than the expressions producing them. Leave it empty.
 
-- **One dataplane per cluster at `singleNamespace: false`.** prometheus's ClusterRole and
-  ClusterRoleBinding have a fixed name (`union-operator-prometheus-rbac`) but a
-  release-namespace subject, so a second release contends for them. `helm install` refuses;
-  ArgoCD refuses only if the Application sets `FailOnSharedResource=true`. Otherwise the later
-  sync rewrites the subject and the first release's prometheus loses its permissions.
+- **prometheus and kube-state-metrics lose their cluster-wide discovery reads at
+  `singleNamespace: false`.** Both now hold the same grant in either mode: prometheus reads
+  endpoints, services and pods only in the release namespace and in `default`, plus nodes,
+  `nodes/proxy` and `/metrics`; kube-state-metrics reads its namespaced collectors where it
+  collects them. A job you added under `prometheus.extraScrapeConfigs` that discovers in
+  another namespace needs its own Role there. The cluster-scoped names now carry the release
+  namespace, so more than one dataplane per cluster no longer contends for them.
 
 - **Remove `prometheus.rbac.create` and `prometheus.kube-state-metrics.rbac.create`** from your
   values. Both must stay false, and the chart refuses to render otherwise.

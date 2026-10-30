@@ -6832,7 +6832,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: union-operator-prometheus-rbac
+  name: union-prometheus-cluster-read
   labels:
     helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/name: release-name-dataplane
@@ -6844,39 +6844,23 @@ rules:
   - apiGroups: [""]
     resources:
       - nodes
+    verbs:
+      - list
+      - watch
+  - apiGroups: [""]
+    resources:
       - nodes/proxy
-      - nodes/metrics
-      - services
-      - endpoints
-      - pods
-      - configmaps
     verbs:
       - get
-      - list
-      - watch
-  - apiGroups: ["extensions", "networking.k8s.io"]
-    resources:
-      - ingresses/status
-      - ingresses
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups: ["discovery.k8s.io"]
-    resources:
-      - endpointslices
-    verbs:
-      - get
-      - list
-      - watch
   - nonResourceURLs: ["/metrics"]
-    verbs: ["get"]
+    verbs:
+      - get
 ---
 # Source: dataplane/templates/prometheus/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: release-name-kube-state-metrics
+  name: union-kube-state-metrics-cluster-read
   labels:
     helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/name: release-name-dataplane
@@ -6886,23 +6870,17 @@ metadata:
     release: release-name
 rules:
   - apiGroups: [""]
-    resources: ["namespaces"]
-    verbs: ["list", "watch"]
+    resources:
+      - namespaces
+    verbs:
+      - list
+      - watch
   - apiGroups: [""]
-    resources: ["nodes"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["extensions", "apps"]
-    resources: ["deployments"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["extensions", "apps"]
-    resources: ["daemonsets"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["resourcequotas"]
-    verbs: ["list", "watch"]
+    resources:
+      - nodes
+    verbs:
+      - list
+      - watch
 ---
 # Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -7048,7 +7026,7 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: union-operator-prometheus-rbac
+  name: union-prometheus-cluster-read
   labels:
     helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/name: release-name-dataplane
@@ -7063,13 +7041,13 @@ subjects:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: union-operator-prometheus-rbac
+  name: union-prometheus-cluster-read
 ---
 # Source: dataplane/templates/prometheus/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: release-name-kube-state-metrics
+  name: union-kube-state-metrics-cluster-read
   labels:
     helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/name: release-name-dataplane
@@ -7084,7 +7062,7 @@ subjects:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: release-name-kube-state-metrics
+  name: union-kube-state-metrics-cluster-read
 
 ---
 # Source: dataplane/templates/common/rbac.yaml
@@ -7424,6 +7402,91 @@ rules:
     verbs:
       - get
 ---
+# Source: dataplane/templates/prometheus/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: union-operator-prometheus-rbac
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.10.0"
+    app.kubernetes.io/managed-by: Helm
+    release: release-name
+rules:
+  - apiGroups: [""]
+    resources:
+      - endpoints
+      - services
+      - pods
+    verbs:
+      - list
+      - watch
+---
+# Source: dataplane/templates/prometheus/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: union-prometheus-apiserver-discovery
+  namespace: default
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.10.0"
+    app.kubernetes.io/managed-by: Helm
+    release: release-name
+rules:
+  - apiGroups: [""]
+    resources:
+      - endpoints
+      - services
+      - pods
+    verbs:
+      - list
+      - watch
+---
+# Source: dataplane/templates/prometheus/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: release-name-kube-state-metrics
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.10.0"
+    app.kubernetes.io/managed-by: Helm
+    release: release-name
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods
+    verbs:
+      - list
+      - watch
+  - apiGroups: ["extensions", "apps"]
+    resources:
+      - deployments
+    verbs:
+      - list
+      - watch
+  - apiGroups: ["extensions", "apps"]
+    resources:
+      - daemonsets
+    verbs:
+      - list
+      - watch
+  - apiGroups: [""]
+    resources:
+      - resourcequotas
+    verbs:
+      - list
+      - watch
+---
 # Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -7639,6 +7702,72 @@ subjects:
     name: union-system
     namespace: union
 
+---
+# Source: dataplane/templates/prometheus/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: union-operator-prometheus-rbac
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.10.0"
+    app.kubernetes.io/managed-by: Helm
+    release: release-name
+subjects:
+  - kind: ServiceAccount
+    name: union-operator-prometheus
+    namespace: union
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: union-operator-prometheus-rbac
+---
+# Source: dataplane/templates/prometheus/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: union-prometheus-apiserver-discovery
+  namespace: default
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.10.0"
+    app.kubernetes.io/managed-by: Helm
+    release: release-name
+subjects:
+  - kind: ServiceAccount
+    name: union-operator-prometheus
+    namespace: union
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: union-prometheus-apiserver-discovery
+---
+# Source: dataplane/templates/prometheus/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: release-name-kube-state-metrics
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.10.1
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.10.0"
+    app.kubernetes.io/managed-by: Helm
+    release: release-name
+subjects:
+  - kind: ServiceAccount
+    name: release-name-kube-state-metrics
+    namespace: union
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: release-name-kube-state-metrics
 ---
 # Source: dataplane/charts/fluentbit/templates/service.yaml
 apiVersion: v1
