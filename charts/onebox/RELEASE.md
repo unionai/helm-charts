@@ -1,5 +1,13 @@
 # onebox — Release Notes
 
+## 2026.10.5
+
+The image builder's task images default to `ghcr.io/unionai/imagebuilder`
+(`imageBuilder.taskImages.repository`), tagged with the appVersion
+(`imageBuilder.taskImages.tag` now defaults to it) instead of a pinned canary
+build on public ECR, whose anonymous pulls are rate limited. Union's releases
+publish `build-image` and `frontend-v2` there for amd64 and arm64.
+
 ## 2026.9.7
 
 First release. Union in one pod: the v2 control plane, the in-process data
