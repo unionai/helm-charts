@@ -22,6 +22,15 @@ data:
     onebox:
       organization: {{ .Values.organization | quote }}
       seedProjects: {{ toJson .Values.seedProjects }}
+      {{- if .Values.projectIdentity.enabled }}
+      projectIdentity:
+        enabled: true
+        serviceAccount: {{ .Values.projectIdentity.serviceAccount | quote }}
+        {{- with .Values.projectIdentity.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      {{- end }}
       listen:
         address: ":8080"
         tasksAddress: ":8082"
@@ -158,6 +167,10 @@ data:
       callback-uri: {{ printf "http://%s:15606" $host | quote }}
     plugins:
       k8s:
+        {{- if include "onebox.taskPodTemplate.enabled" . }}
+        # Every task pod starts from this PodTemplate (CA bundle, taskPods.*).
+        default-pod-template-name: {{ include "onebox.taskPodTemplate.name" . }}
+        {{- end }}
         default-env-vars:
           {{- if .Values.storage.endpoint }}
           - FLYTE_AWS_ENDPOINT: {{ .Values.storage.endpoint | quote }}

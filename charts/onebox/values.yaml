@@ -386,6 +386,19 @@ taskDefaults:
 # -- Projects created on first start.
 seedProjects: [default]
 
+# -- A service account per project-domain in the release namespace, which task
+# pods of that project-domain run as unless the task names another (run-as):
+# per-project cloud identity. onebox creates and updates the accounts (those it
+# did not create are left alone). {{ org }}, {{ project }} and {{ domain }} are
+# replaced in the name and in annotation values, e.g.
+#   annotations:
+#     eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/onebox-{{ project }}-{{ domain }}
+#     iam.gke.io/gcp-service-account: "{{ project }}-{{ domain }}@my-project.iam.gserviceaccount.com"
+projectIdentity:
+  enabled: false
+  serviceAccount: "{{ project }}-{{ domain }}"
+  annotations: {}
+
 # -- Restrict who can reach onebox (needs a CNI that enforces NetworkPolicy).
 # The tasks and fast task ports only accept pods in the release namespace
 # (plus tasksFrom); the API port only accepts proxyFrom when set.
@@ -434,6 +447,29 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 extraEnv: []
+# -- Extra volumes and mounts for the onebox container.
+extraVolumes: []
+extraVolumeMounts: []
+
+# -- A CA bundle trusted by onebox, the console and every task pod: for an S3
+# endpoint, database, identity provider or registry with a private CA. A
+# ConfigMap or Secret key holding PEM certificates. It REPLACES the system trust
+# store (SSL_CERT_FILE, REQUESTS_CA_BUNDLE, AWS_CA_BUNDLE, ...), so include the
+# public roots if anything is reached over the internet, e.g.
+#   cat /etc/ssl/certs/ca-certificates.crt corp-ca.pem > ca-bundle.pem
+#   kubectl create configmap ca-bundle --from-file=ca-bundle.pem
+caBundle:
+  configMap: ""
+  secret: ""
+  key: ca-bundle.pem
+
+# -- Every task pod (and the build-image task) starts from a PodTemplate the
+# chart renders when any of this, or caBundle, is set. A task's own
+# pod_template still applies on top.
+taskPods:
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
 
 podSecurityContext:
   runAsNonRoot: true

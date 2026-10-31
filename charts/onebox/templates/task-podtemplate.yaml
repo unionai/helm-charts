@@ -1,0 +1,45 @@
+{{- if include "onebox.taskPodTemplate.enabled" . }}
+# The base of every task pod (plugins.k8s.default-pod-template-name): the
+# "default" container's env and mounts go into each of the pod's containers,
+# and the volumes into the pod. A task's own pod_template applies on top.
+apiVersion: v1
+kind: PodTemplate
+metadata:
+  name: {{ include "onebox.taskPodTemplate.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+template:
+  spec:
+    containers:
+      - name: default
+        # Required by the API, never run: the task's own image wins.
+        image: docker.io/rwgrim/docker-noop
+        {{- if or (include "onebox.caBundle.enabled" .) .Values.taskPods.extraEnv }}
+        env:
+          {{- if include "onebox.caBundle.enabled" . }}
+          {{- include "onebox.caBundle.env" . | nindent 10 }}
+          {{- end }}
+          {{- with .Values.taskPods.extraEnv }}
+          {{- toYaml . | nindent 10 }}
+          {{- end }}
+        {{- end }}
+        {{- if or (include "onebox.caBundle.enabled" .) .Values.taskPods.extraVolumeMounts }}
+        volumeMounts:
+          {{- if include "onebox.caBundle.enabled" . }}
+          {{- include "onebox.caBundle.mount" . | nindent 10 }}
+          {{- end }}
+          {{- with .Values.taskPods.extraVolumeMounts }}
+          {{- toYaml . | nindent 10 }}
+          {{- end }}
+        {{- end }}
+    {{- if or (include "onebox.caBundle.enabled" .) .Values.taskPods.extraVolumes }}
+    volumes:
+      {{- if include "onebox.caBundle.enabled" . }}
+      {{- include "onebox.caBundle.volume" . | nindent 6 }}
+      {{- end }}
+      {{- with .Values.taskPods.extraVolumes }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+    {{- end }}
+{{- end }}
