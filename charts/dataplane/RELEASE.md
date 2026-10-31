@@ -1,5 +1,52 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+### flyteconnector image default bumped to py3.13-v2.12.1
+
+The default was `py3.13-2.0.0b50.dev3-g695bb1db3.d20260122`, built 22 January 2026
+and set once, as a side effect of an unrelated PR (#443). Nothing bumps it, so it
+drifted about nine months behind the chart.
+
+That matters because it predates every connector plugin's release. A fresh install
+using BigQuery, Snowflake, Databricks, Spark or Slurm gets a connector image without
+the plugin in it: the deployment starts, the connector never advertises the task type
+in ListConnectors, and tasks sit unroutable rather than failing with anything that
+names the cause. Every connector user has to override `flyteconnector.image` today.
+
+`py3.13-v2.12.1` ships flyteplugins-{bigquery,databricks,slurm,snowflake,spark} —
+verified by running the image rather than by reading the build file.
+
+Operators who pin `flyteconnector.image` are unaffected.
+
+### Nydus lazy image pulls (opt-in)
+
+Self-managed dataplanes can now pull images lazily with Nydus, as the managed
+BYOC dataplanes already do. Two switches, both off by default, turned on in
+this order:
+
+- `nodeBootstrap.enabled` deploys the `union-node-bootstrap` DaemonSet, which
+  installs the Nydus snapshotter on each node and restarts containerd and
+  kubelet there. It is privileged, uses `hostPID`/`hostNetwork` and writes to
+  the host's `/etc` and `/home/kubernetes`. It needs an aws, gcp or azure node
+  image with systemd and a writable `/etc` (not Bottlerocket). Put
+  `nodeBootstrap.startupTaintKey` on worker nodepools as a startup taint. On
+  GKE it also needs the `union-node-bootstrap-critical` ResourceQuota the chart
+  now creates (`nodeBootstrap.priorityClassQuota`), and GKE image streaming off
+  on those nodepools.
+- `imageBuilder.enableImageOptimization` then builds **every** image the
+  dataplane builds in Nydus format, and switches the in-chart BuildKit (and its
+  ARM builder) to Union's image that bundles `nydus-image`. It refuses to render
+  without `nodeBootstrap.enabled`. Those images run only on nodes with the
+  snapshotter: keep every nodepool a task pod can land on inside
+  `nodeBootstrap.nodeSelector`, and expect them not to run where they are
+  pulled elsewhere (CI, a laptop, another cluster).
+
+Both images default to the appVersion tag, which releases publish from
+unionai/cloud#19504 onward; earlier releases have no such tag, so set
+`nodeBootstrap.image.tag` / `imageBuilder.buildkit.nydus.image.tag` to a commit
+SHA to try this on one.
+
 ## 2026.10.1
 
 `version` moves `2026.10.0` → `2026.10.1`. `appVersion` stays `2026.10.0`: this is

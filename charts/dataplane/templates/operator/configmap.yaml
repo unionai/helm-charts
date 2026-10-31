@@ -42,9 +42,23 @@ data:
         the operator decodes its config strictly, so an image that predates the key fails
         at startup on it, while an image that knows it already defaults to that path.
       */}}
-      {{- if ne .Values.operator.connectorConfigMountPath "/etc/union/connector-config" }}
+      {{- $customConnectorConfigPath := ne .Values.operator.connectorConfigMountPath "/etc/union/connector-config" }}
+      {{- $nodeCapacity := .Values.config.operator.clusterHealth.nodeCapacity }}
+      {{- if or $customConnectorConfigPath $nodeCapacity.enabled }}
       clusterHealth:
+        {{- if $customConnectorConfigPath }}
         connectorConfigPath: {{ .Values.operator.connectorConfigMountPath | quote }}
+        {{- end }}
+        {{- if $nodeCapacity.enabled }}
+        nodeCapacity:
+          # Paired with the node-capacity ClusterRole in operator/serviceaccount.yaml:
+          # the collector needs cluster-scoped read on nodes, and omits node_pools
+          # rather than failing the push when it does not have it.
+          enabled: true
+          {{- if $nodeCapacity.clusterWidePods }}
+          clusterWidePods: true
+          {{- end }}
+        {{- end }}
       {{- end }}
       #  enableDepot: {{ include "operator.enableDepot" . | default "false" }}
       tunnel:
@@ -88,6 +102,12 @@ data:
     {{- with .Values.config.operator.clusterId }}
       clusterId:
         {{- tpl (toYaml .) $ | nindent 8 }}
+    {{- end }}
+    {{- with .Values.config.operator.secureNamespaces }}
+    {{- if .enabled }}
+      secureNamespaces:
+        {{- tpl (toYaml .) $ | nindent 8 }}
+    {{- end }}
     {{- end }}
       {{- tpl (include "operator.clusterData" .) $ | nindent 6 }}
     {{- $collectUsages := deepCopy (.Values.config.operator.collectUsages | default dict) }}
@@ -179,4 +199,7 @@ data:
 {{- end }}
   image-builder.default-repository: {{ include "imagebuilder.defaultRepository" . | quote }}
   image-builder.authentication-type: {{ .Values.imageBuilder.authenticationType | quote }}
+{{- if eq (include "imagebuilder.imageOptimization" .) "true" }}
+  image-builder.enable-image-optimization: "true"
+{{- end }}
 {{- end }}

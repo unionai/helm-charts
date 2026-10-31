@@ -6,8 +6,12 @@
 # -- The organization every request is served as.
 organization: onebox
 
+# Images are published by Union's release (unionai/cloud publish_images_pipeline)
+# at the release version, which is the chart's appVersion, and copied to GHCR.
 image:
-  repository: registry.unionai.cloud/controlplane/onebox
+  # -- onebox-server: the onebox binary (control plane, data plane, node agent)
+  # and the Kourier controller.
+  repository: ghcr.io/unionai/onebox-server
   # -- Defaults to the chart appVersion.
   tag: ""
   pullPolicy: IfNotPresent
@@ -19,7 +23,7 @@ imagePullSecrets: []
 console:
   enabled: true
   image:
-    repository: registry.unionai.cloud/controlplane/unionconsole
+    repository: ghcr.io/unionai/onebox-console
     # -- Defaults to the chart appVersion.
     tag: ""
     pullPolicy: IfNotPresent
@@ -202,11 +206,12 @@ serving:
       # -- Where a caller without a session is sent to sign in: the proxy's
       # sign-in, e.g. https://onebox.example.com/oauth2/start.
       signInURL: ""
-    # -- Union's Kourier controller: /bin/kourier in the Union operator image.
+    # -- Union's Kourier controller: /bin/kourier, which the onebox image
+    # carries. Empty repository and tag run onebox's own image.
     controller:
       image:
-        repository: public.ecr.aws/p0i0a9q8/unionoperator
-        tag: "2026.10.0"
+        repository: ""
+        tag: ""
         pullPolicy: IfNotPresent
       resources:
         requests:
@@ -217,8 +222,9 @@ serving:
     # -- Union's Envoy, which carries the union-apps filter.
     envoy:
       image:
-        repository: public.ecr.aws/unionai/envoy
-        tag: "2026.10.0"
+        repository: ghcr.io/unionai/envoy
+        # -- Defaults to the chart appVersion.
+        tag: ""
         pullPolicy: IfNotPresent
       resources:
         requests:
@@ -343,6 +349,17 @@ nodeAgent:
   nodeSelector: {}
   tolerations:
     - operator: Exists
+  # -- Taint worker nodes as they register, as a Union data plane does, until
+  # the node agent on them is serving, so no task lands on a node whose
+  # Volumes broker is not up yet. The node agent's readiness component removes
+  # the taint (it then gets an API token, allowed to get and update nodes).
+  # Like the data plane's, the node webhook fails closed: while onebox is down,
+  # matching nodes cannot register. Needs webhook.enabled.
+  startupTaint:
+    enabled: false
+    # -- Labels a node must have to be tainted. Empty: a Union data plane's
+    # worker nodes, flyte.org/node-role=worker.
+    nodeLabels: {}
   resources:
     requests:
       cpu: 20m

@@ -390,6 +390,32 @@ platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
+{{- define "nodeBootstrap.selectorLabels" -}}
+app.kubernetes.io/name: union-node-bootstrap
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "nodeBootstrap.labels" -}}
+{{- include "nodeBootstrap.selectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/*
+The CLOUD_PROVIDER node-bootstrap installs for: it picks the image's
+/union/install.d/<cloud> tree (registry credential helpers, and on aws the
+criu/gvisor extras). nodeBootstrap.cloudProvider wins; else the top-level
+`provider`. Only aws, gcp and azure have an install tree, so anything else
+(custom, oci, metal) fails here rather than crash-looping on every node.
+*/}}
+{{- define "nodeBootstrap.cloudProvider" -}}
+{{- $p := .Values.nodeBootstrap.cloudProvider | default (.Values.provider | default "") -}}
+{{- if not (has $p (list "aws" "gcp" "azure")) -}}
+{{- fail (printf "nodeBootstrap.enabled needs a cloud provider of aws, gcp or azure (got %q from nodeBootstrap.cloudProvider / provider); node-bootstrap has no install tree for other platforms" $p) -}}
+{{- end -}}
+{{- $p -}}
+{{- end -}}
+
 {{/*
 Effective PriorityClass name for the uvol broker (only invoked when the broker
 is enabled): explicit name wins; else when the chart creates the class, a
@@ -803,8 +829,9 @@ access the storage is injected.
 union-operator-prometheus
 {{- end -}}
 
+{{- /* Prometheus serves every route, its health check too, under prometheus.server.prefixURL. */ -}}
 {{- define "prometheus.health.url" -}}
-http://{{ include "prometheus.service.name" . }}:80/-/healthy
+http://{{ include "prometheus.service.name" . }}:80{{ trimSuffix "/" (dig "server" "prefixURL" "" (.Values.prometheus | default dict)) }}/-/healthy
 {{- end -}}
 
 {{- define "prometheus.service.url" -}}
@@ -1265,6 +1292,11 @@ Appends "-rootless" to the tag when rootless mode is enabled, unless the tag alr
 {{- define "imagebuilder.buildkit.image" -}}
 {{- $repo := .Values.imageBuilder.buildkit.image.repository -}}
 {{- $tag := .Values.imageBuilder.buildkit.image.tag -}}
+{{- $nydus := .Values.imageBuilder.buildkit.nydus | default dict -}}
+{{- if or $nydus.enabled .Values.imageBuilder.enableImageOptimization -}}
+  {{- $repo = $nydus.image.repository -}}
+  {{- $tag = $nydus.image.tag | default .Chart.AppVersion -}}
+{{- end -}}
 {{- $rootless := .Values.imageBuilder.buildkit.rootless -}}
 {{- $suffix := "" -}}
 {{- if and $rootless (not (hasSuffix "-rootless" $tag)) (ne $tag "rootless") -}}
@@ -1800,4 +1832,25 @@ uses it is gated off with it.
 {{- fail (printf "configMapDataChecksum: %s renders no ConfigMap named %q (found %v)" $.path $.name $seen) -}}
 {{- end -}}
 {{- toJson $data | sha256sum -}}
+{{- end -}}
+
+{{/*
+imageBuilder.enableImageOptimization makes every image the dataplane builds a
+Nydus-only image, which a node without the Nydus snapshotter unpacks into a
+broken root filesystem. So it requires nodeBootstrap.enabled, named on its own
+rather than implied: node-bootstrap is a privileged DaemonSet that restarts
+containerd and kubelet, and two flags let a cluster roll the snapshotter out
+first and turn optimization on after. The in-chart builders (primary and ARM)
+switch to the Nydus BuildKit image by themselves (imagebuilder.buildkit.image);
+an external buildkitUri / buildkitUriArm must carry nydus-image already.
+*/}}
+{{- define "imagebuilder.imageOptimization" -}}
+{{- if .Values.imageBuilder.enableImageOptimization -}}
+{{- if not .Values.nodeBootstrap.enabled -}}
+{{- fail "imageBuilder.enableImageOptimization needs nodeBootstrap.enabled: every image the dataplane builds becomes Nydus-only, and nodes without the Nydus snapshotter cannot run it" -}}
+{{- end -}}
+true
+{{- else -}}
+false
+{{- end -}}
 {{- end -}}

@@ -606,6 +606,41 @@ config:
     limitNamespace: ""
     # -- Disable cluster-wide permissions. Auto-set when low_privilege is true.
     disableClusterPermissions: false
+    # -- Cluster-health snapshot reporting. The snapshot push itself is on by
+    # default in the operator; these values tune what it collects.
+    clusterHealth:
+      # -- Report the cluster's real capacity, derived from Node objects, instead of
+      # the namespace ResourceQuota ceilings the heartbeat sends. Renders a read-only
+      # ClusterRole granting get/list/watch on nodes, and on pods when clusterWidePods
+      # is set.
+      #
+      # Independent of low_privilege and of disableClusterPermissions: the grant is
+      # read-only, so a low-privilege cluster can report capacity
+      # without taking on the broad operator ClusterRole. Nodes are cluster-scoped and
+      # have no namespaced equivalent, so a cluster that leaves this off reports no
+      # capacity rather than partial capacity.
+      #
+      # Requires an operator image at 2026.10.2 or later. The operator decodes its
+      # config strictly, so an older image rejects clusterHealth.nodeCapacity as an
+      # unknown key and exits on startup. The operator image tag defaults to the
+      # chart appVersion; when that is older, set image.union.tag before enabling this.
+      nodeCapacity:
+        enabled: false
+        # -- Read pods cluster-wide for per-pool usage, and add pods to the
+        # node-capacity ClusterRole. Required for usage on a low-privilege install,
+        # which is always namespace-limited. Without it the operator reports capacity
+        # only (node allocatable and counts) and omits usage and accelerators. Ignored
+        # when the operator is not namespace-limited.
+        clusterWidePods: false
+    # -- Secure namespaces: Kubernetes namespaces closed by Cilium policies, managed from the
+    # control plane, that bound project-domains run in. Needs Cilium (with Hubble Relay for the
+    # traffic view) in the cluster and a control plane that serves SecureNamespaceService.
+    # Rendered as the operator's secureNamespaces config (systemEgress, systemIngress,
+    # systemDomains, dns, serviceAccountAnnotations, hubbleRelayAddress, ...), and grants the
+    # operator a ClusterRole for namespaces, service accounts, secrets and Cilium policies.
+    # Requires an operator image that knows the key: the operator decodes its config strictly.
+    secureNamespaces:
+      enabled: false
     # -- Eager API key bootstrap. When enabled, the operator mints the
     # EAGER_API_KEY on the control plane and writes it to the task-pod secret
     # store so eager/actions (v2) tasks can call back to the control plane.
@@ -1490,7 +1525,7 @@ flyteconnector:
   image:
     # -- Docker image for flyteconnector deployment
     repository: ghcr.io/flyteorg/flyte-connectors
-    tag: py3.13-2.0.0b50.dev3-g695bb1db3.d20260122
+    tag: py3.13-v2.12.1
     # -- Docker image pull policy
     pullPolicy: IfNotPresent
   ports:
@@ -1711,6 +1746,51 @@ uvolMountBroker:
       memory: 32Mi
     limits:
       memory: 256Mi
+
+# -- Node bootstrap: installs the Nydus snapshotter on each node so pods lazily
+# pull images the image builder exported in Nydus format (see
+# imageBuilder.enableImageOptimization). Privileged, hostPID, writes to the
+# host's /etc and /home/kubernetes and starts systemd units. Supports aws, gcp
+# and azure node images with systemd and a writable /etc (EKS AL2023, GKE COS,
+# AKS Ubuntu); not Bottlerocket.
+nodeBootstrap:
+  # -- Enable the node-bootstrap DaemonSet.
+  enabled: false
+  # -- aws, gcp or azure. Empty uses the top-level `provider`.
+  cloudProvider: ""
+  image:
+    repository: public.ecr.aws/unionai/node-bootstrap
+    # -- Defaults to the chart appVersion.
+    tag: ""
+    pullPolicy: IfNotPresent
+  # -- Startup taint union-node-readiness removes once the snapshotter runs.
+  # Add it to the worker nodepools as a startup taint so nothing schedules onto
+  # a node that cannot pull Nydus images yet. Empty: no taint handling, and the
+  # ServiceAccount gets no API access.
+  startupTaintKey: startup-taint.cluster-autoscaler.kubernetes.io/unionai-node-not-ready
+  # -- Restrict to the nodes that run task pods; empty means every node.
+  nodeSelector: {}
+  # -- Must tolerate the startup taint above and any worker taints.
+  tolerations:
+    - operator: Exists
+  affinity: {}
+  priorityClassName: system-node-critical
+  # -- A ResourceQuota scoped to that priority class. GKE rejects
+  # system-*-critical pods outside kube-system without one; elsewhere the
+  # quota never binds. Turn off if the namespace already has one.
+  priorityClassQuota:
+    create: true
+    pods: "5000"
+  podLabels: {}
+  podAnnotations: {}
+  resources: {}
+  # -- Sidecar that streams the snapshotter's journal to the pod log.
+  fluentBit:
+    image:
+      repository: cr.fluentbit.io/fluent/fluent-bit
+      tag: "3.2.8"
+      pullPolicy: IfNotPresent
+    resources: {}
 
 nodeobserver:
   # -- Enable or disable nodeobserver
@@ -2479,6 +2559,16 @@ imageBuilder:
   # -- Mutually exclusive with imageBuilder.buildkit.arm.enabled.
   buildkitUriArm: ""
 
+  # -- Build every image in Nydus format, for lazy pulls. Applies to EVERY image
+  # the dataplane builds, not only some: they become Nydus-only, so they run
+  # only on nodes with the snapshotter. Requires nodeBootstrap.enabled, and
+  # every node a task pod can land on must be covered by
+  # nodeBootstrap.nodeSelector. Images pulled anywhere else (CI, a laptop, a
+  # cluster without nodeBootstrap) will not run. Switches the in-chart BuildKit
+  # (and its ARM builder) to imageBuilder.buildkit.nydus.image; an external
+  # buildkitUri / buildkitUriArm must already bundle nydus-image.
+  enableImageOptimization: false
+
   # -- The default container image repository for user-built images.
   # -- When empty, auto-generated from storage.provider, storage.region, storage.gcp.projectId,
   # -- and imageBuilder.registryName:
@@ -2571,6 +2661,17 @@ imageBuilder:
       # -- Image tag. When rootless mode is enabled, "-rootless" is appended automatically
       # -- (e.g. "buildx-stable-1" becomes "buildx-stable-1-rootless") unless the tag already contains "rootless".
       tag: "buildx-stable-1"
+
+    # -- Run Union's BuildKit image, which bundles nydus-image, instead of
+    # buildkit.image. imageBuilder.enableImageOptimization turns this on by
+    # itself; set it alone to roll the builder image out first.
+    nydus:
+      enabled: false
+      image:
+        repository: public.ecr.aws/unionai/buildkit
+        # -- Defaults to the chart appVersion. "-rootless" is appended in
+        # rootless mode, as for buildkit.image.
+        tag: ""
 
     # -- Run buildkit in rootless mode (non-privileged). Uses the moby/buildkit rootless
     # -- image variant which bundles RootlessKit to set up user namespaces. Requires
