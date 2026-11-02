@@ -132,7 +132,9 @@ BuildKit and registry, where not set explicitly. */}}
 {{- $name := include "onebox.fullname" . }}
 {{- $ib := .Values.imageBuilder }}
 {{- $_ := set $ib "buildkitURI" (default (printf "tcp://%s-buildkit.%s.svc:1234" $name .Release.Namespace) $ib.buildkitURI) }}
-{{- $_ = set $ib "repository" (default (printf "localhost:%v/onebox" $ib.bundled.registry.nodePort) $ib.repository) }}
+{{- $bundledRepository := printf "localhost:%v/onebox" $ib.bundled.registry.nodePort }}
+{{- $_ = set $ib "repository" (default $bundledRepository $ib.repository) }}
+{{- if eq $ib.repository $bundledRepository }}
 {{- $_ = set $ib "lookupURL" (default (printf "http://%s-registry.%s.svc:5000/onebox" $name .Release.Namespace) $ib.lookupURL) }}
 {{- end }}
 {{- end }}
