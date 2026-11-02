@@ -464,12 +464,14 @@ global:
 An upstream with no entry is pulled directly. With the map set, the chart pulls these
 through the mirror:
 
-- **Union's images** (`image.union`, `image.envoy`): from their public Artifact
-  Registry copy through the `us-docker.pkg.dev` mirror if there is one, otherwise
-  through the `public.ecr.aws` mirror.
+- **Union's images** (`image.union`, `image.envoy`, `nodeBootstrap.image`, and the
+  Nydus BuildKit image `imageBuilder.buildkit.nydus.image`): from their public
+  Artifact Registry copy through the `us-docker.pkg.dev` mirror if there is one,
+  otherwise through the `public.ecr.aws` mirror.
 - **The chart's other images**: the kubectl hook image (`docker.io`), BuildKit
-  (`docker.io`), flyteconnector (`ghcr.io`) and copilot (`cr.flyte.org`). A
-  `docker.io` image also takes a mirror keyed `registry-1.docker.io`.
+  (`docker.io`), flyteconnector (`ghcr.io`), copilot (`cr.flyte.org`) and
+  node-bootstrap's fluent-bit sidecar (`cr.fluentbit.io`). A `docker.io` image also
+  takes a mirror keyed `registry-1.docker.io`.
 - **Task pods**: the pod webhook rewrites task-pod images from a set of public
   namespaces through their upstream's mirror; see [Task-pod images](#task-pod-images).
   The secrets init container that the webhook adds to task pods is pulled through the

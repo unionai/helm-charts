@@ -1294,7 +1294,7 @@ Appends "-rootless" to the tag when rootless mode is enabled, unless the tag alr
 {{- $tag := .Values.imageBuilder.buildkit.image.tag -}}
 {{- $nydus := .Values.imageBuilder.buildkit.nydus | default dict -}}
 {{- if or $nydus.enabled .Values.imageBuilder.enableImageOptimization -}}
-  {{- $repo = $nydus.image.repository -}}
+  {{- $repo = tpl $nydus.image.repository . -}}
   {{- $tag = $nydus.image.tag | default .Chart.AppVersion -}}
 {{- end -}}
 {{- $rootless := .Values.imageBuilder.buildkit.rootless -}}
