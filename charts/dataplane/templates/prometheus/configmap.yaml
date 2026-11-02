@@ -7,8 +7,8 @@ This faithfully mirrors the upstream prometheus chart's templates/cm.yaml so eve
 values-driven section (ruleFiles, serverFiles, remote_read, storage, scrape_config_files,
 extraScrapeConfigs, alerting, configmap metadata) keeps rendering even when the override is
 active. On top of that, ONLY in zero-trust mode, it injects a remote_write entry whose oauth2
-client_id/token_url are DERIVED from globals (the subchart only tpl's remoteWrite[].url, not
-the oauth2 fields) plus an HA-dedup external label.
+client_id/token_url are rendered here (the subchart only tpl's remoteWrite[].url, not the
+oauth2 fields) plus an HA-dedup external label.
 
 Keep this in sync with the upstream prometheus subchart's templates/cm.yaml on subchart bumps.
 */ -}}
@@ -21,9 +21,9 @@ Keep this in sync with the upstream prometheus subchart's templates/cm.yaml on s
 {{- if .Values.zero_trust.enabled }}
 {{- $externalLabels := $global.external_labels | default dict }}
 {{- /* __replica__ dedups THIS cluster's prometheus replicas against each other. The
-       control plane derives cluster/tenant identity from the OAuth2
-       client_id (<org>-<cluster>-operator), so no stable cluster external label is
-       needed here. ${POD_NAME} is expanded at runtime via --enable-feature=expand-external-labels. */ -}}
+       control plane resolves the cluster from the OAuth2 client_id (the operator's app id,
+       which the operator also reports in its heartbeat), so no stable cluster external
+       label is needed here. ${POD_NAME} is expanded at runtime via --enable-feature=expand-external-labels. */ -}}
 {{- $_ := set $externalLabels "__replica__" "${POD_NAME}" }}
 {{- $_ := set $global "external_labels" $externalLabels }}
 {{- end }}
@@ -67,12 +67,20 @@ data:
 {{- if not $.Values.secrets.admin.enable }}
 {{- fail "zero_trust metrics remote_write requires secrets.admin.enable=true so union-secret-auth provides the app_secret used as the prometheus oauth2 client_secret_file" }}
 {{- end }}
-{{- /* client_id mirrors the cloud operator_app_id "<org>-<cluster>-operator"; token_url
-       resolves through dataplane.cp.host so it honors global.CONTROLPLANE_HOST and the legacy global. */ -}}
+{{- /* client_id is the operator's app (secrets.admin.clientId): it owns the app_secret in
+       client_secret_file, and it is the app id the operator reports in its heartbeat, which
+       the control plane matches to identify the cluster. Do not derive it from org/cluster
+       names; clusters registered with other app ids would send a client_id that doesn't
+       match its secret. token_url resolves through dataplane.cp.host so it honors
+       global.CONTROLPLANE_HOST and the legacy global. */ -}}
+{{- $clientId := tpl $.Values.secrets.admin.clientId $ }}
+{{- if not $clientId }}
+{{- fail "zero_trust metrics remote_write requires secrets.admin.clientId (default global.AUTH_CLIENT_ID) to be set; it is the oauth2 client_id paired with union-secret-auth's app_secret" }}
+{{- end }}
 {{- $remoteWrites = append $remoteWrites (dict
       "url" (printf "https://%s/metrics/remote_write" (include "dataplane.cp.host" $))
       "oauth2" (dict
-        "client_id" (printf "%s-%s-operator" $.Values.global.ORG_NAME $.Values.global.CLUSTER_NAME)
+        "client_id" $clientId
         "token_url" (printf "https://%s/auth/token" (include "dataplane.cp.host" $))
         "client_secret_file" "/etc/prometheus/secrets/app_secret"
         "scopes" (list "all"))) }}

@@ -75,6 +75,7 @@ async def _wait_healthy_async(
     control_plane_url: str,
     api_key: str,
     timeout: int,
+    zero_trust: bool = False,
 ) -> str:
     from flyteplugins.union.remote import Cluster  # type: ignore
 
@@ -90,21 +91,42 @@ async def _wait_healthy_async(
             state = cluster.state
             health = cluster.health
             org = cluster.organization or ""
-            print(f"[ci]   state={state} health={health} org={org}", flush=True)
-            if state == "enabled" and health == "healthy":
+            line = f"[ci]   state={state} health={health} org={org}"
+            ready = state == "enabled" and health == "healthy"
+            if zero_trust:
+                # SelectCluster routes only to a cluster whose tunnel is online AND
+                # whose operator has latched dataplane_ingress_endpoint_ready (its TLS
+                # probe of <cluster>.dp.<tenant> succeeded). On a cluster's first
+                # zero-trust install the control plane is still creating that
+                # hostname's DNS and edge certificate, which takes minutes, so
+                # enabled+healthy alone lets the functional tests start into
+                # "no healthy zero-trust cluster with an online tunnel".
+                tunnel = cluster.tunnel_status
+                dp_ready = cluster.pb2.status.dataplane_ingress_endpoint_ready
+                line += f" tunnel={tunnel} dataplane_ingress_endpoint_ready={dp_ready}"
+                ready = ready and tunnel == "online" and dp_ready
+            print(line, flush=True)
+            if ready:
                 print(f"[ci] wait-healthy: HEALTHY (org={org})", flush=True)
                 return org
         except Exception as e:
             print(f"[ci]   Cluster.get error: {e}", flush=True)
         await asyncio.sleep(15)
-    raise RuntimeError(f"Cluster {cluster_name} did not become enabled+healthy within {timeout}s")
+    want = (
+        "enabled+healthy, tunnel online and dataplane ingress ready"
+        if zero_trust
+        else "enabled+healthy"
+    )
+    raise RuntimeError(f"Cluster {cluster_name} did not become {want} within {timeout}s")
 
 
 def cmd_wait_healthy(args: argparse.Namespace) -> None:
     cluster_name = _env("CLUSTER_NAME")
     control_plane_url = _env("CONTROL_PLANE_URL")
     api_key = _env("FLYTE_API_KEY", required=False)
-    org = asyncio.run(_wait_healthy_async(cluster_name, control_plane_url, api_key, args.timeout))
+    org = asyncio.run(
+        _wait_healthy_async(cluster_name, control_plane_url, api_key, args.timeout, args.zero_trust)
+    )
     _gha_output("org_name", org)
 
 
@@ -399,6 +421,11 @@ def main() -> None:
 
     p_wait = sub.add_parser("wait-healthy")
     p_wait.add_argument("--timeout", type=int, default=300)
+    p_wait.add_argument(
+        "--zero-trust",
+        action="store_true",
+        help="Also wait for the tunnel to be online and the dataplane ingress endpoint to be ready.",
+    )
 
     sub.add_parser("setup-routing")
     p_reg = sub.add_parser("register-build-image")

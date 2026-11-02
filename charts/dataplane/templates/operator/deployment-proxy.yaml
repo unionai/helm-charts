@@ -5,6 +5,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "proxy.labels" . | nindent 4 }}
+    {{- include "dataplane.componentLabel" "proxy" | nindent 4 }}
 spec:
   {{- if not .Values.proxy.autoscaling.enabled }}
   replicas: {{ .Values.proxy.replicas }}
@@ -15,13 +16,14 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: {{ include (print .Template.BasePath "/operator/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+        configChecksum: {{ include "dataplane.configMapDataChecksum" (dict "root" . "path" (print .Template.BasePath "/operator/configmap.yaml") "name" (include "union-operator.fullname" .)) | quote }}
         {{- with .Values.proxy.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
         {{- include "global.podAnnotations" . | nindent 8 }}
       labels:
         {{- include "proxy.podLabels" . | nindent 8 }}
+        {{- include "dataplane.componentLabel" "proxy" | nindent 8 }}
     spec:
       volumes:
         - name: config-volume
