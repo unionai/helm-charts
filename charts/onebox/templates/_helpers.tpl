@@ -107,4 +107,32 @@ same values again is harmless. */}}
 {{- $_ = set .Values.storage "authType" "accesskey" }}
 {{- $_ = set .Values.storage "existingSecret" (printf "%s-s3" $name) }}
 {{- end }}
+{{- /* prometheus.enabled: read metrics from the bundled Prometheus, unless
+metrics.prometheusURL is set. The server's name follows the prometheus
+chart's prometheus.server.fullname. */}}
+{{- if and .Values.prometheus.enabled (not .Values.metrics.prometheusURL) }}
+{{- $p := .Values.prometheus }}
+{{- $server := dig "server" "fullnameOverride" "" $p }}
+{{- if not $server }}
+{{- $chart := default "prometheus" $p.nameOverride }}
+{{- $suffix := dig "server" "name" "server" $p }}
+{{- if contains $chart .Release.Name }}
+{{- $server = printf "%s-%s" .Release.Name $suffix | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- $server = printf "%s-%s-%s" .Release.Name $chart $suffix | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end }}
+{{- $port := dig "server" "service" "servicePort" 80 $p }}
+{{- $prefix := dig "server" "prefixURL" "" $p }}
+{{- $_ := set .Values.metrics "prometheusURL" (printf "http://%s.%s.svc:%v%s" $server .Release.Namespace $port $prefix) }}
+{{- end }}
+{{- /* imageBuilder.bundled.enabled: point the image builder at the bundled
+BuildKit and registry, where not set explicitly. */}}
+{{- if and .Values.imageBuilder.enabled .Values.imageBuilder.bundled.enabled }}
+{{- $name := include "onebox.fullname" . }}
+{{- $ib := .Values.imageBuilder }}
+{{- $_ := set $ib "buildkitURI" (default (printf "tcp://%s-buildkit.%s.svc:1234" $name .Release.Namespace) $ib.buildkitURI) }}
+{{- $_ = set $ib "repository" (default (printf "localhost:%v/onebox" $ib.bundled.registry.nodePort) $ib.repository) }}
+{{- $_ = set $ib "lookupURL" (default (printf "http://%s-registry.%s.svc:5000/onebox" $name .Release.Namespace) $ib.lookupURL) }}
+{{- end }}
 {{- end }}
