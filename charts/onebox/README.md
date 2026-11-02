@@ -237,6 +237,39 @@ anonymous callers need their hosts to bypass the proxy.
 With networkPolicy on, only the gateway reaches port 8083, and only onebox and
 Kourier's controller reach the gateway's external listener.
 
+## Under a path of a shared host
+
+`basePath` serves onebox under a path of a host something else owns, e.g.
+`basePath: /onebox` for `https://platform.example.com/onebox/`: the console at
+`/onebox/v2`, the API, `/login` and `/logout` under `/onebox`. The proxy in
+front forwards `/onebox/` to the Service **with the path unchanged** (nginx: no
+URI on `proxy_pass`), keeps `Host`, sets `X-Forwarded-Proto`, passes WebSocket
+upgrades and doesn't buffer responses. Point the SDK and CLI at
+`https://platform.example.com/onebox`.
+
+```yaml
+basePath: /onebox
+serving:
+  enabled: true
+  publicURLPattern: https://platform.example.com/onebox/apps/%s/
+```
+
+Apps can share the host too, each under its own path, with a path-based
+`serving.publicURLPattern` (the `%s` a whole path segment). Requests reach an
+app with its path intact, and the app finds the path in `_U_APP_BASE_PATH`:
+the SDK's FastAPI apps serve under it on their own; pass it to other servers
+(`streamlit --server.baseUrlPath`, Jupyter's `base_url`). For servers that
+only serve at `/`, `serving.stripAppPathPrefix: true` removes the path and
+sends it as `X-Forwarded-Prefix`.
+
+Path-based apps share the host's origin, and so its cookies, with the console
+and everything else on the host. Any app can make requests as the user who
+opens it, so use them only for apps whose authors you trust as much as the
+platform. Host-based app URLs keep apps isolated.
+
+Each `basePath` segment must be a lowercase DNS label. It needs onebox and
+onebox-console images with base path support.
+
 ## License
 
 The onebox chart and the software it deploys are under the Union License: see

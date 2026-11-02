@@ -146,6 +146,15 @@ identity:
   # AWSELBAuthSessionCookie-2, AWSELBAuthSessionCookie-3].
   logoutClearCookies: []
 
+# -- Serve onebox under a path of a shared host, e.g. /onebox for
+# https://platform.example.com/onebox/: the console at /onebox/v2, the API,
+# /login and /logout under /onebox. The proxy in front forwards /onebox/ to the
+# Service with the path unchanged. Point the SDK at https://<host>/onebox.
+# Apps can share the host too (a path-based serving.publicURLPattern). Each
+# segment must be a lowercase DNS label. Needs onebox and onebox-console images
+# with base path support. Empty: the root of the host.
+basePath: ""
+
 # -- Scheme clients reach onebox with: http or https. Empty takes it from the
 # proxy's X-Forwarded-Proto (ALB and ingress controllers send it). Set https
 # when the proxy terminates TLS itself and does not send the header (e.g.
@@ -192,8 +201,17 @@ serving:
   enabled: false
   # -- App URLs: fmt verbs for the app's subdomain and, optionally, the
   # organization, e.g. https://%s.apps.onebox.example.com. Point a wildcard
-  # DNS record (*.apps.onebox.example.com) at the same proxy as onebox.
+  # DNS record (*.apps.onebox.example.com) at the same proxy as onebox. With
+  # basePath, apps can share onebox's host instead, each under a path:
+  # https://platform.example.com/onebox/apps/%s/ (the %s a whole segment).
+  # Those apps share the host's origin, cookies included, with onebox and
+  # whatever else the host serves: only for apps whose authors you trust.
   publicURLPattern: ""
+  # -- Path-based app URLs: remove the app's path before it reaches the app
+  # (sent as X-Forwarded-Prefix), for servers that only serve at /. Off, apps
+  # get the path intact and serve under it, told by _U_APP_BASE_PATH
+  # (uvicorn --root-path, streamlit --server.baseUrlPath, gradio root_path).
+  stripAppPathPrefix: false
   # -- Knative Serving's namespace. Kourier reads its config-network there,
   # and the chart adds config-kourier to it.
   knativeNamespace: knative-serving
