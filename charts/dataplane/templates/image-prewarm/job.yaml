@@ -58,13 +58,17 @@ mirror is missing here.
 {{- $_ := set $images (printf "%s:%s" (tpl $cleanup.repository .) $cleanup.tag) true }}
 {{- end }}
 
-{{- /* The copilot sidecar starts in every task pod. */}}
-{{- with index .Values.config.copilot.plugins.k8s "co-pilot" }}
-{{- $_ := set $images (tpl .image $) true }}
+{{- /*
+The copilot sidecar starts in every task pod, as each enabled executor
+configures it: propeller from config.copilot, the leaseworker from
+leaseworker.plugins.k8s merged over that.
+*/}}
+{{- $copilot := dig "co-pilot" "image" "" (.Values.config.copilot.plugins.k8s | default dict) }}
+{{- if and .Values.flytepropeller.enabled $copilot }}
+{{- $_ := set $images (tpl $copilot $) true }}
 {{- end }}
-{{- /* The leaseworker merges leaseworker.plugins.k8s over that, so its sidecar can differ. */}}
 {{- if .Values.leaseworker.enabled }}
-{{- with dig "co-pilot" "image" "" (.Values.leaseworker.plugins.k8s | default dict) }}
+{{- with dig "co-pilot" "image" $copilot (.Values.leaseworker.plugins.k8s | default dict) }}
 {{- $_ := set $images (tpl . $) true }}
 {{- end }}
 {{- end }}
@@ -122,7 +126,7 @@ spec:
       restartPolicy: Never
       serviceAccountName: image-prewarm
       nodeSelector:
-        kubernetes.io/os: linux
+        {{- merge (dict "kubernetes.io/os" "linux") (deepCopy (.Values.scheduling.nodeSelector | default dict)) | toYaml | nindent 8 }}
       {{- with .Values.scheduling.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
