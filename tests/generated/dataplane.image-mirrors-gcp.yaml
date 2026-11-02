@@ -11728,11 +11728,24 @@ spec:
                 fi
               }
               # Workload Identity: the metadata server returns the pre-warm
-              # service account's token.
-              response=$(wget -qO- --header "Metadata-Flavor: Google" \
-                http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token 2>&1)
-              login us-central1-docker.pkg.dev oauth2accesstoken \
-                "$(echo "$response" | sed -n 's/.*"access_token" *: *"\([^"]*\)".*/\1/p')" \
+              # service account's token. It can be briefly unavailable as the
+              # pod starts, so the request is retried with backoff, within the
+              # budget, rather than leaving every pull unauthenticated.
+              attempt=1
+              while :; do
+                response=$(wget -qO- -T 10 --header "Metadata-Flavor: Google" \
+                  http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token 2>&1)
+                token=$(echo "$response" | sed -n 's/.*"access_token" *: *"\([^"]*\)".*/\1/p')
+                [ -n "$token" ] || [ "$attempt" -ge 5 ] && break
+                wait=$((attempt * 5))
+                left=$(remaining)
+                [ "$wait" -gt "$left" ] && wait=$left
+                [ "$wait" -gt 0 ] || break
+                log "event=retry host=us-central1-docker.pkg.dev step=token attempt=$attempt retry_in=${wait}s error=\"$(echo "$response" | oneline)\""
+                sleep "$wait"
+                attempt=$((attempt + 1))
+              done
+              login us-central1-docker.pkg.dev oauth2accesstoken "$token" \
                 "no Workload Identity token: $(echo "$response" | oneline)"
 
               # Every layer of every platform, into a scratch layout that's
