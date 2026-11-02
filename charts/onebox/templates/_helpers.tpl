@@ -138,3 +138,4 @@ BuildKit and registry, where not set explicitly. */}}
 {{- $_ = set $ib "lookupURL" (default (printf "http://%s-registry.%s.svc:5000/onebox" $name .Release.Namespace) $ib.lookupURL) }}
 {{- end }}
 {{- end }}
+{{- end }}
