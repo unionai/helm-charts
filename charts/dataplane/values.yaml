@@ -1,5 +1,12 @@
 # Base defaults for every dataplane deployment. Cloud-specific overrides
 # live in values.{aws,gcp,azure}.yaml — start there for new deployments.
+#
+# Keys set to null below are declared, not configured: Union's Fleet sets them
+# from its vendor templates and only accepts values this file declares. A null
+# default renders exactly like an absent key.
+
+# -- Cloud provider (aws, gcp, azure, metal); set by the per-cloud overlays.
+provider: null
 
 global:
   # --- Control plane (configure first) ---
@@ -24,6 +31,8 @@ global:
   # BACKEND_IAM_ROLE_ARN / WORKER_IAM_ROLE_ARN (IRSA role ARN / Workload
   # Identity SA); values.azure.yaml uses AZURE_BACKEND_CLIENT_ID /
   # AZURE_WORKER_CLIENT_ID (managed-identity client IDs).
+  AWS_ACCOUNT_ID: null          # AWS only; set by values.aws.yaml
+  AWS_REGION: null              # AWS only; set by values.aws.yaml
 
   # --- Dataplane to Controlplane Auth ---
   AUTH_CLIENT_ID: ""            # client_credentials client ID
@@ -546,6 +555,9 @@ config:
         # -- (e.g. the eager API key) so dataplanes that share a secret backend do
         # -- not overwrite each other's credential (FAB-241).
         clusterName: '{{ include "getClusterName" . }}'
+        # -- Cloud secret manager settings; set by the GCP and Azure overlays.
+        gcpConfig: null
+        azureConfig: null
         k8sConfig:
           namespace: '{{ include "proxy.secretsNamespace" . }}'
         imagePullSecrets:
@@ -600,6 +612,13 @@ config:
         default-env-vars: [ ]
         default-cpus: 100m
         default-memory: 100Mi
+        # -- Node labels, tolerations and GPU labels; set by the per-cloud overlays.
+        default-labels: null
+        interruptible-tolerations: null
+        interruptible-node-selector-requirement: null
+        non-interruptible-node-selector-requirement: null
+        gpu-device-node-label: null
+        gpu-partition-size-node-label: null
   # -- Configuration for the Union operator service
   operator:
     # -- Restrict operator to a single namespace. Auto-set in singleNamespace mode.
@@ -724,7 +743,14 @@ config:
       # -- Kubernetes specific secret manager configuration.
       k8sConfig:
         namespace: '{{ include "proxy.secretsNamespace" . }}'
+      # -- Cloud secret manager settings; set by the per-cloud overlays.
+      awsConfig: null
+      gcpConfig: null
+      azureConfig: null
     persistedLogs:
+      # -- Cloud log sources; set by the GCP and Azure overlays.
+      gcpLogging: null
+      azureLogAnalytics: null
       sourceType: ObjectStore
       objectStore:
         prefix: persisted-logs
@@ -1128,6 +1154,9 @@ leaseworker:
         kubernetes-enabled: false
         # -- One option is to enable cloudwatch logging for EKS, update the region and log group accordingly
         cloudwatch-enabled: false
+        # -- Cloud log links; set by the GCP and Azure overlays.
+        stackdriver-enabled: null
+        azure-log-templates: null
         dynamic-log-links:
           - vscode:
               displayName: VS Code Debugger
