@@ -124,7 +124,7 @@ chart's prometheus.server.fullname. */}}
 {{- end }}
 {{- $port := dig "server" "service" "servicePort" 80 $p }}
 {{- $prefix := dig "server" "prefixURL" "" $p }}
-{{- $_ := set .Values.metrics "prometheusURL" (printf "http://%s.%s.svc:%v%s" $server .Release.Namespace $port $prefix) }}
+{{- $_ := set .Values.metrics "prometheusURL" (printf "http://%s.%s.svc:%v%s" $server (default .Release.Namespace $p.forceNamespace) $port $prefix) }}
 {{- end }}
 {{- /* imageBuilder.bundled.enabled: point the image builder at the bundled
 BuildKit and registry, where not set explicitly. */}}
