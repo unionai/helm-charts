@@ -1012,6 +1012,10 @@ Also, in both modes:
   found only through `prometheus.io/scrape` annotations are no longer scraped (see
   [Third-party subchart RBAC](#third-party-subchart-rbac)).
 
+## 2026.11.0
+
+`version` moves `2026.10.1` → `2026.10.2`; `appVersion` moves `2026.10.0` → `2026.10.5`.
+
 ### flyteconnector image default bumped to py3.13-v2.12.1
 
 The default was `py3.13-2.0.0b50.dev3-g695bb1db3.d20260122`, built 22 January 2026
