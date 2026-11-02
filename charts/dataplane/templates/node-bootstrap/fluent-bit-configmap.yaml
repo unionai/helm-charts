@@ -1,0 +1,29 @@
+{{- if .Values.nodeBootstrap.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: union-node-bootstrap-fluent-bit
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nodeBootstrap.labels" . | nindent 4 }}
+data:
+  fluent-bit.conf: |
+    [INPUT]
+        Name                systemd
+        Tag                 snapshotter
+        Systemd_Filter      _SYSTEMD_UNIT=nydus-snapshotter.service
+        DB                  /var/log/nydus-snapshotter-flb-systemd.db
+        Path                /var/log/journal
+
+    [OUTPUT]
+        Name                stdout
+        Match               snapshotter
+        Format              json_lines
+        json_date_format    iso8601
+
+    [FILTER]
+        Name                record_modifier
+        Match               snapshotter
+        Allowlist_key       date
+        Allowlist_key       MESSAGE
+{{- end }}
