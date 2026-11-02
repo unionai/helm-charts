@@ -1,6 +1,6 @@
 # dataplane-crds — Release Notes
 
-## 2026.10.2
+## 2026.11.0
 
 Lockstep release with the `dataplane` chart. `version` moves to `2026.10.2`; the
 informational `appVersion` moves to `2026.10.5`. No CRD changes. This chart remains

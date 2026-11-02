@@ -1,6 +1,6 @@
 # onebox — Release Notes
 
-## 2026.10.5
+## 2026.11.0
 
 `version` and `appVersion` move to `2026.10.5`. The onebox image now sets
 `controlPlane.deploymentType: onebox` in its built-in defaults, and applies the console

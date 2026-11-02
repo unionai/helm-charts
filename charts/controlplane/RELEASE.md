@@ -1,6 +1,6 @@
 # controlplane — Release Notes
 
-## 2026.10.2
+## 2026.11.0
 
 `version` moves `2026.10.1` → `2026.10.2`; `appVersion` moves `2026.10.0` → `2026.10.5`.
 
