@@ -814,9 +814,9 @@ Also, in both modes:
   **`clusterRoleRules` is now only an extension point, and you must set it if your templates
   create Secrets or RBAC objects** (`roles`, `clusterroles`, `clusterrolebindings`, or
   `rolebindings` beyond the chart's own). Those are never derived: a cluster-wide `get` on
-  Secrets reads every Secret in the cluster, and RBAC grants deserve an explicit line. A kind
-  whose plural isn't its lowercased name plus `s`, `es` or `ies` (`Endpoints`) also needs an
-  entry. Verbs must come from `get`, `list`, `watch`, `create`, `update`, `patch`, `delete`,
+  Secrets reads every Secret in the cluster, and RBAC grants deserve an explicit line. The
+  resource is the kind's regular plural (`Endpoints` stays `endpoints`, `Gateway` becomes
+  `gateways`), so a custom resource with an irregular plural also needs an entry. Verbs must come from `get`, `list`, `watch`, `create`, `update`, `patch`, `delete`,
   `deletecollection`; anything else, including `*`, `escalate`, `impersonate` and `bind`, fails
   the render with the offending verb named. **A missed entry does not fail the render.** The
   sync is refused per template, per namespace, at runtime.

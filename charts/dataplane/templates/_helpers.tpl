@@ -513,8 +513,10 @@ Create the name of the clusterresources service account
 {{/*
 Rules for the kinds clusterresourcesync.templates and additionalTemplates create,
 beyond the chart-owned namespaces, serviceaccounts, resourcequotas and rolebindings,
-at the get/create/patch the controller applies with. The resource is guessed from
-the kind the way client-go's UnsafeGuessKindToResource does. Secrets and the RBAC
+at the get/create/patch the controller applies with. The resource is the kind's
+regular English plural, which is what the API server names every built-in kind
+(Endpoints stays as it is, Gateway becomes gateways). A CRD with an irregular
+plural needs clusterRoleRules. Secrets and the RBAC
 group are never derived, since a cluster-wide get on Secrets reads every Secret in
 the cluster; grant those through clusterRoleRules.
 */}}
@@ -529,8 +531,9 @@ the cluster; grant those through clusterRoleRules.
 {{- $group := "" }}
 {{- if contains "/" $apiVersion }}{{- $group = first (splitList "/" $apiVersion) }}{{- end }}
 {{- $resource := lower $kind }}
-{{- if hasSuffix "s" $resource }}{{- $resource = printf "%ses" $resource }}
-{{- else if hasSuffix "y" $resource }}{{- $resource = printf "%sies" (trimSuffix "y" $resource) }}
+{{- if eq $resource "endpoints" }}
+{{- else if hasSuffix "s" $resource }}{{- $resource = printf "%ses" $resource }}
+{{- else if regexMatch `[^aeiou]y$` $resource }}{{- $resource = printf "%sies" (trimSuffix "y" $resource) }}
 {{- else }}{{- $resource = printf "%ss" $resource }}{{- end }}
 {{- if not (or (eq $group "rbac.authorization.k8s.io") (has (printf "%s/%s" $group $resource) $owned)) }}
 {{- $_ := set $byGroup $group (append (get $byGroup $group | default list) $resource | uniq | sortAlpha) }}
