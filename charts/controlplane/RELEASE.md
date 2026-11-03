@@ -1,5 +1,10 @@
 # controlplane — Release Notes
 
+## 2026.11.2
+
+`version` and `appVersion` move `2026.11.0` → `2026.11.2`. No template or values
+changes; lockstep release picking up the `2026.11.2` control-plane images.
+
 ## 2026.11.0
 
 `version` moves `2026.10.1` → `2026.10.2`; `appVersion` moves `2026.10.0` → `2026.10.5`.

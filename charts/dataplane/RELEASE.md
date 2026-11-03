@@ -1,8 +1,10 @@
 # dataplane — Release Notes
 
-## Unreleased
+## 2026.11.2
 
-### Image mirrors and pre-warm
+`version` and `appVersion` move `2026.11.0` → `2026.11.2`.
+
+### Image mirrors and pre-warm (#638)
 
 `global.imageMirrors` (upstream registry => mirror prefix) routes the chart's images
 through a pull-through cache, such as an ECR pull-through cache for `public.ecr.aws` or
