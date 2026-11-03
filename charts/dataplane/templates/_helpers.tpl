@@ -773,7 +773,7 @@ Create the name of the service account to use
 {{- if and $sw.enabled (not $sw.namespaces) (include "singleNamespace" .) -}}
 {{- fail "config.operator.secretsWatcher.namespaces is set to an empty list under singleNamespace. The operator reads an empty list as every namespace and lists pods cluster-wide, and singleNamespace grants no cluster-wide pod read, so the operator would exit at startup. List the namespaces to watch, or remove the key to watch the release namespace (and controlplaneNamespace, when set)." -}}
 {{- end -}}
-{{- toYaml ($sw.namespaces | default list) -}}
+{{- tpl (toYaml ($sw.namespaces | default list)) . -}}
 {{- else -}}
 {{- $ns := list .Release.Namespace -}}
 {{- if .Values.controlplaneNamespace -}}
@@ -1433,7 +1433,7 @@ union-pod-webhook
 
 {{- define "flytepropellerwebhook.initCertsSecretName" -}}
 {{- if .Values.flytepropeller.enabled -}}
-{{- dig "secretName" "flyte-pod-webhook" (.Values.config.core.webhook | default dict) -}}
+{{- tpl (dig "secretName" "flyte-pod-webhook" (.Values.config.core.webhook | default dict) | toString) . -}}
 {{- else -}}
 {{- include "flytepropellerwebhook.secretName" . -}}
 {{- end -}}
