@@ -37,6 +37,7 @@ background on the failure mode.
 | `scylla-operator/`         | `scylla/scylla-operator`                            | `controlplane`            |
 | `envoy-gateway/`           | `oci://docker.io/envoyproxy/gateway-helm`           | `controlplane`            |
 | `dataplane/`               | `knative/serving` release (12 serving CRDs) + Union-maintained FlyteWorkflow CRD; full mirror of `charts/dataplane/crds/` | `dataplane` chart (always): FlyteWorkflow CRD + Knative Serving CRDs (needed by both the zero-trust gateway and the legacy knative-operator path). Replaces `charts/dataplane-crds`. |
+| `onebox/`                  | Scripts only: `sync.sh` copies the 12 Knative Serving CRDs from `charts/dataplane/crds/` into `charts/onebox/crds/` (no mirror dir; `--skip-crds` installs apply them from `dataplane/`) | `onebox` chart (`serving.knative.install`): runs the same Knative Serving as the dataplane's gateway, so Knative is bumped in one place. |
 | `knative-operator/`        | `knative/operator` release (2 `operator.knative.dev` CRDs only); mirror of `charts/knative-operator/crds/` | `knative-operator` subchart (legacy / non-zero-trust path). Knative serving CRDs live in `dataplane/` and are pulled from there, not duplicated here. Delete this dir + the subchart when zero-trust becomes the only mode. Replaces `charts/knative-operator-crds`. |
 
 The corresponding parent chart's subchart `crds/` directory is NOT rendered
