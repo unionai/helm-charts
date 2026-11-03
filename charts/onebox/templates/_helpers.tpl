@@ -83,6 +83,16 @@ stow:
 {{- end }}
 {{- end }}
 
+{{/* basePath without its trailing slash ("" for the host's root), validated
+as onebox validates onebox.basePath. */}}
+{{- define "onebox.basePath" -}}
+{{- $p := trimSuffix "/" (.Values.basePath | default "") -}}
+{{- if and $p (not (regexMatch "^(/[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+$" $p)) -}}
+{{- fail (printf "basePath %q must be /-separated lowercase DNS labels, e.g. /onebox" .Values.basePath) -}}
+{{- end -}}
+{{- $p -}}
+{{- end }}
+
 {{- define "onebox.internalSecretName" -}}
 {{- default (printf "%s-internal" (include "onebox.fullname" .)) .Values.internalSecret.existingSecret }}
 {{- end }}
