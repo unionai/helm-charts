@@ -64,12 +64,13 @@ parse fails the render.
   until every file is migrated.
 - **Replace `.Values.low_privilege` in your own templated values.** `values.yaml` no longer
   sets it, so unless an overlay does, `{{ if not .Values.low_privilege }}` is true at the
-  single-namespace default. A guard like that around the `kubernetes-cadvisor` job in a
-  `prometheus.extraScrapeConfigs` override (copied from a pre-release `values.yaml`) renders
-  the job where prometheus holds only a Role, and the scrape fails with `403`. Use
-  `{{ if not (include "singleNamespace" .) }}`, as `values.yaml` now does, in every value the
-  chart renders through `tpl`: `extraObjects` and the `config.*` blocks.
+  single-namespace default. Use `{{ if not (include "singleNamespace" .) }}` instead, in every
+  value the chart renders through `tpl`: `extraObjects` and the `config.*` blocks.
   `prometheus.serverFiles` is not rendered through `tpl`.
+- **Drop any scope guard around the `kubernetes-cadvisor` job** in a
+  `prometheus.extraScrapeConfigs` override (copied from a pre-release `values.yaml`).
+  Prometheus now scrapes cadvisor through the API server proxy in both scope modes, so a
+  guard only removes container CPU and memory metrics from single-namespace installs.
 
 ### Rollback
 

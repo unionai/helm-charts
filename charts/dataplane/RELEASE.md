@@ -720,13 +720,14 @@ Also, in both modes:
 - **Replace any `.Values.low_privilege` read in your own templated values with
   `include "singleNamespace" .`.** `low_privilege` is no longer set in `values.yaml`, so
   unless your overlay sets it, `.Values.low_privilege` is empty and
-  `{{ if not .Values.low_privilege }}` is true at the single-namespace default. Wrapped around
-  the `kubernetes-cadvisor` job in a `prometheus.extraScrapeConfigs` override, it renders that
-  job where prometheus holds only a Role, and the scrape fails with `403`. Write
-  `{{ if not (include "singleNamespace" .) }}` instead, as the chart's own `values.yaml` does.
-  The same applies anywhere else the chart renders your values through `tpl`: `extraObjects`
-  and the `config.*` blocks. `prometheus.serverFiles` is not rendered through `tpl`, so
-  template syntax there is never evaluated.
+  `{{ if not .Values.low_privilege }}` is true at the single-namespace default. Write
+  `{{ if not (include "singleNamespace" .) }}` instead, anywhere the chart renders your values
+  through `tpl`: `extraObjects` and the `config.*` blocks. `prometheus.serverFiles` is not
+  rendered through `tpl`, so template syntax there is never evaluated.
+
+- **Drop any scope guard around the `kubernetes-cadvisor` job in a
+  `prometheus.extraScrapeConfigs` override.** cadvisor is scraped in both modes now (above), so
+  a guard only removes container CPU and memory metrics from single-namespace installs.
 
 - **On the vendored gateway (`gateway.enabled: true`, the default), the app-serving
   ServiceAccount names change; rebind anything outside the chart that referenced them.**
