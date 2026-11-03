@@ -1,5 +1,34 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+### Image mirrors and pre-warm
+
+`global.imageMirrors` (upstream registry => mirror prefix) routes the chart's images
+through a pull-through cache, such as an ECR pull-through cache for `public.ecr.aws` or
+Artifact Registry remote repositories. It covers Union's images, the kubectl hook,
+BuildKit (including the Nydus BuildKit image), flyteconnector, copilot, and node-bootstrap
+with its fluent-bit sidecar. The pod webhook rewrites task-pod
+images from `flytepropellerwebhook.imageMirrorPaths` and the secrets init container
+through the mirror. With the map set, an `image-prewarm` pre-install/pre-upgrade hook
+pulls every mirrored image through the cache before the rollout. Bind its service
+account to an identity that can read the mirror with
+`imagePrewarm.serviceAccount.annotations`, or set `imagePrewarm.enabled: false`.
+Third-party subcharts are routed through their own image values. See the README's
+*Image mirrors* section.
+
+Union's images now default to the `public.ecr.aws/unionai` registry alias instead of
+`public.ecr.aws/p0i0a9q8`. Both aliases serve the same images, but a pull-through cache
+keys on the path, so this chart and Union's BYOC dataplanes now pull the same one.
+
+`image.union.repository`, `image.envoy.repository`, `image.kubectl.repository`,
+`image.flytecopilot.repository`, `flyteconnector.image.repository`,
+`imageBuilder.buildkit.image.repository`,
+`imageBuilder.buildkit.nydus.image.repository`, `nodeBootstrap.image.repository`,
+`nodeBootstrap.fluentBit.image.repository` and
+`flytepropellerwebhook.legacyWebhookCleanup.image.repository` are now run through
+`tpl`. Literal overrides work as before.
+
 ## 2026.11.0
 
 `version` moves `2026.10.1` → `2026.10.2`; `appVersion` moves `2026.10.0` → `2026.10.5`.
