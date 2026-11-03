@@ -255,10 +255,12 @@ serving:
 ```
 
 Apps can share the host too, each under its own path, with a path-based
-`serving.publicURLPattern` (the `%s` a whole path segment). Requests reach an
-app with its path intact, and the app finds the path in `_U_APP_BASE_PATH`:
-the SDK's FastAPI apps serve under it on their own; pass it to other servers
-(`streamlit --server.baseUrlPath`, Jupyter's `base_url`). For servers that
+`serving.publicURLPattern`. The path must be `<basePath>/apps/%s/`, as above:
+everything else under `basePath` is onebox's own (the console, its REST
+routes), and onebox refuses to start with apps anywhere they would shadow it.
+Requests reach an app with its path intact, and the app finds the path in
+`_U_APP_BASE_PATH`: the SDK's FastAPI and Streamlit apps serve under it on
+their own; pass it to other servers (Jupyter's `base_url`). For servers that
 only serve at `/`, `serving.stripAppPathPrefix: true` removes the path and
 sends it as `X-Forwarded-Prefix`.
 
