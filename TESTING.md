@@ -15,7 +15,7 @@ access, fast:
 | `kubeconform` | schema-validate the rendered manifests |
 | `vendored-crds` | verify the vendored CRDs are in sync |
 | `release-notes` | `RELEASE.md` is updated |
-| `values-schema` (`make check-values-schema python-test`) | `charts/dataplane/values.schema.json` matches the `# @schema` blocks in `values.yaml`, every value path Union Fleet writes (`tests/fleet-values-paths.txt`) is still accepted, and the Python tooling tests pass |
+| `values-schema` (`make check-values-schema python-test`) | `charts/dataplane/values.schema.json` matches chart annotations plus `fleet-contract.json`; generated common/vendor/merged coverage passes offline, and Python tooling tests pass |
 
 If `validate` fails after a template or values change, regenerate the snapshots
 and commit them alongside your change:
@@ -90,3 +90,5 @@ test exercises real `helm upgrade --dry-run=server` value merging and ConfigMap
 lookup, including retained defaults under `--reuse-values`, explicit overrides,
 `--reset-values`, invalid prior configuration, and the full dataplane render.
 Set `HELM_BIN` to exercise another installed Helm version.
+
+Fleet source generation and packaged registration/target-values checks run in cloud. The required `fleet/schema-compatible` commit status validates each candidate against cloud main and pending cloud PR sources. See [the cloud automation runbook](https://github.com/unionai/cloud/tree/main/scripts/fleet_schema).
