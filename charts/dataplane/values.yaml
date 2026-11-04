@@ -1,10 +1,10 @@
 # Base defaults for every dataplane deployment. Cloud-specific overrides
 # live in values.{aws,gcp,azure}.yaml — start there for new deployments.
 #
-# `# @schema` blocks declare keys that Union Fleet sets but this file does not
-# default, so Fleet admission and Helm accept them with the declared type.
-# scripts/values_schema.py turns them into values.schema.json; run
-# `make values-schema` after editing one.
+# Chart-owned `# @schema` annotations combine with cloud's generated
+# fleet-contract.json in values.schema.json. CI regenerates Fleet declarations
+# from templates and image-pinned Go types; `make values-schema` combines the
+# checked-in inputs locally.
 
 # @schema.root
 # properties:
@@ -563,20 +563,6 @@ config:
       secretManagerTypes:
       - Embedded
       - K8s
-      # @schema
-      # type: object
-      # properties:
-      #   azureConfig:
-      #     type: object
-      #     description: Azure Key Vault backend for embedded secrets. Set by Fleet on Azure.
-      #     properties:
-      #       vaultURI: {type: string}
-      #   gcpConfig:
-      #     type: object
-      #     description: GCP Secret Manager backend for embedded secrets. Set by Fleet on GCP.
-      #     properties:
-      #       project: {type: string}
-      # @schema
       embeddedSecretManagerConfig:
         type: "{{ .Values.proxy.secretManager.type }}"
         # -- Cluster identifier used to qualify per-cluster secret storage names
@@ -646,36 +632,6 @@ config:
   k8s:
     plugins:
       # -- Configuration section for all K8s specific plugins [Configuration structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/flytek8s/config)
-      # @schema
-      # type: object
-      # properties:
-      #   default-labels:
-      #     type: array
-      #     description: Labels added to every task pod. Set by values.azure.yaml or Fleet.
-      #   interruptible-tolerations:
-      #     type: array
-      #     description: Tolerations added to interruptible task pods. Set by values.azure.yaml or Fleet.
-      #   interruptible-node-selector-requirement:
-      #     type: object
-      #     description: Node selector requirement for interruptible task pods. Set by the cloud overlay or Fleet.
-      #     properties:
-      #       key: {type: string}
-      #       operator: {type: string}
-      #       values: {type: array}
-      #   non-interruptible-node-selector-requirement:
-      #     type: object
-      #     description: Node selector requirement for non-interruptible task pods. Set by the cloud overlay or Fleet.
-      #     properties:
-      #       key: {type: string}
-      #       operator: {type: string}
-      #       values: {type: array}
-      #   gpu-device-node-label:
-      #     type: string
-      #     description: Node label that names the GPU accelerator. Set by values.gcp.yaml, values.azure.yaml or Fleet.
-      #   gpu-partition-size-node-label:
-      #     type: string
-      #     description: Node label that names the GPU partition size. Set by values.gcp.yaml, values.azure.yaml or Fleet.
-      # @schema
       k8s:
         default-pod-template-name: "task-template"
         default-env-vars: [ ]
@@ -789,26 +745,6 @@ config:
   # -- Configuration for the operator proxy service.
   proxy:
     # -- Secret manager configuration
-    # @schema
-    # type: object
-    # properties:
-    #   awsConfig:
-    #     type: object
-    #     description: AWS Secrets Manager backend. Set by values.aws.yaml or Fleet when type is AWS.
-    #     properties:
-    #       account: {type: string}
-    #       region: {type: string}
-    #   azureConfig:
-    #     type: object
-    #     description: Azure Key Vault backend. Set by values.azure.yaml or Fleet when type is Azure.
-    #     properties:
-    #       vaultURI: {type: string}
-    #   gcpConfig:
-    #     type: object
-    #     description: GCP Secret Manager backend. Set by values.gcp.yaml or Fleet when type is GCP.
-    #     properties:
-    #       project: {type: string}
-    # @schema
     smConfig:
       # -- Enable or disable secret manager support for the Union dataplane.
       enabled: "{{ .Values.proxy.secretManager.enabled }}"
@@ -819,23 +755,6 @@ config:
       # -- Kubernetes specific secret manager configuration.
       k8sConfig:
         namespace: '{{ include "proxy.secretsNamespace" . }}'
-    # @schema
-    # type: object
-    # properties:
-    #   azureLogAnalytics:
-    #     type: object
-    #     description: Azure Log Analytics source, used when sourceType is AzureLogAnalytics. Set by values.azure.yaml or Fleet.
-    #     properties:
-    #       logAnalyticsWorkspaceResourceIdTemplate: {type: string}
-    #   gcpLogging:
-    #     type: object
-    #     description: Cloud Logging source, used when sourceType is GCPStackdriver. Set by values.gcp.yaml or Fleet.
-    #     properties:
-    #       gcp:
-    #         type: object
-    #         properties:
-    #           project: {type: string}
-    # @schema
     persistedLogs:
       sourceType: ObjectStore
       objectStore:
@@ -1249,16 +1168,6 @@ leaseworker:
   # key, if set by an overlay, takes precedence — see templates/leaseworker/configmap.yaml.
   task_logs:
     plugins:
-      # @schema
-      # type: object
-      # properties:
-      #   azure-log-templates:
-      #     type: array
-      #     description: Azure log link templates. Set by Fleet on Azure.
-      #   stackdriver-enabled:
-      #     type: boolean
-      #     description: Link task logs to Cloud Logging. Set by Fleet on Azure and GCP.
-      # @schema
       logs:
         kubernetes-enabled: false
         # -- One option is to enable cloudwatch logging for EKS, update the region and log group accordingly

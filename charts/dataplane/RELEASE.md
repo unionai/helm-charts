@@ -418,7 +418,7 @@ releases accepts those paths without a cloud-side compatibility list.
 Helm now type-checks exactly those keys on install and upgrade (for example
 `stackdriver-enabled` must be a boolean). No other key is constrained, no
 mapping is closed, and rendered manifests are unchanged.
-`tests/fleet-values-paths.txt` plus `make check-values-schema` fail CI when a
+The generated `fleet-contract.json` coverage plus `make check-values-schema` fail CI when a
 chart change stops accepting a path Fleet writes.
 
 ### Image mirrors and pre-warm
