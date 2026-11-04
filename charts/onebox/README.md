@@ -321,8 +321,8 @@ replica with small requests.
 
 Knative's CRDs are in the chart's `crds/`, so Helm installs them (once, even
 with serving off; it never upgrades them). `helm install --skip-crds` leaves
-them out: apply them yourself with
-`kubectl apply --server-side -f 'crds/dataplane/crd-*.knative.dev.yaml'`.
+them out: apply them yourself from the chart with
+`helm pull unionai/onebox --untar && kubectl apply --server-side -f onebox/crds/`.
 Knative is cluster-wide (fixed-name ClusterRoles and admission webhooks), so a
 cluster runs one. If it already has Knative Serving, set
 `serving.knative.install=false`: the chart then adds `config-kourier` to
