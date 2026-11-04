@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Common service account coverage
+
+When `commonServiceAccount.enabled` is true, FlytePropeller and cluster-resource-sync
+now use the common service account and bind their existing RBAC to it instead of
+creating dedicated service accounts. Their historical `flytepropeller-system` and
+`union-clustersync-system` accounts remain unchanged when the common account is
+disabled.
+
+The parent Prometheus RoleBinding now follows
+`prometheus.serviceAccounts.server.name`. This allows the Prometheus subchart to use
+the common account without losing its scrape permissions:
+
+```yaml
+prometheus:
+  serviceAccounts:
+    server:
+      create: false
+      name: union-system
+```
+
 ### Image mirrors and pre-warm
 
 `global.imageMirrors` (upstream registry => mirror prefix) routes the chart's images
