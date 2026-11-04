@@ -13,8 +13,9 @@ With it on:
 
 - the operator publishes the cluster's service-account issuer and its public
   keys on every status report. It reads them from the API server's OIDC
-  discovery, which every service account may read by default, so it adds no
-  RBAC;
+  discovery, which every service account may read by default. With apps
+  enabled it also gets read-only access to ReplicaSets and Deployments, to tell
+  an app's pods by their Knative controller chain;
 - the leaseworker tells each task pod which attempt it runs, and reports the
   UID of the pod it created on its lease heartbeats;
 - the `task-template` PodTemplate gives task pods a projected service-account
@@ -26,6 +27,107 @@ told to authenticate as itself stops using EAGER_API_KEY, so its control-plane
 calls fail if the control plane does not accept them yet. Needs Union images
 with workload identity (unionai/cloud `haytham/dataplane-sts`) and an SDK with
 the `WorkloadToken` authenticator.
+
+## 2026.11.2
+
+`version` and `appVersion` move `2026.11.0` → `2026.11.2`.
+
+### Image mirrors and pre-warm (#638)
+### Packaged `values.schema.json` declares the values Union Fleet sets
+
+The chart now ships a partial, open JSON Schema generated from `# @schema`
+blocks in `values.yaml` (`make values-schema`). It declares the paths Fleet's
+vendor templates set that `values.yaml` does not default: `provider`,
+`global.AWS_ACCOUNT_ID`, `global.AWS_REGION`, the `awsConfig`/`azureConfig`/
+`gcpConfig` blocks under `config.proxy.smConfig` and
+`config.core.webhook.embeddedSecretManagerConfig`, the `azureLogAnalytics`/
+`gcpLogging` sources under `config.proxy.persistedLogs`, the node label,
+selector and toleration keys under `config.k8s.plugins.k8s`, and
+`azure-log-templates`/`stackdriver-enabled` under
+`leaseworker.task_logs.plugins.logs`. Fleet registration of this and later
+releases accepts those paths without a cloud-side compatibility list.
+
+Helm now type-checks exactly those keys on install and upgrade (for example
+`stackdriver-enabled` must be a boolean). No other key is constrained, no
+mapping is closed, and rendered manifests are unchanged.
+`tests/fleet-values-paths.txt` plus `make check-values-schema` fail CI when a
+chart change stops accepting a path Fleet writes.
+
+### Image mirrors and pre-warm
+
+`global.imageMirrors` (upstream registry => mirror prefix) routes the chart's images
+through a pull-through cache, such as an ECR pull-through cache for `public.ecr.aws` or
+Artifact Registry remote repositories. It covers Union's images, the kubectl hook,
+BuildKit (including the Nydus BuildKit image), flyteconnector, copilot, and node-bootstrap
+with its fluent-bit sidecar. The pod webhook rewrites task-pod
+images from `flytepropellerwebhook.imageMirrorPaths` and the secrets init container
+through the mirror. With the map set, an `image-prewarm` pre-install/pre-upgrade hook
+pulls every mirrored image through the cache before the rollout. Bind its service
+account to an identity that can read the mirror with
+`imagePrewarm.serviceAccount.annotations`, or set `imagePrewarm.enabled: false`.
+Third-party subcharts are routed through their own image values. See the README's
+*Image mirrors* section.
+
+Union's images now default to the `public.ecr.aws/unionai` registry alias instead of
+`public.ecr.aws/p0i0a9q8`. Both aliases serve the same images, but a pull-through cache
+keys on the path, so this chart and Union's BYOC dataplanes now pull the same one.
+
+`image.union.repository`, `image.envoy.repository`, `image.kubectl.repository`,
+`image.flytecopilot.repository`, `flyteconnector.image.repository`,
+`imageBuilder.buildkit.image.repository`,
+`imageBuilder.buildkit.nydus.image.repository`, `nodeBootstrap.image.repository`,
+`nodeBootstrap.fluentBit.image.repository` and
+`flytepropellerwebhook.legacyWebhookCleanup.image.repository` are now run through
+`tpl`. Literal overrides work as before.
+
+## 2026.11.0
+
+`version` moves `2026.10.1` → `2026.10.2`; `appVersion` moves `2026.10.0` → `2026.10.5`.
+
+### flyteconnector image default bumped to py3.13-v2.12.1
+
+The default was `py3.13-2.0.0b50.dev3-g695bb1db3.d20260122`, built 22 January 2026
+and set once, as a side effect of an unrelated PR (#443). Nothing bumps it, so it
+drifted about nine months behind the chart.
+
+That matters because it predates every connector plugin's release. A fresh install
+using BigQuery, Snowflake, Databricks, Spark or Slurm gets a connector image without
+the plugin in it: the deployment starts, the connector never advertises the task type
+in ListConnectors, and tasks sit unroutable rather than failing with anything that
+names the cause. Every connector user has to override `flyteconnector.image` today.
+
+`py3.13-v2.12.1` ships flyteplugins-{bigquery,databricks,slurm,snowflake,spark} —
+verified by running the image rather than by reading the build file.
+
+Operators who pin `flyteconnector.image` are unaffected.
+
+### Nydus lazy image pulls (opt-in)
+
+Self-managed dataplanes can now pull images lazily with Nydus, as the managed
+BYOC dataplanes already do. Two switches, both off by default, turned on in
+this order:
+
+- `nodeBootstrap.enabled` deploys the `union-node-bootstrap` DaemonSet, which
+  installs the Nydus snapshotter on each node and restarts containerd and
+  kubelet there. It is privileged, uses `hostPID`/`hostNetwork` and writes to
+  the host's `/etc` and `/home/kubernetes`. It needs an aws, gcp or azure node
+  image with systemd and a writable `/etc` (not Bottlerocket). Put
+  `nodeBootstrap.startupTaintKey` on worker nodepools as a startup taint. On
+  GKE it also needs the `union-node-bootstrap-critical` ResourceQuota the chart
+  now creates (`nodeBootstrap.priorityClassQuota`), and GKE image streaming off
+  on those nodepools.
+- `imageBuilder.enableImageOptimization` then builds **every** image the
+  dataplane builds in Nydus format, and switches the in-chart BuildKit (and its
+  ARM builder) to Union's image that bundles `nydus-image`. It refuses to render
+  without `nodeBootstrap.enabled`. Those images run only on nodes with the
+  snapshotter: keep every nodepool a task pod can land on inside
+  `nodeBootstrap.nodeSelector`, and expect them not to run where they are
+  pulled elsewhere (CI, a laptop, another cluster).
+
+Both images default to the appVersion tag, which releases publish from
+unionai/cloud#19504 onward; earlier releases have no such tag, so set
+`nodeBootstrap.image.tag` / `imageBuilder.buildkit.nydus.image.tag` to a commit
+SHA to try this on one.
 
 ## 2026.10.1
 

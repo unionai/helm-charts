@@ -97,19 +97,27 @@ _need() { for b in "$@"; do command -v "$b" >/dev/null || { echo "ERROR: '$b' no
 #
 # Credentials are optional even there. Without them the config is left as it was and pulls
 # stay anonymous, so no leg depends on the token being mintable.
-_append_ecr_public_auth() {
-  local reg="$1" token
-  [ -n "${GITHUB_ACTIONS:-}" ] || return 0
+ECR_PUBLIC_TOKEN=""
+_mint_ecr_public_token() {
+  [ -n "${GITHUB_ACTIONS:-}" ] || return 1
+  [ -n "$ECR_PUBLIC_TOKEN" ] && return 0
   command -v aws >/dev/null || {
-    echo ">> [cluster] no aws CLI — public.ecr.aws pulls stay anonymous (rate limited)"; return 0; }
+    echo ">> [cluster] no aws CLI — public.ecr.aws pulls stay anonymous (rate limited)"; return 1; }
   # Public-registry tokens are only issued in us-east-1, whatever region the caller uses.
-  if ! token="$(aws ecr-public get-login-password --region us-east-1 2>/dev/null)" || [ -z "$token" ]; then
+  if ! ECR_PUBLIC_TOKEN="$(aws ecr-public get-login-password --region us-east-1 2>/dev/null)" || [ -z "$ECR_PUBLIC_TOKEN" ]; then
+    ECR_PUBLIC_TOKEN=""
     echo ">> [cluster] could not mint an ECR Public token — public.ecr.aws pulls stay anonymous (rate limited)" >&2
-    return 0
+    return 1
   fi
   # Keep the token out of the CI log if anything downstream echoes it. The runner consumes
   # the directive rather than printing it.
-  echo "::add-mask::$token"
+  echo "::add-mask::$ECR_PUBLIC_TOKEN"
+}
+
+_append_ecr_public_auth() {
+  local reg="$1" token
+  _mint_ecr_public_token || return 0
+  token="$ECR_PUBLIC_TOKEN"
   cat >> "$reg" <<EOF
 configs:
   "public.ecr.aws":
@@ -118,6 +126,25 @@ configs:
       password: '$token'
 EOF
   echo ">> [cluster] public.ecr.aws pulls authenticated (token valid 12h)"
+}
+
+# k3s's containerd uses the auth above, but BuildKit does not: it resolves the image
+# builder's Dockerfile frontend (public.ecr.aws/<alias>/imagebuilder-*/frontend-v2, at a
+# tag the control plane picks per build) anonymously, and a spent anonymous quota fails
+# every build attempt with 429 until the build run gives up. So CI also runs a
+# pull-through cache for public.ecr.aws on the cluster's network, authenticated with the
+# same token, and values.k3d.yaml makes it BuildKit's public.ecr.aws mirror. BuildKit
+# falls back to public.ecr.aws when the mirror is unreachable, so without this container
+# (locally, or no token) builds pull anonymously as before. Same CI-only reasoning as above.
+ECR_PROXY_NAME="k3d-ecr-proxy"
+_start_ecr_public_proxy() {
+  _mint_ecr_public_token || return 0
+  docker rm -f "$ECR_PROXY_NAME" >/dev/null 2>&1 || true
+  docker run -d --name "$ECR_PROXY_NAME" --network "k3d-$K3D_CLUSTER" --restart unless-stopped \
+    -e REGISTRY_PROXY_REMOTEURL=https://public.ecr.aws \
+    -e REGISTRY_PROXY_USERNAME=AWS -e REGISTRY_PROXY_PASSWORD="$ECR_PUBLIC_TOKEN" \
+    docker.io/library/registry:2 >/dev/null
+  echo ">> [cluster] BuildKit's public.ecr.aws mirror ($ECR_PROXY_NAME:5000) up, authenticated"
 }
 
 _resolve_creds() {
@@ -158,6 +185,7 @@ EOF
     done
   fi
   rm -f "$reg"
+  _start_ecr_public_proxy
   kubectl wait --for=condition=Ready nodes --all --timeout=120s
 }
 
@@ -315,6 +343,7 @@ phase_teardown() {
   echo ">> [teardown] deregister cluster from CP + delete k3d"
   CONTROL_PLANE_URL="https://$CP_HOST" CLUSTER_NAME="$CLUSTER" ORG_NAME="$ORG" \
     python .github/ci-scripts/integration_ops.py teardown || true
+  docker rm -f "$ECR_PROXY_NAME" >/dev/null 2>&1 || true
   command -v k3d >/dev/null && k3d cluster delete "$K3D_CLUSTER" || true
 }
 

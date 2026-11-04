@@ -390,6 +390,32 @@ platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
+{{- define "nodeBootstrap.selectorLabels" -}}
+app.kubernetes.io/name: union-node-bootstrap
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "nodeBootstrap.labels" -}}
+{{- include "nodeBootstrap.selectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/*
+The CLOUD_PROVIDER node-bootstrap installs for: it picks the image's
+/union/install.d/<cloud> tree (registry credential helpers, and on aws the
+criu/gvisor extras). nodeBootstrap.cloudProvider wins; else the top-level
+`provider`. Only aws, gcp and azure have an install tree, so anything else
+(custom, oci, metal) fails here rather than crash-looping on every node.
+*/}}
+{{- define "nodeBootstrap.cloudProvider" -}}
+{{- $p := .Values.nodeBootstrap.cloudProvider | default (.Values.provider | default "") -}}
+{{- if not (has $p (list "aws" "gcp" "azure")) -}}
+{{- fail (printf "nodeBootstrap.enabled needs a cloud provider of aws, gcp or azure (got %q from nodeBootstrap.cloudProvider / provider); node-bootstrap has no install tree for other platforms" $p) -}}
+{{- end -}}
+{{- $p -}}
+{{- end -}}
+
 {{/*
 Effective PriorityClass name for the uvol broker (only invoked when the broker
 is enabled): explicit name wins; else when the chart creates the class, a
@@ -803,8 +829,9 @@ access the storage is injected.
 union-operator-prometheus
 {{- end -}}
 
+{{- /* Prometheus serves every route, its health check too, under prometheus.server.prefixURL. */ -}}
 {{- define "prometheus.health.url" -}}
-http://{{ include "prometheus.service.name" . }}:80/-/healthy
+http://{{ include "prometheus.service.name" . }}:80{{ trimSuffix "/" (dig "server" "prefixURL" "" (.Values.prometheus | default dict)) }}/-/healthy
 {{- end -}}
 
 {{- define "prometheus.service.url" -}}
@@ -1263,8 +1290,13 @@ Generate the buildkit image name with smart rootless suffixing.
 Appends "-rootless" to the tag when rootless mode is enabled, unless the tag already contains "rootless".
 */}}
 {{- define "imagebuilder.buildkit.image" -}}
-{{- $repo := .Values.imageBuilder.buildkit.image.repository -}}
+{{- $repo := tpl .Values.imageBuilder.buildkit.image.repository . -}}
 {{- $tag := .Values.imageBuilder.buildkit.image.tag -}}
+{{- $nydus := .Values.imageBuilder.buildkit.nydus | default dict -}}
+{{- if or $nydus.enabled .Values.imageBuilder.enableImageOptimization -}}
+  {{- $repo = tpl $nydus.image.repository . -}}
+  {{- $tag = $nydus.image.tag | default .Chart.AppVersion -}}
+{{- end -}}
 {{- $rootless := .Values.imageBuilder.buildkit.rootless -}}
 {{- $suffix := "" -}}
 {{- if and $rootless (not (hasSuffix "-rootless" $tag)) (ne $tag "rootless") -}}
@@ -1272,6 +1304,131 @@ Appends "-rootless" to the tag when rootless mode is enabled, unless the tag alr
 {{- end -}}
 {{- printf "%s:%s%s" $repo $tag $suffix -}}
 {{- end -}}
+
+{{/*
+The mirror serving an upstream registry, or the upstream itself when the
+cluster has no mirror for it (global.imageMirrors is upstream host => mirror
+prefix). docker.io also takes a mirror keyed registry-1.docker.io, as the
+webhook rules below do. Call it with the chart context and the upstream host:
+
+  repository: '{{ include "dataplane.mirror" (dict "root" . "upstream" "public.ecr.aws") }}/aws-cli/aws-cli'
+
+Values that name an image run through tpl at their call sites, so this
+resolves wherever the value is rendered.
+*/}}
+{{- define "dataplane.mirror" -}}
+{{- $mirrors := (.root.Values.global | default dict).imageMirrors | default dict -}}
+{{- $mirror := index $mirrors .upstream -}}
+{{- if eq .upstream "docker.io" -}}
+{{- $mirror = $mirror | default (index $mirrors "registry-1.docker.io") -}}
+{{- end -}}
+{{ $mirror | default .upstream }}
+{{- end }}
+
+{{/*
+Where Union's own images (public.ecr.aws/unionai/<image>) are pulled from, as a
+prefix to put "/<image>" after. A cluster with a us-docker.pkg.dev mirror pulls
+Union's public Artifact Registry copy (us-docker.pkg.dev/union-public-images/unionai)
+through it; any other cluster pulls from ECR Public, through its ECR Public
+mirror if it has one.
+
+  repository: '{{ include "dataplane.unionImages" (dict "root" .) }}/unionoperator'
+*/}}
+{{- define "dataplane.unionImages" -}}
+{{- $mirrors := (.root.Values.global | default dict).imageMirrors | default dict -}}
+{{- with index $mirrors "us-docker.pkg.dev" -}}
+{{ . }}/union-public-images/unionai
+{{- else -}}
+{{ index $mirrors "public.ecr.aws" | default "public.ecr.aws" }}/unionai
+{{- end -}}
+{{- end }}
+
+{{- /*
+Managed-image webhook rules that pull task-pod images through the dataplane's
+image mirror. Takes a dict:
+  mirrors: global.imageMirrors, upstream host => mirror prefix
+  paths:   flytepropellerwebhook.imageMirrorPaths, upstream host => namespaces to rewrite
+Returns the rules as a YAML list, empty when there are no mirrors.
+
+One rule per namespace whose upstream has a mirror; "*" rewrites the whole
+registry. docker.io also matches registry-1.docker.io, and takes a mirror keyed
+by either. Plus the Flyte v2 default task image when there is a ghcr.io mirror:
+default-image resolution points it at the per-org orgs/<org>/flyte repository,
+which nothing seeds and the 30-day cleanup empties, so an SDK version whose
+image has aged out pulls a 404. Its source, ghcr.io/flyteorg/flyte, always has
+it.
+
+The mutator applies rules in order, so callers append these after the
+configured ones: a configured rule that rewrites to an upstream is then routed
+through the mirror as well.
+*/}}
+{{- define "dataplane.webhook.imageMirrorRules" -}}
+{{- $mirrors := .mirrors | default dict }}
+{{- $rules := list }}
+{{- range $upstream, $namespaces := .paths | default dict }}
+{{- $host := regexQuoteMeta $upstream }}
+{{- $mirror := index $mirrors $upstream }}
+{{- if eq $upstream "docker.io" }}
+{{- $host = `(?:registry-1\.)?docker\.io` }}
+{{- $mirror = $mirror | default (index $mirrors "registry-1.docker.io") }}
+{{- end }}
+{{- if $mirror }}
+{{- range $namespace := $namespaces }}
+{{- $path := ternary "(.+)" (printf "(%s/.+)" (regexQuoteMeta $namespace)) (eq $namespace "*") }}
+{{- $rules = append $rules (dict "regex" (printf "^%s/%s$" $host $path) "replacementPattern" (printf "%s/$1" $mirror)) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- with index $mirrors "ghcr.io" }}
+{{- $rules = append $rules (dict "regex" `^.+/orgs/[^/]+/flyte:(py[0-9]+\.[0-9]+-v.+)$` "replacementPattern" (printf "%s/flyteorg/flyte:$1" .)) }}
+{{- end }}
+{{- toYaml $rules }}
+{{- end }}
+
+{{- /*
+This chart's image-mirror rules for task pods, as a YAML list: empty without
+global.imageMirrors, or when flytepropellerwebhook.webhook.webhooks.managedImage.enabled
+is explicitly false.
+*/}}
+{{- define "dataplane.webhook.mirrorRules" -}}
+{{- $managed := .Values.flytepropellerwebhook.webhook.webhooks.managedImage }}
+{{- if and (hasKey $managed "enabled") (not $managed.enabled) }}
+{{- toYaml list }}
+{{- else }}
+{{- include "dataplane.webhook.imageMirrorRules" (dict "mirrors" (.Values.global | default dict).imageMirrors "paths" .Values.flytepropellerwebhook.imageMirrorPaths) }}
+{{- end }}
+{{- end }}
+
+{{- /*
+Whether the chart-managed MutatingWebhookConfiguration registers the
+managed-image path: managedImage.enabled when it is set, otherwise whenever
+there are image-mirror rules for it to apply. "true" or empty.
+*/}}
+{{- define "dataplane.webhook.managedImageRegistered" -}}
+{{- $managed := .Values.flytepropellerwebhook.webhook.webhooks.managedImage }}
+{{- if hasKey $managed "enabled" }}
+{{- if $managed.enabled }}true{{ end }}
+{{- else if include "dataplane.webhook.mirrorRules" . | fromYamlArray }}true
+{{- end }}
+{{- end }}
+
+{{- /*
+The pod webhook's config with the image-mirror rules appended to
+webhook.images.images (after the configured rules) and the managed-image
+mutator enabled, when global.imageMirrors yields any. Takes a dict:
+  root:    the chart context
+  webhook: a copy of config.core.webhook, changed in place
+*/}}
+{{- define "dataplane.webhook.withImageMirrorRules" -}}
+{{- $webhook := .webhook }}
+{{- $rules := include "dataplane.webhook.mirrorRules" .root | fromYamlArray }}
+{{- if $rules }}
+{{- $images := $webhook.images | default dict }}
+{{- $_ := set $images "enabled" true }}
+{{- $_ := set $images "images" (concat ($images.images | default list) $rules) }}
+{{- $_ := set $webhook "images" $images }}
+{{- end }}
+{{- end }}
 
 {{- define "ingress.serving.host" -}}
 {{- if .Values.ingress.serving.hostOverride }}
@@ -1628,6 +1785,7 @@ union-pod-webhook
 {{- $_ := set $webhook "serviceName" (include "flytepropellerwebhook.serviceName" .) }}
 {{- $_ := set $webhook "secretName" (include "flytepropellerwebhook.secretName" .) }}
 {{- $_ := set $webhook "localCert" true }}
+{{- include "dataplane.webhook.withImageMirrorRules" (dict "root" . "webhook" $webhook) }}
 {{- if or .Values.low_privilege (and .Values.flytepropellerwebhook.enabled .Values.flytepropellerwebhook.managedConfig) }}
 {{- $_ := set $webhook "disableCreateMutatingWebhookConfig" true }}
 {{- end }}
@@ -1800,4 +1958,25 @@ uses it is gated off with it.
 {{- fail (printf "configMapDataChecksum: %s renders no ConfigMap named %q (found %v)" $.path $.name $seen) -}}
 {{- end -}}
 {{- toJson $data | sha256sum -}}
+{{- end -}}
+
+{{/*
+imageBuilder.enableImageOptimization makes every image the dataplane builds a
+Nydus-only image, which a node without the Nydus snapshotter unpacks into a
+broken root filesystem. So it requires nodeBootstrap.enabled, named on its own
+rather than implied: node-bootstrap is a privileged DaemonSet that restarts
+containerd and kubelet, and two flags let a cluster roll the snapshotter out
+first and turn optimization on after. The in-chart builders (primary and ARM)
+switch to the Nydus BuildKit image by themselves (imagebuilder.buildkit.image);
+an external buildkitUri / buildkitUriArm must carry nydus-image already.
+*/}}
+{{- define "imagebuilder.imageOptimization" -}}
+{{- if .Values.imageBuilder.enableImageOptimization -}}
+{{- if not .Values.nodeBootstrap.enabled -}}
+{{- fail "imageBuilder.enableImageOptimization needs nodeBootstrap.enabled: every image the dataplane builds becomes Nydus-only, and nodes without the Nydus snapshotter cannot run it" -}}
+{{- end -}}
+true
+{{- else -}}
+false
+{{- end -}}
 {{- end -}}

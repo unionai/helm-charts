@@ -1,0 +1,27 @@
+{{- /*
+GKE admits pods at priority system-node-critical (or system-cluster-critical)
+outside kube-system only when the namespace holds a ResourceQuota scoped to
+that class; without one the DaemonSet's pods are rejected at admission and
+node-bootstrap never starts. The BYOC chart ships the same quota as
+union-critical-daemonsets. Elsewhere it is inert: the pod limit is far above
+any node count, so it never binds.
+*/}}
+{{- $pc := .Values.nodeBootstrap.priorityClassName }}
+{{- if and .Values.nodeBootstrap.enabled .Values.nodeBootstrap.priorityClassQuota.create (has $pc (list "system-node-critical" "system-cluster-critical")) }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: union-node-bootstrap-critical
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nodeBootstrap.labels" . | nindent 4 }}
+spec:
+  hard:
+    pods: {{ .Values.nodeBootstrap.priorityClassQuota.pods | quote }}
+  scopeSelector:
+    matchExpressions:
+      - operator: In
+        scopeName: PriorityClass
+        values:
+          - {{ $pc }}
+{{- end }}

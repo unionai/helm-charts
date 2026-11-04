@@ -133,6 +133,13 @@ def _is_transient_submit_error(msg: str) -> bool:
     return "cluster" in m and "not found" in m
 
 
+# A submission builds the task's image first (remote builder), so one call can
+# run for minutes. A healthy build takes a few; a broken one is retried by the
+# backend until the build run fails, which took ~28 min per test on k3d. Bound
+# each call so a broken build fails in minutes with its run URL in the logs.
+_SUBMIT_CALL_TIMEOUT = float(os.environ.get("FUNCTIONAL_SUBMIT_TIMEOUT", "720"))
+
+
 async def submit_with_retry(task_fn, label: str, **kwargs):  # type: ignore[no-untyped-def]
     """Submit a task, retrying while the backend is in a transient state.
 
@@ -151,8 +158,18 @@ async def submit_with_retry(task_fn, label: str, **kwargs):  # type: ignore[no-u
     last_err = ""
     for attempt in range(1, _SUBMIT_MAX_ATTEMPTS + 1):
         try:
-            run = await flyte.with_runcontext(queue=queue).run.aio(task_fn, **kwargs)  # type: ignore
+            run = await asyncio.wait_for(
+                flyte.with_runcontext(queue=queue).run.aio(task_fn, **kwargs),  # type: ignore
+                timeout=_SUBMIT_CALL_TIMEOUT,
+            )
             break
+        except asyncio.TimeoutError:
+            # Not retried, here or by pytest-rerunfailures (the message avoids its
+            # transient markers): a build this slow is broken, not flaky.
+            raise RuntimeError(
+                f"{label}: submission (image build included) still running after "
+                f"{_SUBMIT_CALL_TIMEOUT:.0f}s; see the build run in the console"
+            ) from None
         except Exception as exc:
             last_err = str(exc)
             if _is_transient_submit_error(last_err):

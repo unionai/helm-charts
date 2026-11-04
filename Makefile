@@ -18,7 +18,7 @@ generate-expected: $(GEN_DIR) vendor-crds
 	./tests/run.sh generate
 
 .PHONY: test
-test: check-vendored-crds helm-test kubeconform-test check-image-paths
+test: check-vendored-crds helm-test kubeconform-test check-image-paths check-image-prewarm check-values-schema python-test
 
 .PHONY: snapshot-generator-test
 snapshot-generator-test:
@@ -31,6 +31,33 @@ snapshot-generator-test:
 .PHONY: check-image-paths
 check-image-paths:
 	python3 scripts/check-image-paths.py
+
+# charts/dataplane/values.schema.json is generated from the `# @schema` blocks
+# in values.yaml (scripts/values_schema.py). The check fails when the committed
+# file is stale, then verifies every value path Fleet writes
+# (tests/fleet-values-paths.txt) is still accepted by the chart. No helm, no
+# network.
+.PHONY: values-schema
+values-schema: requirements
+	uv run python scripts/values_schema.py
+
+.PHONY: check-values-schema
+check-values-schema: requirements
+	uv run python scripts/values_schema.py --check
+	uv run python scripts/check_fleet_paths.py
+
+# Unit tests for the Python tooling (invoke tasks and the scripts above).
+# `python -m pytest` so the repo root is on sys.path for `tasks`.
+.PHONY: python-test
+python-test: requirements
+	uv run python -m pytest -q tasks scripts
+
+# The image pre-warm Job's image list is kept by hand; fail if a mirror test
+# profile's snapshot pulls an image through the mirror that the Job doesn't
+# warm. Reads tests/generated/, like check-image-paths.
+.PHONY: check-image-prewarm
+check-image-prewarm: requirements
+	uv run python scripts/check-image-prewarm.py
 
 # Vendored CRDs (crds/<name>/) — see crds/README.md.
 # Each subdirectory has its own scripts/sync.sh (refresh from upstream chart)
@@ -105,6 +132,7 @@ gen_version_bump: requirements
 	uv run invoke builder.version-bumper --file charts/dataplane-crds/Chart.yaml $(_PRERELEASE_FLAG)
 	uv run invoke builder.version-bumper --file charts/knative-migration/Chart.yaml $(_PRERELEASE_FLAG)
 	uv run invoke builder.version-bumper --file charts/sandbox/Chart.yaml $(_PRERELEASE_FLAG)
+	uv run invoke builder.version-bumper --file charts/onebox/Chart.yaml $(_PRERELEASE_FLAG)
 
 .PHONY: gen_dataplane_release
 gen_dataplane_release: requirements
@@ -122,16 +150,26 @@ gen_knative_migration_release: requirements
 gen_sandbox_release: requirements
 	uv run invoke builder.release --chart sandbox
 
+.PHONY: gen_onebox_release
+gen_onebox_release: requirements
+	uv run invoke builder.release --chart onebox
+
 .PHONY: release-notes-dry-run
 release-notes-dry-run:
 	./scripts/generate-release-notes.sh
 
 .PHONY: lint
-lint: lint-dataplane lint-dataplane-crds lint-knative-migration lint-sandbox
+lint: lint-dataplane lint-dataplane-crds lint-knative-migration lint-sandbox lint-onebox
 
 .PHONY: lint-dataplane
 lint-dataplane:
 	helm lint charts/dataplane
+	# Each canonical overlay stack, so Helm validates values.schema.json against them.
+	helm lint charts/dataplane -f charts/dataplane/values.aws.yaml
+	helm lint charts/dataplane -f charts/dataplane/values.gcp.yaml
+	helm lint charts/dataplane -f charts/dataplane/values.azure.yaml
+	helm lint charts/dataplane -f charts/dataplane/values.k3d.yaml
+	helm lint charts/dataplane -f charts/dataplane/values.aws.yaml -f charts/dataplane/values.openshift.yaml
 
 .PHONY: lint-dataplane-crds
 lint-dataplane-crds:
@@ -144,6 +182,10 @@ lint-knative-migration:
 .PHONY: lint-sandbox
 lint-sandbox:
 	helm lint charts/sandbox
+
+.PHONY: lint-onebox
+lint-onebox:
+	helm lint charts/onebox --values tests/values/onebox.default.yaml
 
 .PHONY: generate-metrics-manifest
 generate-metrics-manifest:
