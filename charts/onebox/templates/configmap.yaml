@@ -22,15 +22,6 @@ data:
     onebox:
       organization: {{ .Values.organization | quote }}
       seedProjects: {{ toJson .Values.seedProjects }}
-      {{- if .Values.projectIdentity.enabled }}
-      projectIdentity:
-        enabled: true
-        serviceAccount: {{ .Values.projectIdentity.serviceAccount | quote }}
-        {{- with .Values.projectIdentity.annotations }}
-        annotations:
-          {{- toYaml . | nindent 10 }}
-        {{- end }}
-      {{- end }}
       listen:
         address: ":8080"
         tasksAddress: ":8082"
@@ -38,6 +29,10 @@ data:
         gatewayAddress: ":8083"
         {{- end }}
       consoleUpstream: {{ if .Values.console.enabled }}"http://127.0.0.1:3000"{{ else }}""{{ end }}
+      {{- with include "onebox.basePath" . }}
+      # Everything public is served under this path of a shared host.
+      basePath: {{ . | quote }}
+      {{- end }}
       logoutRedirect: {{ .Values.identity.logoutRedirect | quote }}
       {{- with .Values.identity.logoutClearCookies }}
       logoutClearCookies: {{ toJson . }}
@@ -114,6 +109,9 @@ data:
         enabled: true
         publicURLPattern: {{ required "serving.publicURLPattern is required with serving.enabled" .Values.serving.publicURLPattern | quote }}
         gatewayURL: "http://kourier.{{ .Release.Namespace }}.svc.cluster.local"
+        {{- if .Values.serving.stripAppPathPrefix }}
+        stripAppPathPrefix: true
+        {{- end }}
       {{- end }}
       clusterData:
         metadataBucketPrefix: {{ include "onebox.bucketURI" . | quote }}
