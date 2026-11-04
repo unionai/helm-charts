@@ -29,6 +29,23 @@ global:
   AUTH_CLIENT_ID: ""            # client_credentials client ID
   OIDC_S2S_SCOPE: ""            # Okta: leave empty. Entra ID: "api://my-app/.default"
 
+  # --- Image mirrors (pull-through caches) ---
+  # Upstream registry => the mirror that serves it, as a prefix to put the
+  # image's path after. Union's images and the chart's other images, the
+  # task-pod images the webhook rewrites (flytepropellerwebhook.imageMirrorPaths)
+  # and the secrets init container are pulled through it; an upstream with no
+  # entry is pulled directly. Setting it also turns on the image pre-warm hook
+  # (imagePrewarm). Third-party subcharts are routed through their own image
+  # values; see the README. For example:
+  #   public.ecr.aws: 123456789012.dkr.ecr.us-east-1.amazonaws.com/ecr-public
+  #   registry-1.docker.io: us-central1-docker.pkg.dev/my-project/docker
+  #   ghcr.io: us-central1-docker.pkg.dev/my-project/ghcr
+  #   us-docker.pkg.dev: us-central1-docker.pkg.dev/my-project/gar
+  # Union's images are also served from a public Artifact Registry copy, at
+  # us-docker.pkg.dev/union-public-images/unionai; a us-docker.pkg.dev mirror
+  # is preferred for them over the public.ecr.aws one.
+  imageMirrors: {}
+
 # -- Override the chart name.
 nameOverride: ""
 # -- Override the chart fullname.
@@ -86,6 +103,12 @@ updateStatus:
       domain: ""
       # -- Serve app URLs over http:// instead of https:// when true. Default https.
       insecure: false
+
+# Telemetry the Flyte SDK sends from task pods (crash reports and usage counts).
+telemetry:
+  # -- Set to false to opt out. Injects DO_NOT_TRACK=1 (https://donottrack.sh)
+  # into every task pod, the same switch flyte-sdk, the Flyte backend and the console honour.
+  enabled: true
 
 # -- Define additional pod environment variables for all of the Union pods.
 additionalPodEnvVars: { }
@@ -472,7 +495,7 @@ config:
         # -- Structure documented [here](https://pkg.go.dev/github.com/lyft/flyteplugins@v0.5.28/go/tasks/pluginmachinery/flytek8s/config#FlyteCoPilotConfig)
         co-pilot:
           name: flyte-copilot-
-          image: "{{ .Values.image.flytecopilot.repository }}:{{ .Values.image.flytecopilot.tag }}"
+          image: "{{ tpl .Values.image.flytecopilot.repository . }}:{{ .Values.image.flytecopilot.tag }}"
           start-timeout: 30s
   # -- Core propeller configuration
   core:
@@ -545,12 +568,26 @@ config:
         imagePullSecrets:
           enabled: true
         # -- Init container used to mount embedded secrets as files into task pods.
-        # -- Uncomment and override `image` to repoint the default upstream busybox
-        # -- image (public.ecr.aws/docker/library/busybox:latest) at a private or
-        # -- mirrored registry — required for air-gapped clusters that cannot reach
-        # -- public.ecr.aws. Maps to webhook.embeddedSecretManagerConfig.fileMountInitContainer.
-        # fileMountInitContainer:
-        #   image: <your-registry>/busybox:latest
+        # -- It is pulled as often as a task pod starts. Same image the webhook
+        # -- defaults to, through the public.ecr.aws mirror in global.imageMirrors
+        # -- when the cluster has one. Override `image` to repoint it at a private
+        # -- registry — required for air-gapped clusters that cannot reach
+        # -- public.ecr.aws.
+        fileMountInitContainer:
+          image: '{{ include "dataplane.mirror" (dict "root" . "upstream" "public.ecr.aws") }}/docker/library/busybox:latest'
+      # -- Managed-image rewrites the webhook applies to task pods. The chart
+      # -- appends rules for global.imageMirrors (see
+      # -- flytepropellerwebhook.imageMirrorPaths) and enables it when there are any.
+      images:
+        enabled: false
+        labelSelector:
+          matchExpressions:
+            - key: organization
+              operator: Exists
+            - key: project
+              operator: Exists
+            - key: domain
+              operator: Exists
   # -- Domains configuration for Union projects. This enables the specified number of domains across all projects in Union.
   domain:
     domains:
@@ -600,6 +637,32 @@ config:
     limitNamespace: ""
     # -- Disable cluster-wide permissions. Auto-set when low_privilege is true.
     disableClusterPermissions: false
+    # -- Cluster-health snapshot reporting. The snapshot push itself is on by
+    # default in the operator; these values tune what it collects.
+    clusterHealth:
+      # -- Report the cluster's real capacity, derived from Node objects, instead of
+      # the namespace ResourceQuota ceilings the heartbeat sends. Renders a read-only
+      # ClusterRole granting get/list/watch on nodes, and on pods when clusterWidePods
+      # is set.
+      #
+      # Independent of low_privilege and of disableClusterPermissions: the grant is
+      # read-only, so a low-privilege cluster can report capacity
+      # without taking on the broad operator ClusterRole. Nodes are cluster-scoped and
+      # have no namespaced equivalent, so a cluster that leaves this off reports no
+      # capacity rather than partial capacity.
+      #
+      # Requires an operator image at 2026.10.2 or later. The operator decodes its
+      # config strictly, so an older image rejects clusterHealth.nodeCapacity as an
+      # unknown key and exits on startup. The operator image tag defaults to the
+      # chart appVersion; when that is older, set image.union.tag before enabling this.
+      nodeCapacity:
+        enabled: false
+        # -- Read pods cluster-wide for per-pool usage, and add pods to the
+        # node-capacity ClusterRole. Required for usage on a low-privilege install,
+        # which is always namespace-limited. Without it the operator reports capacity
+        # only (node allocatable and counts) and omits usage and accelerators. Ignored
+        # when the operator is not namespace-limited.
+        clusterWidePods: false
     # -- Eager API key bootstrap. When enabled, the operator mints the
     # EAGER_API_KEY on the control plane and writes it to the task-pod secret
     # store so eager/actions (v2) tasks can call back to the control plane.
@@ -664,6 +727,9 @@ config:
       # -- Define the propeller health check endpoint.
       propeller:
         endpoint: '{{ include "propeller.health.url" . }}'
+      # -- Define the leaseworker health check endpoint. Dropped when the leaseworker is disabled.
+      leaseworker:
+        endpoint: '{{ include "leaseworker.health.url" . }}'
       # -- Define the operator proxy health check endpoint.
       proxy:
         endpoint: '{{ include "proxy.health.url" . }}'
@@ -1007,6 +1073,12 @@ opencost:
 fluentbit:
   enabled: true
   existingConfigMap: fluentbit-system
+  # The label the operator's cluster snapshot discovers Union workloads by, on the
+  # DaemonSet and on its pods.
+  labels:
+    platform.union.ai/component: logging
+  podLabels:
+    platform.union.ai/component: logging
   # Upstream defaults this to a bare `busybox`, which resolves against the
   # implicit docker.io/library/ default and fails on clusters that pin an
   # allowed-registry policy. Only rendered by `helm test`, but the policy
@@ -1279,11 +1351,22 @@ flytepropellerwebhook:
       # Registry host spelled out — an unqualified repository resolves against
       # the implicit docker.io default and fails on clusters that pin an
       # allowed-registry policy.
-      repository: docker.io/alpine/k8s
+      repository: '{{ include "dataplane.mirror" (dict "root" . "upstream" "docker.io") }}/alpine/k8s'
       tag: "1.32.3"
       pullPolicy: IfNotPresent
     # -- ImagePullSecrets for the cleanup job (use if kubectl image is in a private registry)
     imagePullSecrets: []
+  # -- Task-pod images the webhook rewrites through the image mirror in
+  # -- global.imageMirrors (upstream host => mirror prefix): upstream host =>
+  # -- repository namespaces, "*" for the whole registry. List only namespaces
+  # -- whose images are all public: the mirror pulls with its own credentials, so
+  # -- a private image rewritten through it fails to pull. docker.io also matches
+  # -- registry-1.docker.io. A namespace may be a nested path, e.g.
+  # -- us-docker.pkg.dev: [union-public-images/unionai].
+  imageMirrorPaths:
+    public.ecr.aws: ["*"]
+    ghcr.io: [flyteorg, unionai-oss]
+    docker.io: [library, unionai-oss]
   # -- Replicas
   replicaCount: 1
   # -- Sets priorityClassName for webhook pod
@@ -1416,7 +1499,12 @@ flytepropellerwebhook:
             volumes.union.ai/channel: "true"
       # -- Managed image webhook configuration (requires Union operator support)
       managedImage:
-        enabled: false
+        # -- Register the managed-image path. Unset by default: it is then
+        # -- registered only when global.imageMirrors yields task-pod rewrite
+        # -- rules (flytepropellerwebhook.imageMirrorPaths). true always
+        # -- registers it; false never does, and also keeps those rules out of
+        # -- the webhook's config.
+        # enabled: true
         # -- Name of the webhook
         name: managed-image-webhook.union.ai
         # -- Path for the webhook
@@ -1474,8 +1562,8 @@ flyteconnector:
   replicaCount: 2
   image:
     # -- Docker image for flyteconnector deployment
-    repository: ghcr.io/flyteorg/flyte-connectors
-    tag: py3.13-2.0.0b50.dev3-g695bb1db3.d20260122
+    repository: '{{ include "dataplane.mirror" (dict "root" . "upstream" "ghcr.io") }}/flyteorg/flyte-connectors'
+    tag: py3.13-v2.12.1
     # -- Docker image pull policy
     pullPolicy: IfNotPresent
   ports:
@@ -1540,7 +1628,7 @@ flyteconnector:
 image:
     # -- Image repository for the operator and union services
   union:
-    repository: public.ecr.aws/p0i0a9q8/unionoperator
+    repository: '{{ include "dataplane.unionImages" (dict "root" .) }}/unionoperator'
     tag: ""
     pullPolicy: IfNotPresent
   # -- Kubectl image configuration for Helm hook cleanup jobs.
@@ -1551,7 +1639,7 @@ image:
   # `latest` — nothing pinnable. Matches flytepropellerwebhook.legacyWebhookCleanup.
   kubectl:
     # -- Kubectl image repository used by dataplane Helm hook cleanup jobs.
-    repository: docker.io/alpine/k8s
+    repository: '{{ include "dataplane.mirror" (dict "root" . "upstream" "docker.io") }}/alpine/k8s'
     # -- Kubectl image tag used by dataplane Helm hook cleanup jobs.
     tag: "1.32.3"
     # -- Optional imagePullPolicy for dataplane Helm hook cleanup jobs. Omit when empty.
@@ -1565,17 +1653,51 @@ image:
     pullPolicy: IfNotPresent
   # -- flytecopilot repository and tag.
   flytecopilot:
-    repository: "cr.flyte.org/flyteorg/flyte-binary-v2"
+    repository: '{{ include "dataplane.mirror" (dict "root" . "upstream" "cr.flyte.org") }}/flyteorg/flyte-binary-v2'
     tag: "v2.0.45"
     pullPolicy: IfNotPresent
   # -- Union envoy build for the zero-trust gateway.
   envoy:
-    repository: public.ecr.aws/p0i0a9q8/envoy
+    repository: '{{ include "dataplane.unionImages" (dict "root" .) }}/envoy'
     tag: ""
     pullPolicy: IfNotPresent
 
 metrics-server:
   enabled: false
+
+# -- Pre-warm the image mirror before an install or upgrade: a pre-install/
+# -- pre-upgrade hook (ArgoCD PreSync) pulls each of the chart's images, for every
+# -- platform it's built for, through the mirror with crane, so the rollout finds
+# -- them cached instead of missing together and being throttled upstream. Only
+# -- rendered when global.imageMirrors is set, and only for images served from
+# -- one of those mirrors. See templates/image-prewarm/job.yaml.
+imagePrewarm:
+  enabled: true
+  # -- Bounds the whole run; the Job stops pulling a minute before it, so the
+  # -- deadline itself doesn't fail the hook.
+  activeDeadlineSeconds: 900
+  # -- Fail the Job, and so the hook and the install or upgrade, if any image
+  # -- couldn't be warmed after its retries. False makes pre-warming best effort:
+  # -- failures are logged as warnings and the hook succeeds.
+  failOnError: true
+  serviceAccount:
+    # -- Annotations (run through tpl) binding the Job's service account to a
+    # -- cloud identity that can read from the mirror: eks.amazonaws.com/role-arn
+    # -- (ECR: ecr:GetAuthorizationToken plus pull-through read),
+    # -- iam.gke.io/gcp-service-account (Artifact Registry reader) or
+    # -- azure.workload.identity/client-id (AcrPull).
+    annotations: {}
+  # -- crane with a busybox shell (the :debug variant), pinned by digest.
+  crane:
+    image: gcr.io/go-containerregistry/crane:debug@sha256:e78770b31258a3846f878036d9c1f63fbe4c871f9f56990bf77fd95c013e3c1b
+  # -- ECR mirrors only: fetches an ECR token for crane as the service account's role.
+  # -- Pulled from ECR Public, not through the mirror: the node pulls it with its
+  # -- own credentials before the pod's role applies, and on a cold pull-through
+  # -- cache those may not be allowed to import it, which would leave the hook in
+  # -- ImagePullBackOff.
+  awsCli:
+    repository: public.ecr.aws/aws-cli/aws-cli
+    tag: 2.36.49
 
 # -- nodeobserver contains the configuration information for the node observer service.
 uvolMountBroker:
@@ -1697,6 +1819,51 @@ uvolMountBroker:
     limits:
       memory: 256Mi
 
+# -- Node bootstrap: installs the Nydus snapshotter on each node so pods lazily
+# pull images the image builder exported in Nydus format (see
+# imageBuilder.enableImageOptimization). Privileged, hostPID, writes to the
+# host's /etc and /home/kubernetes and starts systemd units. Supports aws, gcp
+# and azure node images with systemd and a writable /etc (EKS AL2023, GKE COS,
+# AKS Ubuntu); not Bottlerocket.
+nodeBootstrap:
+  # -- Enable the node-bootstrap DaemonSet.
+  enabled: false
+  # -- aws, gcp or azure. Empty uses the top-level `provider`.
+  cloudProvider: ""
+  image:
+    repository: '{{ include "dataplane.unionImages" (dict "root" .) }}/node-bootstrap'
+    # -- Defaults to the chart appVersion.
+    tag: ""
+    pullPolicy: IfNotPresent
+  # -- Startup taint union-node-readiness removes once the snapshotter runs.
+  # Add it to the worker nodepools as a startup taint so nothing schedules onto
+  # a node that cannot pull Nydus images yet. Empty: no taint handling, and the
+  # ServiceAccount gets no API access.
+  startupTaintKey: startup-taint.cluster-autoscaler.kubernetes.io/unionai-node-not-ready
+  # -- Restrict to the nodes that run task pods; empty means every node.
+  nodeSelector: {}
+  # -- Must tolerate the startup taint above and any worker taints.
+  tolerations:
+    - operator: Exists
+  affinity: {}
+  priorityClassName: system-node-critical
+  # -- A ResourceQuota scoped to that priority class. GKE rejects
+  # system-*-critical pods outside kube-system without one; elsewhere the
+  # quota never binds. Turn off if the namespace already has one.
+  priorityClassQuota:
+    create: true
+    pods: "5000"
+  podLabels: {}
+  podAnnotations: {}
+  resources: {}
+  # -- Sidecar that streams the snapshotter's journal to the pod log.
+  fluentBit:
+    image:
+      repository: '{{ include "dataplane.mirror" (dict "root" . "upstream" "cr.fluentbit.io") }}/fluent/fluent-bit'
+      tag: "3.2.8"
+      pullPolicy: IfNotPresent
+    resources: {}
+
 nodeobserver:
   # -- Enable or disable nodeobserver
   enabled: false
@@ -1798,6 +1965,10 @@ operator:
   # (used by everyone except self-hosted / intra-cluster deployments, which set
   # this to false).
   enableTunnelService: true
+  # -- Directory the operator mounts the `connector-config` ConfigMap at; the cluster
+  # health snapshot reads the connector apps' endpoints from it. The operator's own
+  # default is this same path, so the operator config names it only when it differs.
+  connectorConfigMountPath: /etc/union/connector-config
   secretName: union-secret-auth
   securityContext: { }
   resources:
@@ -1858,6 +2029,10 @@ ingress:
 # to avoid creating ServiceMonitor CRDs.
 prometheus:
   enabled: true
+  # The label the operator's cluster snapshot discovers Union workloads by; the
+  # subchart puts commonMetaLabels on every resource it renders, pods included.
+  commonMetaLabels:
+    platform.union.ai/component: prometheus
   # Disable the chart's own RBAC (which creates ClusterRoles).
   # A namespace-scoped Role + RoleBinding is created by the dataplane chart instead.
   rbac:
@@ -1874,9 +2049,24 @@ prometheus:
     useExistingClusterRoleName: ""
 
     configMapOverrideName: "prometheus"
+    # CLI flags passed to the Prometheus server container.
+    # NOTE: In Helm, extraFlags is an array and customer overrides completely
+    # replace this list. If you override extraFlags, you MUST preserve:
+    #   - web.enable-lifecycle (required for HTTP config reload /-/reload)
+    #   - enable-feature=expand-external-labels (required to expand ${POD_NAME} in
+    #     prometheus.yml for multi-replica HA deduplication)
+    #
+    # enable-feature=auto-gomemlimit automatically detects the container cgroup
+    # memory limit and sets Go runtime's GOMEMLIMIT to 90%, preventing Prometheus
+    # from being OOMKilled by Go runtime allocator retention during load peaks.
+    #
+    # To pass additional custom arguments without overriding this list, you can
+    # also use the upstream subchart's `extraArgs` map (e.g. server.extraArgs: { ... })
+    # which merges cleanly across Helm value layers.
     extraFlags:
       - web.enable-lifecycle
       - enable-feature=expand-external-labels
+      - enable-feature=auto-gomemlimit
     env:
       - name: POD_NAME
         valueFrom:
@@ -2157,13 +2347,14 @@ prometheus:
 #   identified.
 low_privilege: true
 
-# -- Opt-in zero-trust dataplane mode. When true, installs the Kourier+Envoy
+# -- Zero-trust dataplane mode (the default). Installs the Kourier+Envoy
 # gateway (replaces the knative-operator path), the dataproxy backend, and
-# the tunnel-service dataplane ingress. Customers must also set
-# `knative-operator.enabled: false` because Helm evaluates that subchart
-# condition at parse time and can't derive it from this flag.
+# the tunnel-service dataplane ingress. `knative-operator.enabled` must stay
+# false (its default) because Helm evaluates that subchart condition at parse
+# time and can't derive it from this flag. Set false for deployments with
+# self-hosted control planes.
 zero_trust:
-  enabled: false
+  enabled: true
 
 # -- Namespace of the control plane (for selfhosted-intracluster mode).
 # When set and secretsWatcher is enabled, RBAC roles are created in this namespace for cross-namespace access.
@@ -2474,6 +2665,16 @@ imageBuilder:
   # -- Mutually exclusive with imageBuilder.buildkit.arm.enabled.
   buildkitUriArm: ""
 
+  # -- Build every image in Nydus format, for lazy pulls. Applies to EVERY image
+  # the dataplane builds, not only some: they become Nydus-only, so they run
+  # only on nodes with the snapshotter. Requires nodeBootstrap.enabled, and
+  # every node a task pod can land on must be covered by
+  # nodeBootstrap.nodeSelector. Images pulled anywhere else (CI, a laptop, a
+  # cluster without nodeBootstrap) will not run. Switches the in-chart BuildKit
+  # (and its ARM builder) to imageBuilder.buildkit.nydus.image; an external
+  # buildkitUri / buildkitUriArm must already bundle nydus-image.
+  enableImageOptimization: false
+
   # -- The default container image repository for user-built images.
   # -- When empty, auto-generated from storage.provider, storage.region, storage.gcp.projectId,
   # -- and imageBuilder.registryName:
@@ -2560,12 +2761,23 @@ imageBuilder:
 
     image:
       # -- Image name
-      repository: docker.io/moby/buildkit
+      repository: '{{ include "dataplane.mirror" (dict "root" . "upstream" "docker.io") }}/moby/buildkit'
       # -- Pull policy
       pullPolicy: IfNotPresent
       # -- Image tag. When rootless mode is enabled, "-rootless" is appended automatically
       # -- (e.g. "buildx-stable-1" becomes "buildx-stable-1-rootless") unless the tag already contains "rootless".
       tag: "buildx-stable-1"
+
+    # -- Run Union's BuildKit image, which bundles nydus-image, instead of
+    # buildkit.image. imageBuilder.enableImageOptimization turns this on by
+    # itself; set it alone to roll the builder image out first.
+    nydus:
+      enabled: false
+      image:
+        repository: '{{ include "dataplane.unionImages" (dict "root" .) }}/buildkit'
+        # -- Defaults to the chart appVersion. "-rootless" is appended in
+        # rootless mode, as for buildkit.image.
+        tag: ""
 
     # -- Run buildkit in rootless mode (non-privileged). Uses the moby/buildkit rootless
     # -- image variant which bundles RootlessKit to set up user namespaces. Requires
@@ -2961,7 +3173,7 @@ gateway:
       containers:
         envoy:
           image:
-            repository: '{{ .Values.image.envoy.repository }}'
+            repository: '{{ tpl .Values.image.envoy.repository . }}'
             tag: '{{ .Values.image.envoy.tag | default .Chart.AppVersion }}'
           resources:
             limits:
@@ -3004,7 +3216,7 @@ gateway:
       containers:
         controller:
           image:
-            repository: '{{ .Values.image.union.repository }}'
+            repository: '{{ tpl .Values.image.union.repository . }}'
             tag: '{{ .Values.image.union.tag | default .Chart.AppVersion }}'
           resources:
             limits:

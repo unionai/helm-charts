@@ -390,6 +390,32 @@ platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
+{{- define "nodeBootstrap.selectorLabels" -}}
+app.kubernetes.io/name: union-node-bootstrap
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "nodeBootstrap.labels" -}}
+{{- include "nodeBootstrap.selectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/*
+The CLOUD_PROVIDER node-bootstrap installs for: it picks the image's
+/union/install.d/<cloud> tree (registry credential helpers, and on aws the
+criu/gvisor extras). nodeBootstrap.cloudProvider wins; else the top-level
+`provider`. Only aws, gcp and azure have an install tree, so anything else
+(custom, oci, metal) fails here rather than crash-looping on every node.
+*/}}
+{{- define "nodeBootstrap.cloudProvider" -}}
+{{- $p := .Values.nodeBootstrap.cloudProvider | default (.Values.provider | default "") -}}
+{{- if not (has $p (list "aws" "gcp" "azure")) -}}
+{{- fail (printf "nodeBootstrap.enabled needs a cloud provider of aws, gcp or azure (got %q from nodeBootstrap.cloudProvider / provider); node-bootstrap has no install tree for other platforms" $p) -}}
+{{- end -}}
+{{- $p -}}
+{{- end -}}
+
 {{/*
 Effective PriorityClass name for the uvol broker (only invoked when the broker
 is enabled): explicit name wins; else when the chart creates the class, a
@@ -774,6 +800,9 @@ plugins:
       {{- range $k, $v := .Values.additionalPodEnvVars }}
       - {{ $k }}: {{ $v | quote }}
       {{- end }}
+      {{- if not (dig "enabled" true (.Values.telemetry | default dict)) }}
+      - DO_NOT_TRACK: "1"
+      {{- end }}
       {{- $configDevEnvVars := index .Values.config.k8s.plugins.k8s "default-env-vars" }}
       {{- range $kk, $vv := $configDevEnvVars }}
       {{- range $k, $v := $vv }}
@@ -800,8 +829,9 @@ access the storage is injected.
 union-operator-prometheus
 {{- end -}}
 
+{{- /* Prometheus serves every route, its health check too, under prometheus.server.prefixURL. */ -}}
 {{- define "prometheus.health.url" -}}
-http://{{ include "prometheus.service.name" . }}:80/-/healthy
+http://{{ include "prometheus.service.name" . }}:80{{ trimSuffix "/" (dig "server" "prefixURL" "" (.Values.prometheus | default dict)) }}/-/healthy
 {{- end -}}
 
 {{- define "prometheus.service.url" -}}
@@ -814,6 +844,10 @@ http://flytepropeller:10254
 
 {{- define "proxy.health.url" -}}
 http://{{ include "union-operator.fullname" . }}-proxy:10254
+{{- end -}}
+
+{{- define "leaseworker.health.url" -}}
+http://{{ include "union-operator.fullname" . }}-leaseworker:10254
 {{- end -}}
 
 {{- define "proxy.service.url" -}}
@@ -1256,8 +1290,13 @@ Generate the buildkit image name with smart rootless suffixing.
 Appends "-rootless" to the tag when rootless mode is enabled, unless the tag already contains "rootless".
 */}}
 {{- define "imagebuilder.buildkit.image" -}}
-{{- $repo := .Values.imageBuilder.buildkit.image.repository -}}
+{{- $repo := tpl .Values.imageBuilder.buildkit.image.repository . -}}
 {{- $tag := .Values.imageBuilder.buildkit.image.tag -}}
+{{- $nydus := .Values.imageBuilder.buildkit.nydus | default dict -}}
+{{- if or $nydus.enabled .Values.imageBuilder.enableImageOptimization -}}
+  {{- $repo = tpl $nydus.image.repository . -}}
+  {{- $tag = $nydus.image.tag | default .Chart.AppVersion -}}
+{{- end -}}
 {{- $rootless := .Values.imageBuilder.buildkit.rootless -}}
 {{- $suffix := "" -}}
 {{- if and $rootless (not (hasSuffix "-rootless" $tag)) (ne $tag "rootless") -}}
@@ -1265,6 +1304,131 @@ Appends "-rootless" to the tag when rootless mode is enabled, unless the tag alr
 {{- end -}}
 {{- printf "%s:%s%s" $repo $tag $suffix -}}
 {{- end -}}
+
+{{/*
+The mirror serving an upstream registry, or the upstream itself when the
+cluster has no mirror for it (global.imageMirrors is upstream host => mirror
+prefix). docker.io also takes a mirror keyed registry-1.docker.io, as the
+webhook rules below do. Call it with the chart context and the upstream host:
+
+  repository: '{{ include "dataplane.mirror" (dict "root" . "upstream" "public.ecr.aws") }}/aws-cli/aws-cli'
+
+Values that name an image run through tpl at their call sites, so this
+resolves wherever the value is rendered.
+*/}}
+{{- define "dataplane.mirror" -}}
+{{- $mirrors := (.root.Values.global | default dict).imageMirrors | default dict -}}
+{{- $mirror := index $mirrors .upstream -}}
+{{- if eq .upstream "docker.io" -}}
+{{- $mirror = $mirror | default (index $mirrors "registry-1.docker.io") -}}
+{{- end -}}
+{{ $mirror | default .upstream }}
+{{- end }}
+
+{{/*
+Where Union's own images (public.ecr.aws/unionai/<image>) are pulled from, as a
+prefix to put "/<image>" after. A cluster with a us-docker.pkg.dev mirror pulls
+Union's public Artifact Registry copy (us-docker.pkg.dev/union-public-images/unionai)
+through it; any other cluster pulls from ECR Public, through its ECR Public
+mirror if it has one.
+
+  repository: '{{ include "dataplane.unionImages" (dict "root" .) }}/unionoperator'
+*/}}
+{{- define "dataplane.unionImages" -}}
+{{- $mirrors := (.root.Values.global | default dict).imageMirrors | default dict -}}
+{{- with index $mirrors "us-docker.pkg.dev" -}}
+{{ . }}/union-public-images/unionai
+{{- else -}}
+{{ index $mirrors "public.ecr.aws" | default "public.ecr.aws" }}/unionai
+{{- end -}}
+{{- end }}
+
+{{- /*
+Managed-image webhook rules that pull task-pod images through the dataplane's
+image mirror. Takes a dict:
+  mirrors: global.imageMirrors, upstream host => mirror prefix
+  paths:   flytepropellerwebhook.imageMirrorPaths, upstream host => namespaces to rewrite
+Returns the rules as a YAML list, empty when there are no mirrors.
+
+One rule per namespace whose upstream has a mirror; "*" rewrites the whole
+registry. docker.io also matches registry-1.docker.io, and takes a mirror keyed
+by either. Plus the Flyte v2 default task image when there is a ghcr.io mirror:
+default-image resolution points it at the per-org orgs/<org>/flyte repository,
+which nothing seeds and the 30-day cleanup empties, so an SDK version whose
+image has aged out pulls a 404. Its source, ghcr.io/flyteorg/flyte, always has
+it.
+
+The mutator applies rules in order, so callers append these after the
+configured ones: a configured rule that rewrites to an upstream is then routed
+through the mirror as well.
+*/}}
+{{- define "dataplane.webhook.imageMirrorRules" -}}
+{{- $mirrors := .mirrors | default dict }}
+{{- $rules := list }}
+{{- range $upstream, $namespaces := .paths | default dict }}
+{{- $host := regexQuoteMeta $upstream }}
+{{- $mirror := index $mirrors $upstream }}
+{{- if eq $upstream "docker.io" }}
+{{- $host = `(?:registry-1\.)?docker\.io` }}
+{{- $mirror = $mirror | default (index $mirrors "registry-1.docker.io") }}
+{{- end }}
+{{- if $mirror }}
+{{- range $namespace := $namespaces }}
+{{- $path := ternary "(.+)" (printf "(%s/.+)" (regexQuoteMeta $namespace)) (eq $namespace "*") }}
+{{- $rules = append $rules (dict "regex" (printf "^%s/%s$" $host $path) "replacementPattern" (printf "%s/$1" $mirror)) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- with index $mirrors "ghcr.io" }}
+{{- $rules = append $rules (dict "regex" `^.+/orgs/[^/]+/flyte:(py[0-9]+\.[0-9]+-v.+)$` "replacementPattern" (printf "%s/flyteorg/flyte:$1" .)) }}
+{{- end }}
+{{- toYaml $rules }}
+{{- end }}
+
+{{- /*
+This chart's image-mirror rules for task pods, as a YAML list: empty without
+global.imageMirrors, or when flytepropellerwebhook.webhook.webhooks.managedImage.enabled
+is explicitly false.
+*/}}
+{{- define "dataplane.webhook.mirrorRules" -}}
+{{- $managed := .Values.flytepropellerwebhook.webhook.webhooks.managedImage }}
+{{- if and (hasKey $managed "enabled") (not $managed.enabled) }}
+{{- toYaml list }}
+{{- else }}
+{{- include "dataplane.webhook.imageMirrorRules" (dict "mirrors" (.Values.global | default dict).imageMirrors "paths" .Values.flytepropellerwebhook.imageMirrorPaths) }}
+{{- end }}
+{{- end }}
+
+{{- /*
+Whether the chart-managed MutatingWebhookConfiguration registers the
+managed-image path: managedImage.enabled when it is set, otherwise whenever
+there are image-mirror rules for it to apply. "true" or empty.
+*/}}
+{{- define "dataplane.webhook.managedImageRegistered" -}}
+{{- $managed := .Values.flytepropellerwebhook.webhook.webhooks.managedImage }}
+{{- if hasKey $managed "enabled" }}
+{{- if $managed.enabled }}true{{ end }}
+{{- else if include "dataplane.webhook.mirrorRules" . | fromYamlArray }}true
+{{- end }}
+{{- end }}
+
+{{- /*
+The pod webhook's config with the image-mirror rules appended to
+webhook.images.images (after the configured rules) and the managed-image
+mutator enabled, when global.imageMirrors yields any. Takes a dict:
+  root:    the chart context
+  webhook: a copy of config.core.webhook, changed in place
+*/}}
+{{- define "dataplane.webhook.withImageMirrorRules" -}}
+{{- $webhook := .webhook }}
+{{- $rules := include "dataplane.webhook.mirrorRules" .root | fromYamlArray }}
+{{- if $rules }}
+{{- $images := $webhook.images | default dict }}
+{{- $_ := set $images "enabled" true }}
+{{- $_ := set $images "images" (concat ($images.images | default list) $rules) }}
+{{- $_ := set $webhook "images" $images }}
+{{- end }}
+{{- end }}
 
 {{- define "ingress.serving.host" -}}
 {{- if .Values.ingress.serving.hostOverride }}
@@ -1594,6 +1758,7 @@ the caller that emits directly (the operator) applies tpl itself.
 {{- $heartbeat := dict }}
 {{- range $key, $value := .Values.config.operator.dependenciesHeartbeat }}
 {{- if and (eq $key "propeller") (not $.Values.flytepropeller.enabled) }}
+{{- else if and (eq $key "leaseworker") (not $.Values.leaseworker.enabled) }}
 {{- /* The executor was removed from this chart; drop stale overlay entries so
        the operator doesn't heartbeat a nonexistent service. */}}
 {{- else if eq $key "executor" }}
@@ -1620,6 +1785,7 @@ union-pod-webhook
 {{- $_ := set $webhook "serviceName" (include "flytepropellerwebhook.serviceName" .) }}
 {{- $_ := set $webhook "secretName" (include "flytepropellerwebhook.secretName" .) }}
 {{- $_ := set $webhook "localCert" true }}
+{{- include "dataplane.webhook.withImageMirrorRules" (dict "root" . "webhook" $webhook) }}
 {{- if or .Values.low_privilege (and .Values.flytepropellerwebhook.enabled .Values.flytepropellerwebhook.managedConfig) }}
 {{- $_ := set $webhook "disableCreateMutatingWebhookConfig" true }}
 {{- end }}
@@ -1669,5 +1835,148 @@ tcp://{{ include "imagebuilder.buildkit.workloadName" (merge (dict "buildkitArm"
 {{- fail "imageBuilder.buildkitUriArm requires a primary BuildKit endpoint (buildkitUri or buildkit.enabled)" -}}
 {{- end -}}
 {{- .Values.imageBuilder.buildkitUriArm -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+operator.pluginsConfig renders plugins.yaml for the operator's own ConfigMap: the
+plugin configuration the cluster snapshot reports plugins and connectors from
+(unionai/cloud operator/pkg/plugin_config.go), taken from the same values that
+configure the leaseworker and propeller, so the operator reads it from memory like the
+rest of its configuration rather than fetching their ConfigMaps. The operator loads its
+configuration in strict mode and links only the sections rendered here: the enabled
+plugin ids, the agent-service and connector-service sections, the task log link
+configuration (the leaseworker's when it runs, propeller's otherwise), and the
+manager's sharding. Everything else in config.enabled_plugins and config.core configures
+plugins the operator does not link and stays out. As in the leaseworker ConfigMap, the
+connector sections are rendered only while the connector is deployed. Renders nothing
+when none of them is configured.
+*/}}
+{{- define "operator.pluginsConfig" -}}
+{{- $values := .Values.config | default dict -}}
+{{- $enabledPlugins := index $values "enabled_plugins" | default dict -}}
+{{- $sections := dict -}}
+{{- with index (index (index $enabledPlugins "tasks" | default dict) "task-plugins" | default dict) "enabled-plugins" -}}
+{{- $_ := set $sections "tasks" (dict "task-plugins" (dict "enabled-plugins" .)) -}}
+{{- end -}}
+{{- $services := dict -}}
+{{- if .Values.flyteconnector.enabled -}}
+{{- $plugins := index $enabledPlugins "plugins" | default dict -}}
+{{- range $id := list "agent-service" "connector-service" -}}
+{{- with index $plugins $id -}}
+{{- $_ := set $services $id . -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- /* The task logs of the dispatcher that runs: the leaseworker's, as its ConfigMap
+     picks them (the deprecated executor.task_logs first), with no fallback to
+     propeller's, which the leaseworker does not read either. */ -}}
+{{- $taskLogs := dict -}}
+{{- if .Values.leaseworker.enabled -}}
+{{- $taskLogs = (.Values.executor | default dict).task_logs | default .Values.leaseworker.task_logs | default dict -}}
+{{- else -}}
+{{- $taskLogs = index $values "task_logs" | default dict -}}
+{{- end -}}
+{{- with index (index $taskLogs "plugins" | default dict) "logs" -}}
+{{- $_ := set $services "logs" . -}}
+{{- end -}}
+{{- if $services -}}
+{{- $_ := set $sections "plugins" $services -}}
+{{- end -}}
+{{- with index (index (index $values "core" | default dict) "manager" | default dict) "shard" -}}
+{{- $_ := set $sections "manager" (dict "shard" .) -}}
+{{- end -}}
+{{- if $sections -}}
+{{- tpl (toYaml $sections) $ -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+dataplane.componentLabel is the label the operator's cluster snapshot discovers Union
+workloads by (unionai/cloud operator/pkg/components.go): every Deployment, DaemonSet and
+StatefulSet this chart provisions carries it in metadata.labels and in its pod template,
+with the component's id as the value (see CONVENTIONS.md). Emit it last in the labels
+block, after the user-extensible labels, so a values layer that sets the same key cannot
+override it: the last duplicate key wins. Never add it to a selector: a Deployment
+selector is immutable. Call with the id, e.g.
+{{ include "dataplane.componentLabel" "leaseworker" | nindent 4 }}.
+*/}}
+{{- define "dataplane.componentLabel" -}}
+platform.union.ai/component: {{ . }}
+{{- end -}}
+
+{{/*
+dataplane.configMapDataChecksum is the config hash the cluster health contract shares
+with the operator: the hex sha256 of the ConfigMap's data serialized as JSON, with the
+keys sorted (helm's toJson is Go's json.Marshal, which the operator uses too, see
+unionai/cloud operator/common/componentconfig). Stamped as the configChecksum
+annotation on the pod template of every workload that runs from a ConfigMap the
+operator tracks, so the pods carry the hash of the data they were started on and the
+operator can compare it with the live ConfigMap: ComponentConfig.config_hash in the
+snapshot is the same value over the ConfigMap's current data, and a pod whose
+PodInstanceInfo.config_hash differs from it does not run that data. The config syncer
+stamps the same value when it rolls a workload onto a synced config. The same helper
+lives in the union-operator and flyte-core charts of unionai/cloud; a change here is a
+change there too.
+
+Takes a dict: root (the top-level context), path (the rendered ConfigMap template's
+path, as print .Template.BasePath "/propeller/configmap.yaml" gives it) and name (the
+ConfigMap to hash, since a template may render several). Only the data is hashed,
+never the manifest text, so a change of labels or whitespace does not roll the pods.
+
+The data must be read exactly as the API server stores it, so the include output is
+treated the way helm treats a rendered file: "<no value>" becomes "" (helm does that on
+the final render but not on include), and each document keeps the newline that ends
+it, which the split removes and a trailing block scalar's final line break needs.
+
+A name that matches none of the ConfigMaps the template rendered is a template error,
+not a hash: the stamp would otherwise be the constant sha256 of "{}", the pods would
+stop rolling on config change and the snapshot would report them drifted for good. So
+the helper fails the render then, and on a document that does not parse. A template
+that rendered nothing (gated off by values) still hashes "{}", as the workload that
+uses it is gated off with it.
+*/}}
+{{- define "dataplane.configMapDataChecksum" -}}
+{{- $data := dict -}}
+{{- $found := false -}}
+{{- $seen := list -}}
+{{- range $doc := splitList "\n---" (include .path .root | replace "<no value>" "") -}}
+{{- $obj := fromYaml (print $doc "\n") -}}
+{{- if hasKey $obj "Error" -}}
+{{- fail (printf "configMapDataChecksum: %s does not parse: %s" $.path (get $obj "Error")) -}}
+{{- end -}}
+{{- if eq (get $obj "kind") "ConfigMap" -}}
+{{- $cmName := dig "metadata" "name" "" $obj -}}
+{{- $seen = append $seen $cmName -}}
+{{- if eq $cmName $.name -}}
+{{- $data = (get $obj "data") | default dict -}}
+{{- $found = true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if and (not $found) $seen -}}
+{{- fail (printf "configMapDataChecksum: %s renders no ConfigMap named %q (found %v)" $.path $.name $seen) -}}
+{{- end -}}
+{{- toJson $data | sha256sum -}}
+{{- end -}}
+
+{{/*
+imageBuilder.enableImageOptimization makes every image the dataplane builds a
+Nydus-only image, which a node without the Nydus snapshotter unpacks into a
+broken root filesystem. So it requires nodeBootstrap.enabled, named on its own
+rather than implied: node-bootstrap is a privileged DaemonSet that restarts
+containerd and kubelet, and two flags let a cluster roll the snapshotter out
+first and turn optimization on after. The in-chart builders (primary and ARM)
+switch to the Nydus BuildKit image by themselves (imagebuilder.buildkit.image);
+an external buildkitUri / buildkitUriArm must carry nydus-image already.
+*/}}
+{{- define "imagebuilder.imageOptimization" -}}
+{{- if .Values.imageBuilder.enableImageOptimization -}}
+{{- if not .Values.nodeBootstrap.enabled -}}
+{{- fail "imageBuilder.enableImageOptimization needs nodeBootstrap.enabled: every image the dataplane builds becomes Nydus-only, and nodes without the Nydus snapshotter cannot run it" -}}
+{{- end -}}
+true
+{{- else -}}
+false
 {{- end -}}
 {{- end -}}

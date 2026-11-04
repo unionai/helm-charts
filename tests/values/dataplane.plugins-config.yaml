@@ -1,0 +1,67 @@
+# helm-values: examples/values-test-certs.yaml
+# Test fixture: the operator's plugins.yaml with every section it carries. The
+# leaseworker runs and configures task logs, the v1 agent service and the v2 connector
+# service are both enabled with named endpoints, and propeller is sharded; exercises
+# the operator.pluginsConfig helper's filtering (operator/configmap.yaml).
+host: byok.us-west-2.union.ai
+clusterName: test-e2e-plugins
+orgName: byok
+provider: gcp
+low_privilege: false
+storage:
+  provider: gcs
+  bucketName: test-gcp-bucket
+  fastRegistrationBucketName: test-gcp-bucket
+  region: us-central1
+  enableMultiContainer: true
+  gcp:
+    projectId: test-gcp-project-123
+secrets:
+  admin:
+    create: true
+    clientId: byok-test-e2e-plugins-operator
+    clientSecret: test-not-real-secret
+additionalServiceAccountAnnotations:
+  iam.gke.io/gcp-service-account: 'union-backend@test-gcp-project-123.iam.gserviceaccount.com'
+userRoleAnnotationKey: iam.gke.io/gcp-service-account
+userRoleAnnotationValue: union-worker@test-gcp-project-123.iam.gserviceaccount.com
+leaseworker:
+  enabled: true
+  task_logs:
+    plugins:
+      logs:
+        kubernetes-enabled: false
+        cloudwatch-enabled: true
+        templates:
+          - displayName: Task Logs
+            templateUris:
+              - "/console/projects/{{`{{.executionProject}}`}}/domains/{{`{{.executionDomain}}`}}/executions/{{`{{.executionName}}`}}"
+config:
+  core:
+    manager:
+      shard:
+        type: Hash
+        shard-count: 2
+  enabled_plugins:
+    plugins:
+      agent-service:
+        defaultAgent:
+          endpoint: "k8s:///flyteagent.{{ .Release.Namespace }}:8000"
+          insecure: true
+        agents:
+          dgx_agent:
+            endpoint: "k8s:///dgxagent.{{ .Release.Namespace }}:8000"
+            insecure: true
+      connector-service:
+        defaultConnector:
+          endpoint: "k8s:///flyteconnector.{{ .Release.Namespace }}:8000"
+      # Not a section the operator links; must stay out of plugins.yaml.
+      ray:
+        ttlSecondsAfterFinished: 3600
+    tasks:
+      task-plugins:
+        enabled-plugins:
+          - container
+          - agent-service
+          - connector-service
+          - ray
