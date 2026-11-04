@@ -1,0 +1,60 @@
+name: Fleet schema compatibility
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, closed]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      chart_pr:
+        description: Chart PR to validate, or 0 to refresh cloud dependencies
+        type: string
+        default: '0'
+permissions:
+  contents: read
+jobs:
+  enqueue:
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch on trusted main without exposing the bot token to a PR context
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHART_PR: ${{ github.event.pull_request.number }}
+        run: gh workflow run fleet-schema.yaml --repo unionai/helm-charts --ref main -f chart_pr="$CHART_PR"
+  notify:
+    if: github.event_name != 'pull_request_target' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: fleet-schema-dispatch
+      cancel-in-progress: false
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.FLEET_SCHEMA_BOT_ROLE_ARN }}
+          aws-region: us-east-2
+      - name: Load the existing bot credential
+        run: |
+          schema_token="$(aws secretsmanager get-secret-value --secret-id buildkite/github-unionai-bot-token --query SecretString --output text)"
+          echo "::add-mask::$schema_token"
+          printf 'GH_TOKEN=%s\n' "$schema_token" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          repository: unionai/cloud
+          ref: main
+          token: ${{ env.GH_TOKEN }}
+          persist-credentials: false
+      - name: Refresh the chart or its cloud dependencies
+        env:
+          CHART_PR: ${{ inputs.chart_pr || '0' }}
+        run: |
+          if [ "$CHART_PR" = 0 ]; then
+            python3 scripts/fleet_schema/route.py --refresh
+          else
+            python3 scripts/fleet_schema/route.py --chart-pr "$CHART_PR"
+          fi

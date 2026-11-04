@@ -36,11 +36,9 @@ rbac-guard-test: requirements
 check-image-paths:
 	python3 scripts/check-image-paths.py
 
-# charts/dataplane/values.schema.json is generated from the `# @schema` blocks
-# in values.yaml (scripts/values_schema.py). The check fails when the committed
-# file is stale, then verifies every value path Fleet writes
-# (tests/fleet-values-paths.txt) is still accepted by the chart. No helm, no
-# network.
+# Combine chart-owned annotations with cloud's generated Fleet contract. Check
+# all common/vendor/merged coverage scenarios offline; cross-repo CI also checks
+# the real package through Fleet registration and target-values validation.
 .PHONY: values-schema
 values-schema: requirements
 	uv run python scripts/values_schema.py
