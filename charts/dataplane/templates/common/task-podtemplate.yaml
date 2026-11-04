@@ -1,4 +1,4 @@
-{{- if or (include "singleNamespace" .) (include "operator.enableDepot" .) .Values.taskPodTemplate.nodeSelector .Values.taskPodTemplate.affinity .Values.taskPodTemplate.tolerations }}
+{{- if or (include "singleNamespace" .) (include "operator.enableDepot" .) .Values.taskPodTemplate.nodeSelector .Values.taskPodTemplate.affinity .Values.taskPodTemplate.tolerations .Values.workloadIdentity.enabled }}
 apiVersion: v1
 kind: PodTemplate
 metadata:
@@ -13,11 +13,30 @@ template:
     imagePullSecrets:
       - name: depot-token
 {{- end }}
+{{- if .Values.workloadIdentity.enabled }}
+    # Workload identity: a token bound to this pod, for audience
+    # union-control-plane only (it is no good against the Kubernetes API),
+    # rotated by the kubelet. The pod presents it to the control plane.
+    volumes:
+      - name: union-workload-token
+        projected:
+          sources:
+            - serviceAccountToken:
+                audience: union-control-plane
+                expirationSeconds: {{ .Values.workloadIdentity.projectedTokenExpirationSeconds }}
+                path: token
+{{- end }}
     containers:
       - name: default
         image: docker.io/rwgrim/docker-noop
 {{- with .Values.taskPodTemplate.workingDir }}
         workingDir: {{ . | quote }}
+{{- end }}
+{{- if .Values.workloadIdentity.enabled }}
+        volumeMounts:
+          - name: union-workload-token
+            mountPath: {{ .Values.workloadIdentity.tokenMountPath }}
+            readOnly: true
 {{- end }}
 {{- with .Values.taskPodTemplate.nodeSelector }}
     nodeSelector:
