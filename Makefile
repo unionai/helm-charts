@@ -18,7 +18,7 @@ generate-expected: $(GEN_DIR) vendor-crds
 	./tests/run.sh generate
 
 .PHONY: test
-test: check-vendored-crds helm-test kubeconform-test check-image-paths rbac-guard-test
+test: check-vendored-crds helm-test kubeconform-test check-image-paths check-image-prewarm rbac-guard-test
 
 .PHONY: snapshot-generator-test
 snapshot-generator-test:
@@ -35,6 +35,13 @@ rbac-guard-test: requirements
 .PHONY: check-image-paths
 check-image-paths:
 	python3 scripts/check-image-paths.py
+
+# The image pre-warm Job's image list is kept by hand; fail if a mirror test
+# profile's snapshot pulls an image through the mirror that the Job doesn't
+# warm. Reads tests/generated/, like check-image-paths.
+.PHONY: check-image-prewarm
+check-image-prewarm: requirements
+	uv run python scripts/check-image-prewarm.py
 
 # Vendored CRDs (crds/<name>/) — see crds/README.md.
 # Each subdirectory has its own scripts/sync.sh (refresh from upstream chart)
