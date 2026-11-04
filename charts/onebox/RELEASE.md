@@ -1,5 +1,12 @@
 # onebox — Release Notes
 
+## Unreleased
+
+- `serving.appHostOnly`: path-based apps on a host of their own, which serves
+  only apps, so app scripts run on a different origin from the console.
+- The apps gateway removes the caller's bearer token once it has authorized
+  them (`UNION_AUTH_STRIPCALLERCREDENTIALS`), so apps never receive it.
+
 ## 2026.11.1
 
 `version` and `appVersion` move to `2026.11.1`. The chart can now run everything

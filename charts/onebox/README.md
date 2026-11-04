@@ -331,10 +331,24 @@ their own; pass it to other servers (Jupyter's `base_url`). For servers that
 only serve at `/`, `serving.stripAppPathPrefix: true` removes the path and
 sends it as `X-Forwarded-Prefix`.
 
-Path-based apps share the host's origin, and so its cookies, with the console
-and everything else on the host. Any app can make requests as the user who
+Path-based apps on the console's host share its origin with the console and
+everything else on the host. An app's script can make requests as the user who
 opens it, so use them only for apps whose authors you trust as much as the
-platform. Host-based app URLs keep apps isolated.
+platform. To keep apps apart without wildcard DNS, give them a host of their
+own and set `serving.appHostOnly`:
+
+```yaml
+serving:
+  publicURLPattern: https://apps.example.com/onebox/apps/%s/
+  appHostOnly: true
+```
+
+That host then serves apps and nothing else, and the console's host serves no
+apps. Point it at the same proxy as onebox. Host-based app URLs keep apps
+isolated too. In every mode onebox keeps the user's session cookie, the
+proxy's tokens and its shared secret from apps, the apps gateway removes the
+caller's bearer token once it has authorized them, and an app cannot set the
+session cookie.
 
 Each `basePath` segment must be a lowercase DNS label. It needs onebox and
 onebox-console images with base path support.
