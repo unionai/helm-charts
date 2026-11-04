@@ -2,7 +2,9 @@
 
 ## 2026.11.2
 
-`version` and `appVersion` move `2026.11.0` → `2026.11.2`. No template or values
+- Images no longer trust the root CAs behind the compromised eMudhra intermediates (`CVE-2026-114406`): OS CA bundles, certifi, Node, Envoy and `uv` are updated. `uv` in v2 customer image builds moves from 0.9.5 to 0.13.6, which can change how dependencies resolve
+
+- `version` and `appVersion` move `2026.11.0` → `2026.11.2`. No template or values
 changes; lockstep release picking up the `2026.11.2` control-plane images.
 
 ## 2026.11.0
