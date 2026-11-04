@@ -58,7 +58,10 @@ spec:
       securityContext:
         {{- $podSecurityContext | fromYaml | toYaml | nindent 8 }}
       {{- end }}
+      {{- $hasVolumes := or (ne $service.key "mcp") ($service.config.apiKeyOverrides) }}
+      {{- if $hasVolumes }}
       volumes:
+      {{- if not (eq $service.key "mcp") }}
       - name: secrets
         secret:
           secretName: {{ include "unionai.secretName" $service }}
@@ -68,6 +71,7 @@ spec:
       - name: config
         configMap:
           name: {{ include "unionai.fullname" $service }}
+      {{- end }}
       {{- range $entry := ($service.config.apiKeyOverrides | default list) }}
       {{- $ident := dict "key" $entry.key "clusterName" ($entry.clusterName | default "") }}
       - name: {{ include "controlplane.apiKeyOverride.volumeName" $ident }}
@@ -78,6 +82,7 @@ spec:
             path: client_id
           - key: {{ include "controlplane.apiKeyOverride.clientSecretKey" $entry }}
             path: client_secret
+      {{- end }}
       {{- end }}
       {{- with $service.config.initContainers }}
       initContainers:
@@ -119,6 +124,9 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           ports:
+            {{- if $service.config.ports }}
+            {{- toYaml $service.config.ports | nindent 12 }}
+            {{- else }}
             - name: grpc
               containerPort: 8080
               protocol: TCP
@@ -135,6 +143,8 @@ spec:
               protocol: TCP
           {{- end }}
           {{- end }}
+            {{- end }}
+          {{- if not (eq $service.key "mcp") }}
           volumeMounts:
             - name: db-pass
               mountPath: /etc/db
@@ -148,6 +158,15 @@ spec:
               mountPath: {{ include "controlplane.apiKeyOverride.mountDir" $ident }}
               readOnly: true
             {{- end }}
+          {{- else if $service.config.apiKeyOverrides }}
+          volumeMounts:
+            {{- range $entry := ($service.config.apiKeyOverrides | default list) }}
+            {{- $ident := dict "key" $entry.key "clusterName" ($entry.clusterName | default "") }}
+            - name: {{ include "controlplane.apiKeyOverride.volumeName" $ident }}
+              mountPath: {{ include "controlplane.apiKeyOverride.mountDir" $ident }}
+              readOnly: true
+            {{- end }}
+          {{- end }}
           {{- $env := include "unionai.env" $service }}
           {{- if $env }}
           env:
@@ -158,18 +177,42 @@ spec:
           resources:
             {{- $res | fromYaml | toYaml | nindent 14 }}
           {{- end }}
+          {{- if $service.config.livenessProbe }}
+          livenessProbe:
+            {{- toYaml $service.config.livenessProbe | nindent 12 }}
+          {{- else if $service.config.ports }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          {{- else }}
           livenessProbe:
             httpGet:
               path: /healthcheck
               port: debug
             initialDelaySeconds: 3
             periodSeconds: 3
+          {{- end }}
+          {{- if $service.config.readinessProbe }}
+          readinessProbe:
+            {{- toYaml $service.config.readinessProbe | nindent 12 }}
+          {{- else if $service.config.ports }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          {{- else }}
           readinessProbe:
             httpGet:
               path: /healthcheck
               port: debug
             initialDelaySeconds: 3
             periodSeconds: 3
+          {{- end }}
       {{- $node := include "unionai.nodeSelector" $service }}
       {{- if $node }}
       nodeSelector:
