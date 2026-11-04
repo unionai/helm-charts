@@ -1,0 +1,201 @@
+{{- include "onebox.bundled" . }}
+{{- if .Values.bundled.enabled }}
+{{- $name := include "onebox.fullname" . }}
+{{- $b := .Values.bundled }}
+# bundled.enabled: Postgres and an S3-compatible store for a proof of value.
+# Their pods carry their own app.kubernetes.io/name, so onebox's Service and
+# NetworkPolicy never select them.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}-postgres
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+  annotations:
+    # Uninstalling keeps the data; delete the claim to drop it.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with $b.postgres.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $b.postgres.storage }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}-postgres
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}-postgres
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $name }}-postgres
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: postgres
+          image: {{ $b.postgres.image }}
+          env:
+            - {name: POSTGRES_USER, value: union}
+            - {name: POSTGRES_DB, value: union}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "onebox.dbSecretName" . }}
+                  key: password
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: [pg_isready, -U, union]
+          resources:
+            {{- toYaml $b.postgres.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ $name }}-postgres
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-postgres
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ $name }}-postgres
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - port: 5432
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}-s3
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with $b.s3.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $b.s3.storage }}
+---
+# The store accepts any credentials; onebox and task pods still need some.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}-s3
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  AWS_ACCESS_KEY_ID: onebox
+  AWS_SECRET_ACCESS_KEY: onebox
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}-s3
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}-s3
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $name }}-s3
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: s3
+          image: {{ $b.s3.image }}
+          env:
+            - {name: FLOCI_DEFAULT_REGION, value: us-east-1}
+            - {name: FLOCI_STORAGE_MODE, value: hybrid}
+            - {name: FLOCI_STORAGE_PERSISTENT_PATH, value: /data}
+            - {name: FLOCI_SERVICES_LAMBDA_ENABLED, value: "false"}
+            - {name: FLOCI_SERVICES_RDS_ENABLED, value: "false"}
+            - {name: FLOCI_SERVICES_ECS_ENABLED, value: "false"}
+            - {name: FLOCI_SERVICES_EKS_ENABLED, value: "false"}
+            - {name: FLOCI_SERVICES_EC2_ENABLED, value: "false"}
+          ports:
+            - containerPort: 4566
+          readinessProbe:
+            tcpSocket:
+              port: 4566
+          resources:
+            {{- toYaml $b.s3.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+        # Creates the bucket, and the CORS rule the console's presigned reads
+        # need, whenever the store starts; both calls are idempotent.
+        - name: bucket
+          image: {{ $b.jobImage }}
+          command:
+            - sh
+            - -c
+            - |
+              until curl -fsS -o /dev/null -X PUT http://127.0.0.1:4566/{{ $b.s3.bucket }} || curl -fsS -o /dev/null http://127.0.0.1:4566/{{ $b.s3.bucket }}; do sleep 2; done
+              until curl -fsS -o /dev/null -X PUT -H 'Content-Type: application/xml' 'http://127.0.0.1:4566/{{ $b.s3.bucket }}?cors' --data-binary \
+                '<CORSConfiguration><CORSRule><AllowedOrigin>*</AllowedOrigin><AllowedMethod>GET</AllowedMethod><AllowedMethod>HEAD</AllowedMethod><AllowedHeader>*</AllowedHeader><MaxAgeSeconds>3600</MaxAgeSeconds></CORSRule></CORSConfiguration>'; do sleep 2; done
+              echo bucket ready
+              exec sleep 2147483647
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ $name }}-s3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-s3
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+spec:
+  {{- if $b.s3.nodePort }}
+  type: NodePort
+  {{- end }}
+  selector:
+    app.kubernetes.io/name: {{ $name }}-s3
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: s3
+      port: 4566
+      {{- with $b.s3.nodePort }}
+      nodePort: {{ . }}
+      {{- end }}
+{{- end }}

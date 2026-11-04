@@ -58,6 +58,17 @@ imageBuilder:
       [registry."ghcr.io"]
         mirrors = ["k3d-registry:5000"]
 
+      # The image builder's frontend (public.ecr.aws/.../frontend-v2) through CI's
+      # authenticated pull-through cache (tools/dataplane/k3d/up.sh), so it isn't
+      # throttled by public.ecr.aws's anonymous quota. Best-effort like the
+      # mirror above: unreachable (e.g. a local cluster) means public.ecr.aws.
+      [registry."public.ecr.aws"]
+        mirrors = ["k3d-ecr-proxy:5000"]
+
+      [registry."k3d-ecr-proxy:5000"]
+        http = true
+        insecure = true
+
 # Image-pull resilience for the shared CI runner.
 # flytepropeller's k8s plugin reaps a pod stuck in ImagePullBackOff once
 # image-pull-backoff-grace-period elapses (default 3m) — seen as
@@ -163,10 +174,9 @@ ingress-nginx:
 
 # leaseworker (nworker) is the flyte-v2 action dispatcher: it leases QUEUED
 # actions off the cluster queue and hands them to propeller. REQUIRED for tasks
-# to run — without it every action sits in ACTION_PHASE_QUEUED forever. It is the
-# replacement for the retired executor (disabled below). The chart default
-# requests 4 CPU / 8 Gi (too big for the 4-vCPU runner), so shrink the request; it
-# still bursts to its limit when busy.
+# to run — without it every action sits in ACTION_PHASE_QUEUED forever. The chart
+# default requests 4 CPU / 8 Gi (too big for the 4-vCPU runner), so shrink the
+# request; it still bursts to its limit when busy.
 leaseworker:
   enabled: true
   resources:
@@ -178,7 +188,7 @@ leaseworker:
 flyteconnector:
   enabled: false
 
-# Lower operator/executor/proxy requests so all pods fit on the runner
+# Lower operator/proxy requests so all pods fit on the runner
 # alongside k3s. The operator defaults to a 1-CPU request — the single biggest
 # consumer on the 4-vCPU node — which left no room for the verify_app Knative
 # revision to schedule (RevisionFailed: Insufficient cpu). It bursts to its
@@ -188,11 +198,6 @@ operator:
     requests:
       cpu: "300m"
       memory: "512Mi"
-
-# executor is retired — leaseworker (above) is its v2 replacement. Disabling it
-# frees ~200m for the leaseworker and avoids running two dispatchers.
-executor:
-  enabled: false
 
 proxy:
   resources:

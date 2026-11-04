@@ -16,7 +16,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: {{ include (print .Template.BasePath "/operator/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+        configChecksum: {{ include "dataplane.configMapDataChecksum" (dict "root" . "path" (print .Template.BasePath "/operator/configmap.yaml") "name" (include "union-operator.fullname" .)) | quote }}
         {{- with .Values.proxy.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -57,7 +57,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {{- toYaml .Values.proxy.securityContext | nindent 12 }}
-          image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
+          image: "{{ tpl .Values.image.union.repository . }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.union.pullPolicy }}
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -99,7 +99,7 @@ spec:
         - name: "tunnel"
           securityContext:
               {{- toYaml .Values.operator.securityContext | nindent 12 }}
-          image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
+          image: "{{ tpl .Values.image.union.repository . }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.union.pullPolicy }}
           args:
             - cloudflared

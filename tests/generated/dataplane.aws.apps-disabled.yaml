@@ -291,11 +291,23 @@ data:
       disableCreateMutatingWebhookConfig: true
       embeddedSecretManagerConfig:
         clusterName: 'test-cluster-name'
+        fileMountInitContainer:
+          image: 'public.ecr.aws/docker/library/busybox:latest'
         imagePullSecrets:
           enabled: true
         k8sConfig:
           namespace: 'union'
         type: 'K8s'
+      images:
+        enabled: false
+        labelSelector:
+          matchExpressions:
+          - key: organization
+            operator: Exists
+          - key: project
+            operator: Exists
+          - key: domain
+            operator: Exists
       listenPort: '9443'
       localCert: true
       secretManagerTypes:
@@ -3372,9 +3384,6 @@ data:
       type: Authorizer
     operator:
       enableTunnelService: true
-      clusterHealth:
-        # Where operator/deployment.yaml mounts the connector-config ConfigMap.
-        connectorConfigPath: /etc/union/connector-config
       #  enableDepot: false
       tunnel:
         enableDirectToAppIngress: false
@@ -3488,10 +3497,10 @@ metadata:
   name: release-name-prometheus
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.10.0
+    helm.sh/chart: dataplane-2026.11.0
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.10.0"
+    app.kubernetes.io/version: "2026.11.0"
     app.kubernetes.io/managed-by: Helm
 data:
   allow-snippet-annotations: "false"
@@ -4915,6 +4924,9 @@ rules:
       - patch
       - post
       - deletecollection
+  # nodes are cluster-scoped and so cannot be granted by a namespaced Role. Node access
+  # comes from the <namespace>-<operator>-node-capacity ClusterRole, rendered independently
+  # of low_privilege.
   - apiGroups:
       - '*'
     resources:
@@ -4924,7 +4936,6 @@ rules:
       - podtemplates
       - secrets
       - namespaces
-      - nodes
     verbs:
       - get
       - list
@@ -5641,7 +5652,7 @@ spec:
         # In-place upgrade safe: kernel mounts and pod-held fds survive
         # restarts; the state journal + client fd re-registration resume the rest.
         - name: uvol-mount-broker
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
+          image: "public.ecr.aws/unionai/unionoperator:2026.11.0"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           args:
@@ -5877,6 +5888,7 @@ spec:
             - --web.console.templates=/etc/prometheus/consoles
             - --web.enable-lifecycle
             - --enable-feature=expand-external-labels
+            - --enable-feature=auto-gomemlimit
             - --web.route-prefix=/prometheus
             - --web.external-url=/prometheus/
           ports:
@@ -5968,7 +5980,7 @@ spec:
       containers:
         - command:
             - c0
-          image: "ghcr.io/flyteorg/flyte-connectors:py3.13-2.0.0b50.dev3-g695bb1db3.d20260122"
+          image: "ghcr.io/flyteorg/flyte-connectors:py3.13-v2.12.1"
           imagePullPolicy: "IfNotPresent"
           name: flyteconnector
           readinessProbe:
@@ -6136,7 +6148,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "99723b4ed327ccf408481282e00f5c7ccd98f194332df6b74c17c7700fcc654"
+        configChecksum: "6c650c83cb5a8f3dc245dbd96eb472953d6468ad946830ecdc942d275da7a14d"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -6162,7 +6174,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: leaseworker
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
+          image: "public.ecr.aws/unionai/unionoperator:2026.11.0"
           imagePullPolicy: IfNotPresent
           command:
             - leaseworker
@@ -6244,7 +6256,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "0dbc71ea437b9764741d98505a2845519a106988ad51025688ebe8c0d007401"
+        configChecksum: "8dbe79a92c037d868fae77d1d4e1ec811ec841662927dd603c62765bec63cc24"
         karpenter.sh/do-not-disrupt: "true"
         
       labels:
@@ -6271,7 +6283,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
+          image: "public.ecr.aws/unionai/unionoperator:2026.11.0"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -6339,7 +6351,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
+          image: "public.ecr.aws/unionai/unionoperator:2026.11.0"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -6385,7 +6397,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "0dbc71ea437b9764741d98505a2845519a106988ad51025688ebe8c0d007401"
+        configChecksum: "8dbe79a92c037d868fae77d1d4e1ec811ec841662927dd603c62765bec63cc24"
         
       labels:
         
@@ -6418,7 +6430,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
+          image: "public.ecr.aws/unionai/unionoperator:2026.11.0"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -6433,14 +6445,14 @@ spec:
               name: config-volume
             - mountPath: /etc/union/secret
               name: secret-volume
-            - mountPath: /etc/union/connector-config
+            - mountPath: "/etc/union/connector-config"
               name: connector-config-volume
               readOnly: true
           env:
             - name: HELM_CHART_VERSION
-              value: "2026.10.0"
+              value: "2026.11.0"
             - name: HELM_APP_VERSION
-              value: "2026.10.0"
+              value: "2026.11.0"
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -6526,7 +6538,7 @@ spec:
         app.kubernetes.io/managed-by: Helm
         platform.union.ai/component: webhook
       annotations:
-        configChecksum: "99723b4ed327ccf408481282e00f5c7ccd98f194332df6b74c17c7700fcc654"
+        configChecksum: "6c650c83cb5a8f3dc245dbd96eb472953d6468ad946830ecdc942d275da7a14d"
         
     spec:
       securityContext:
@@ -6537,7 +6549,7 @@ spec:
       serviceAccountName: union-system
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
+          image: "public.ecr.aws/unionai/unionoperator:2026.11.0"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
