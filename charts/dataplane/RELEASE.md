@@ -1,7 +1,10 @@
 # dataplane — Release Notes
 
-## Unreleased
+## 2026.11.2
 
+`version` and `appVersion` move `2026.11.0` → `2026.11.2`.
+
+### Image mirrors and pre-warm (#638)
 ### Packaged `values.schema.json` declares the values Union Fleet sets
 
 The chart now ships a partial, open JSON Schema generated from `# @schema`
