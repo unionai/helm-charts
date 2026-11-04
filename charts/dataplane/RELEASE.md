@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Packaged `values.schema.json` declares the values Union Fleet sets
+
+The chart now ships a partial, open JSON Schema generated from `# @schema`
+blocks in `values.yaml` (`make values-schema`). It declares the paths Fleet's
+vendor templates set that `values.yaml` does not default: `provider`,
+`global.AWS_ACCOUNT_ID`, `global.AWS_REGION`, the `awsConfig`/`azureConfig`/
+`gcpConfig` blocks under `config.proxy.smConfig` and
+`config.core.webhook.embeddedSecretManagerConfig`, the `azureLogAnalytics`/
+`gcpLogging` sources under `config.proxy.persistedLogs`, the node label,
+selector and toleration keys under `config.k8s.plugins.k8s`, and
+`azure-log-templates`/`stackdriver-enabled` under
+`leaseworker.task_logs.plugins.logs`. Fleet registration of this and later
+releases accepts those paths without a cloud-side compatibility list.
+
+Helm now type-checks exactly those keys on install and upgrade (for example
+`stackdriver-enabled` must be a boolean). No other key is constrained, no
+mapping is closed, and rendered manifests are unchanged.
+`tests/fleet-values-paths.txt` plus `make check-values-schema` fail CI when a
+chart change stops accepting a path Fleet writes.
+
 ### Image mirrors and pre-warm
 
 `global.imageMirrors` (upstream registry => mirror prefix) routes the chart's images
