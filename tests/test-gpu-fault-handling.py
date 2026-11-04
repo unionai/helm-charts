@@ -24,7 +24,8 @@ BASE_VALUES = {
     "secrets": {"admin": {"create": False}},
 }
 WATCHER = {"gpuFaultWatcher": {"enabled": True}}
-# gpuQuarantine.minOperatorVersion, the first operator release with the controller.
+# Provisional chart guard fixture, NOT a verified controller-capable release.
+# Release / quarantine enablement stays on HOLD; see the chart README.
 QUARANTINE_RELEASE = "2026.10.0"
 QUARANTINE = {
     "low_privilege": False,
@@ -162,6 +163,80 @@ class GpuFaultWatcherTest(unittest.TestCase):
         )
         self.assertEqual(config["metricsBindAddress"], ":9096")
         self.assertEqual(container["ports"][0]["containerPort"], 9096)
+
+    def test_config_reaches_legacy_and_combined_readers(self):
+        # cloud 082c7b54 (2026.9.7): LoadConfig uses ghodss/yaml.Unmarshal
+        # into Config, reading root fields and ignoring unknown keys.
+        # cloud 66d3a483 (2026.10.0): even the gpufaultwatcher compatibility
+        # entrypoint uses the non-strict flytestdlib accessor's gpuFaultWatcher
+        # section. The executable name alone does not choose the file format.
+        # Neither release reads stateDir yet; keep it in BOTH layouts for
+        # checkpoint-capable builds, without claiming either release persists it.
+        settings = {
+            "kmsgPath": "/dev/custom-kmsg",
+            "podResourcesSocket": "unix:///run/custom-kubelet/pod-resources/kubelet.sock",
+            "stateDir": "/var/lib/custom-watcher",
+            "eventsPerSecondPerGPU": 2,
+        }
+        for tag in ("2026.9.7", "v2026.9.7", "2026.10.0", "2026.10.0-beta.0", "66d3a483"):
+            with self.subTest(tag=tag):
+                docs = render(
+                    {
+                        "image": {"union": {"tag": tag}},
+                        "gpuFaultWatcher": {
+                            "enabled": True,
+                            "metricsPort": 9199,
+                            "config": settings,
+                        },
+                    }
+                )
+                pod = find(docs, "DaemonSet", "union-gpufaultwatcher")["spec"]["template"]["spec"]
+                container = pod["containers"][0]
+                self.assertEqual(
+                    container["args"], ["gpufaultwatcher", "--config", "/etc/union/config.yaml"]
+                )
+                config_mount = next(m for m in container["volumeMounts"] if m["name"] == "config")
+                config_volume = next(v for v in pod["volumes"] if v["name"] == "config")
+                path = Path(container["args"][2]).relative_to(config_mount["mountPath"])
+                configmap = find(docs, "ConfigMap", config_volume["configMap"]["name"])
+                config = yaml.safe_load(configmap["data"][str(path)])
+                legacy = {key: value for key, value in config.items() if key != "gpuFaultWatcher"}
+                combined = config["gpuFaultWatcher"]
+                expected = {**settings, "metricsBindAddress": ":9199"}
+                self.assertEqual(legacy, expected)
+                self.assertEqual(combined, expected)
+                self.assertEqual(container["ports"][0]["containerPort"], 9199)
+                for probe in ("startupProbe", "livenessProbe"):
+                    self.assertEqual(container[probe]["httpGet"]["port"], "metrics")
+                service = find(docs, "Service", "union-gpufaultwatcher")
+                self.assertEqual(service["spec"]["ports"][0]["port"], 9199)
+                volumes = {
+                    v["name"]: v["hostPath"]["path"] for v in pod["volumes"] if "hostPath" in v
+                }
+                mounts = {m["name"]: m["mountPath"] for m in container["volumeMounts"]}
+                for name, path in {
+                    "kmsg": settings["kmsgPath"],
+                    "pod-resources": "/run/custom-kubelet/pod-resources",
+                    "state": settings["stateDir"],
+                }.items():
+                    self.assertEqual(volumes[name], path)
+                    self.assertEqual(mounts[name], path)
+
+    def test_config_change_restarts_the_watcher(self):
+        def checksum(values):
+            pod = find(render(values), "DaemonSet", "union-gpufaultwatcher")["spec"]["template"]
+            return pod["metadata"]["annotations"]["configChecksum"]
+
+        default = checksum(WATCHER)
+        for override in (
+            {"metricsPort": 9199},
+            {"config": {"stateDir": "/var/lib/custom"}},
+            {"config": {"podResourcesSocket": "/run/custom/kubelet.sock"}},
+        ):
+            with self.subTest(override=override):
+                self.assertNotEqual(
+                    default, checksum({"gpuFaultWatcher": {"enabled": True, **override}})
+                )
 
     def test_existing_priority_class_is_used_and_not_created(self):
         docs = render({"gpuFaultWatcher": {"enabled": True, "priorityClassName": "node-low"}})
@@ -333,7 +408,7 @@ class GpuQuarantineTest(unittest.TestCase):
                     render(values, success=False),
                 )
 
-    def test_operator_release_with_the_controller_or_a_build_tag_renders(self):
+    def test_provisional_guard_accepts_newer_release_or_build_tags(self):
         for tag in (QUARANTINE_RELEASE, f"{QUARANTINE_RELEASE}-beta.0", "v2026.11.2", "6caf8646"):
             with self.subTest(tag=tag):
                 values = {**QUARANTINE, "image": {"union": {"tag": tag}}}

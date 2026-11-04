@@ -453,8 +453,9 @@ names no existing class.
 {{- end -}}
 
 {{/*
-Lowest union operator release accepted with config.gpuQuarantine. Set it to the first
-release that ships the quarantine controller.
+PROVISIONAL: release / quarantine enablement HOLD. 2026.10.0 does NOT contain the
+controller. Replace this minimum only after verifying an image containing cloud
+PR #18752; do not guess a future release. Until then this guard is incomplete.
 */}}
 {{- define "gpuQuarantine.minOperatorVersion" -}}
 2026.10.0
