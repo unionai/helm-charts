@@ -20,6 +20,32 @@
   instead of a pinned canary build on public ECR, whose anonymous pulls are
   rate limited.
 
+The license values, `serving.appHostOnly` and the gateway's token removal need
+onebox images from a release with unionai/cloud#19283 and #19820, newer than
+2026.11.2.
+
+## 2026.11.2
+
+`version` and `appVersion` move `2026.11.1` → `2026.11.2`.
+
+### Serve under a path of a shared host (#664)
+
+`basePath` serves onebox under a path of a host something else owns, e.g.
+`basePath: /onebox` for `https://platform.example.com/onebox/`. The console runs at
+`/onebox/v2`; the API, `/login` and `/logout` sit under `/onebox`. The value is passed
+to the console as `UNION_BASE_PATH` and validated as lowercase DNS-label segments; an
+invalid value (`/One`) fails the render.
+
+Apps can share the host with a path-based `serving.publicURLPattern`
+(`https://platform.example.com/onebox/apps/%s/`); `serving.stripAppPathPrefix` removes
+the app's path for servers that only serve at `/`. NOTES show the prefixed console and
+SDK endpoint, and the README covers the proxy contract (forward `/onebox/` with the
+path unchanged, WebSockets, no buffering) and the shared-origin caveat for path-based
+apps. Without `basePath`, rendering is unchanged.
+
+Requires onebox and onebox-console images that include unionai/cloud#19740 and
+unionai/cloud#19741, and flyte-sdk with flyteorg/flyte-sdk#1739.
+
 ## 2026.11.1
 
 `version` and `appVersion` move to `2026.11.1`. The chart can now run everything
