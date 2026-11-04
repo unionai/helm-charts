@@ -1,5 +1,25 @@
 # onebox — Release Notes
 
+## Unreleased
+
+- `license`: a license key from a Secret (`existingSecret`), `enforce` to make
+  an install without a valid key read-only, `issueURL` where users get one, and
+  `trustedKeys` for a self-hosted issuer. Rendered only when set, and needs an
+  onebox image with licensing.
+- `caBundle`: a private CA bundle trusted by onebox, the console and every task
+  pod (S3, database, identity provider, registry).
+- `extraVolumes`/`extraVolumeMounts` for the onebox container, and
+  `taskPods.extraEnv`/`extraVolumes`/`extraVolumeMounts` for task pods, through
+  a PodTemplate every task pod starts from.
+- `serving.appHostOnly`: path-based apps on a host of their own, which serves
+  only apps, so app scripts run on a different origin from the console.
+- The apps gateway removes the caller's bearer token once it has authorized
+  them (`UNION_AUTH_STRIPCALLERCREDENTIALS`), so apps never receive it.
+- The image builder's task images default to `ghcr.io/unionai/imagebuilder`
+  at the chart's appVersion (`imageBuilder.taskImages.tag` defaults to it)
+  instead of a pinned canary build on public ECR, whose anonymous pulls are
+  rate limited.
+
 ## 2026.11.1
 
 `version` and `appVersion` move to `2026.11.1`. The chart can now run everything
