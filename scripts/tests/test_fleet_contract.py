@@ -111,3 +111,41 @@ def test_explicit_type_is_checked_when_default_kind_matches_the_bad_value(tmp_pa
         "provider has the wrong type" in failure
         for failure in check_fleet_paths.check_bundle(chart)
     )
+
+
+def test_null_default_does_not_open_undeclared_descendants(tmp_path):
+    chart = chart_copy(tmp_path)
+    bundle = json.loads((chart / "fleet-contract.json").read_text())
+    bundle["scenarios"][0]["vendor"] = {
+        "flytepropellerwebhook": {"securityContext": {"seLinuxOptions": {"misspelledField": "x"}}}
+    }
+    (chart / "fleet-contract.json").write_text(json.dumps(bundle))
+    assert any(
+        "seLinuxOptions.misspelledField is not declared" in failure
+        for failure in check_fleet_paths.check_bundle(chart)
+    )
+
+
+def test_empty_mapping_openness_survives_declared_descendants(tmp_path):
+    chart = chart_copy(tmp_path)
+    defaults = yaml.safe_load((chart / "values.yaml").read_text())
+    defaults["covered"] = {}
+    (chart / "values.yaml").write_text(yaml.safe_dump(defaults))
+    schema = json.loads((chart / "values.schema.json").read_text())
+    schema["properties"]["covered"] = {
+        "type": "object",
+        "properties": {
+            "nested": {"type": "object", "properties": {"typedLeaf": {"type": "string"}}}
+        },
+    }
+    (chart / "values.schema.json").write_text(json.dumps(schema))
+    bundle = json.loads((chart / "fleet-contract.json").read_text())
+    bundle["scenarios"][0]["vendor"] = {"covered": {"nested": {"typedLeaf": "ok", "openKey": "ok"}}}
+    (chart / "fleet-contract.json").write_text(json.dumps(bundle))
+    assert check_fleet_paths.check_bundle(chart) == []
+    bundle["scenarios"][0]["vendor"]["covered"]["nested"]["typedLeaf"] = False
+    (chart / "fleet-contract.json").write_text(json.dumps(bundle))
+    assert any(
+        "covered.nested.typedLeaf has the wrong type" in failure
+        for failure in check_fleet_paths.check_bundle(chart)
+    )
