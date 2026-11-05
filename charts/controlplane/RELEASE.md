@@ -1,5 +1,13 @@
 # controlplane — Release Notes
 
+## Unreleased
+
+### Dataplane clusters need a Cluster record
+
+The `authorizer.bootstrap.dataplaneClusters` comment now says that it seeds authz
+only. The Cluster record itself comes from the Terraform provider's
+`unionai_cluster` resource or `flyte create cluster`.
+
 ## 2026.11.2
 
 - Images no longer trust the root CAs behind the compromised eMudhra intermediates (`CVE-2026-114406`): OS CA bundles, certifi, Node, Envoy and `uv` are updated. `uv` in v2 customer image builds moves from 0.9.5 to 0.13.6, which can change how dependencies resolve
