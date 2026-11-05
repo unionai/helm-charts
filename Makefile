@@ -18,7 +18,7 @@ generate-expected: $(GEN_DIR) vendor-crds
 	./tests/run.sh generate
 
 .PHONY: test
-test: check-vendored-crds helm-test kubeconform-test check-image-paths check-image-prewarm rbac-guard-test
+test: check-vendored-crds helm-test kubeconform-test check-image-paths check-image-prewarm check-values-schema python-test rbac-guard-test
 
 .PHONY: snapshot-generator-test
 snapshot-generator-test:
@@ -35,6 +35,26 @@ rbac-guard-test: requirements
 .PHONY: check-image-paths
 check-image-paths:
 	python3 scripts/check-image-paths.py
+
+# charts/dataplane/values.schema.json is generated from the `# @schema` blocks
+# in values.yaml (scripts/values_schema.py). The check fails when the committed
+# file is stale, then verifies every value path Fleet writes
+# (tests/fleet-values-paths.txt) is still accepted by the chart. No helm, no
+# network.
+.PHONY: values-schema
+values-schema: requirements
+	uv run python scripts/values_schema.py
+
+.PHONY: check-values-schema
+check-values-schema: requirements
+	uv run python scripts/values_schema.py --check
+	uv run python scripts/check_fleet_paths.py
+
+# Unit tests for the Python tooling (invoke tasks and the scripts above).
+# `python -m pytest` so the repo root is on sys.path for `tasks`.
+.PHONY: python-test
+python-test: requirements
+	uv run python -m pytest -q tasks scripts
 
 # The image pre-warm Job's image list is kept by hand; fail if a mirror test
 # profile's snapshot pulls an image through the mirror that the Job doesn't
@@ -148,6 +168,12 @@ lint: lint-dataplane lint-dataplane-crds lint-knative-migration lint-sandbox lin
 .PHONY: lint-dataplane
 lint-dataplane:
 	helm lint charts/dataplane
+	# Each canonical overlay stack, so Helm validates values.schema.json against them.
+	helm lint charts/dataplane -f charts/dataplane/values.aws.yaml
+	helm lint charts/dataplane -f charts/dataplane/values.gcp.yaml
+	helm lint charts/dataplane -f charts/dataplane/values.azure.yaml
+	helm lint charts/dataplane -f charts/dataplane/values.k3d.yaml
+	helm lint charts/dataplane -f charts/dataplane/values.aws.yaml -f charts/dataplane/values.openshift.yaml
 
 .PHONY: lint-dataplane-crds
 lint-dataplane-crds:

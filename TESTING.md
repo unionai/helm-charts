@@ -15,6 +15,7 @@ access, fast:
 | `kubeconform` | schema-validate the rendered manifests |
 | `vendored-crds` | verify the vendored CRDs are in sync |
 | `release-notes` | `RELEASE.md` is updated |
+| `values-schema` (`make check-values-schema python-test`) | `charts/dataplane/values.schema.json` matches the `# @schema` blocks in `values.yaml`, every value path Union Fleet writes (`tests/fleet-values-paths.txt`) is still accepted, and the Python tooling tests pass |
 
 If `validate` fails after a template or values change, regenerate the snapshots
 and commit them alongside your change:
