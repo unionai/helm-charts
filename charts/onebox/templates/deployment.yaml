@@ -139,6 +139,12 @@ spec:
               value: {{ .Values.organization | quote }}
             - name: IS_SELF_HOSTED
               value: "true"
+            {{- with include "onebox.basePath" . }}
+            # The console serves under <basePath>/v2 (onebox-console sets it
+            # when it starts).
+            - name: UNION_BASE_PATH
+              value: {{ . | quote }}
+            {{- end }}
             - name: DISABLE_EXTERNAL_TELEMETRY
               value: "true"
             {{- $flags := deepCopy (.Values.console.featureFlags | default dict) }}
@@ -187,6 +193,9 @@ spec:
               mountPath: /etc/onebox/db
               readOnly: true
           {{- end }}
+          {{- /* Keep readOnlyRootFilesystem disabled for the console: its startup
+               script rewrites /app/.next and /app/public for UNION_BASE_PATH.
+               A read-only root needs a writable copy of those files first. */}}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
