@@ -64,6 +64,20 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+      - name: Set up promtool
+        # The GPU fault handling tests run the rendered alerts and dashboard queries
+        # through promtool, and fail under CI without it.
+        run: |
+          PROMETHEUS_VERSION=3.15.0
+          archive="prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz"
+          release="https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}"
+          cd "$(mktemp -d)"
+          curl -fsSLO "${release}/${archive}"
+          curl -fsSLO "${release}/sha256sums.txt"
+          grep "  ${archive}\$" sha256sums.txt | sha256sum --check --strict
+          tar -xzf "${archive}" --strip-components=1 "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool"
+          sudo install -m 0755 promtool /usr/local/bin/promtool
+          promtool --version
       - name: Run tests
         run: make helm-test
   kubeconform:

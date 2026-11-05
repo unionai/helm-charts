@@ -1,0 +1,25 @@
+{{- if .Values.gpuFaultWatcher.enabled }}
+{{- if hasKey .Values.gpuFaultWatcher.config "metricsBindAddress" }}
+{{- fail "set gpuFaultWatcher.metricsPort instead of gpuFaultWatcher.config.metricsBindAddress, so the probes and the scrape follow the port" }}
+{{- end }}
+{{- $config := deepCopy .Values.gpuFaultWatcher.config }}
+{{- $_ := set $config "metricsBindAddress" (printf ":%v" .Values.gpuFaultWatcher.metricsPort) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: union-gpufaultwatcher
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gpuFaultWatcher.labels" . | nindent 4 }}
+data:
+  # The node name comes from KUBE_NODE_NAME, so one file serves every node.
+  config.yaml: |
+    # 2026.10's combined binary (including the gpufaultwatcher compatibility
+    # entrypoint) reads a registered section. 2026.9.7 reads the flat fields.
+    # Both loaders ignore unknown keys; derive both layouts from the same map
+    # so release tags, commit tags and mirrored images use identical settings.
+    gpuFaultWatcher:
+      {{- toYaml $config | nindent 6 }}
+    {{- toYaml $config | nindent 4 }}
+{{- end }}

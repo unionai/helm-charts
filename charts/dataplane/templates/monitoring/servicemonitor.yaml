@@ -48,3 +48,33 @@ spec:
       path: /metrics
       honorLabels: true
 {{- end }}
+{{- if and .Values.gpuFaultWatcher.enabled .Values.monitoring.serviceMonitors.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: union-gpufaultwatcher
+  namespace: {{ .Release.Namespace }}
+  labels:
+    release: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "gpuFaultWatcher.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - "{{ .Release.Namespace }}"
+  endpoints:
+    - port: metrics
+      interval: 1m
+      path: /metrics
+      # Faults are counted per node, so the node becomes a label and the watcher's own
+      # pod name is dropped. honorLabels keeps the faulting pod's namespace and pod on
+      # union_gpufaultwatcher_pod_faults_total.
+      honorLabels: true
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node
+        - action: labeldrop
+          regex: pod
+{{- end }}

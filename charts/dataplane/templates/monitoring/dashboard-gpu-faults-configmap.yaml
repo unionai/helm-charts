@@ -1,0 +1,19 @@
+{{- /*
+GPU fault handling dashboard, shipped as its own ConfigMap only when the watcher or
+the quarantine is enabled, since its panels read their metrics.
+*/ -}}
+{{- if and .Values.monitoring.dashboards.enabled (or .Values.gpuFaultWatcher.enabled (include "gpuQuarantine.enabled" .)) }}
+{{- $label := .Values.monitoring.dashboards.label | default "grafana_dashboard" }}
+{{- $labelValue := .Values.monitoring.dashboards.labelValue | default "1" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-dashboard-union-dataplane-gpu-faults
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{ $label }}: {{ $labelValue | quote }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+data:
+  union-dataplane-gpu-faults.json: |-
+{{ .Files.Get "files/dashboards/union-dataplane-gpu-faults.json" | replace "__NAMESPACE__" .Release.Namespace | indent 4 }}
+{{- end }}
