@@ -1,5 +1,9 @@
 # controlplane — Release Notes
 
+## Unreleased
+
+- Secure namespaces (`secureNamespaces.enabled`, off by default): the cluster service serves `SecureNamespaceService`, the ingress and Envoy Gateway route it, and the console's `secure_namespaces` flag follows the same toggle. Projects are placed in a secure namespace by their `security.kubernetes_namespace` setting. Each data plane also needs Cilium (with Hubble Relay for the traffic view) and the dataplane chart's `config.operator.secureNamespaces.enabled`.
+
 ## 2026.11.2
 
 - Images no longer trust the root CAs behind the compromised eMudhra intermediates (`CVE-2026-114406`): OS CA bundles, certifi, Node, Envoy and `uv` are updated. `uv` in v2 customer image builds moves from 0.9.5 to 0.13.6, which can change how dependencies resolve

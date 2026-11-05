@@ -508,6 +508,18 @@ IfNotPresent
   {{- $_ := set $merged "dataproxy" $dataproxy }}
 {{- end }}
 
+{{- /* Secure namespaces: the cluster service serves SecureNamespaceService exactly when
+       secureNamespaces.enabled, the same toggle that routes it and shows it in the console. */}}
+{{- if eq .key "cluster" }}
+  {{- $cluster := index $merged "cluster" | default dict }}
+  {{- $app := index $cluster "app" | default dict }}
+  {{- $sn := index $app "secureNamespaces" | default dict }}
+  {{- $_ := set $sn "enabled" .Values.secureNamespaces.enabled }}
+  {{- $_ := set $app "secureNamespaces" $sn }}
+  {{- $_ := set $cluster "app" $app }}
+  {{- $_ := set $merged "cluster" $cluster }}
+{{- end }}
+
 {{- /* artifactReplicationEnabled: derive from the artifacts service being deployed
        (services.artifacts.enabled) — the same single toggle that gates the
        artifacts pod, its ingress route, and the console nav. So produces_artifacts
