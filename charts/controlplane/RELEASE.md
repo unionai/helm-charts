@@ -1,5 +1,11 @@
 # controlplane — Release Notes
 
+## 2026.11.3
+
+`version` moves `2026.11.2` → `2026.11.3`. `appVersion` stays `2026.11.2`: this is a
+chart-only lockstep release with the `onebox` chart (#669); no control-plane template,
+values or image changes.
+
 ## 2026.11.2
 
 - Images no longer trust the root CAs behind the compromised eMudhra intermediates (`CVE-2026-114406`): OS CA bundles, certifi, Node, Envoy and `uv` are updated. `uv` in v2 customer image builds moves from 0.9.5 to 0.13.6, which can change how dependencies resolve

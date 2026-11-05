@@ -1,5 +1,11 @@
 # dataplane — Release Notes
 
+## 2026.11.3
+
+`version` moves `2026.11.2` → `2026.11.3`. `appVersion` stays `2026.11.2`: this is a
+chart-only lockstep release with the `onebox` chart (#669); no data-plane template,
+values or image changes.
+
 ## 2026.11.2
 
 `version` and `appVersion` move `2026.11.0` → `2026.11.2`.

@@ -1,6 +1,10 @@
 # onebox — Release Notes
 
-## Unreleased
+## 2026.11.3
+
+`version` moves `2026.11.2` → `2026.11.3`; `appVersion` stays `2026.11.2`.
+
+### License, private CA, app isolation and image builder from GHCR (#669)
 
 - `license`: a license key from a Secret (`existingSecret`), `enforce` to make
   an install without a valid key read-only, `issueURL` where users get one, and
