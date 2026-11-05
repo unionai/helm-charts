@@ -2346,8 +2346,8 @@ expect-refusal "an example layered with a low_privilege: true overlay is refused
 expect-refusal "a string is refused rather than read for truthiness" \
   "singleNamespace must be a YAML boolean" \
   --set-string singleNamespace=false
-expect-refusal "for the alias too" \
-  "low_privilege must be a YAML boolean" \
+expect-refusal "for the alias too, by the values schema" \
+  "at '/low_privilege': got string, want boolean" \
   --set-string low_privilege=false
 
 echo

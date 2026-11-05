@@ -12,6 +12,7 @@ REAL_CHART = REPO_ROOT / "charts" / "dataplane"
 # templates write that values.yaml does not default.
 FLEET_LEAVES = {
     "provider": "string",
+    "low_privilege": "boolean",
     "global.AWS_ACCOUNT_ID": "string",
     "global.AWS_REGION": "string",
     "config.core.webhook.embeddedSecretManagerConfig.azureConfig.vaultURI": "string",
