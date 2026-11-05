@@ -19,6 +19,12 @@ A fresh install defaults to `ResourceUsage`, even when tunnels are disabled. Set
 including when connecting to a self-hosted control plane. The supported models
 remain `None`, `Legacy`, `Shadow`, and `ResourceUsage`.
 
+A self-hosted control plane issues no tunnel token, so set
+`operator.enableTunnelService: false` there too. Left on, the operator-proxy's
+`tunnel` sidecar crash-loops with `Provided Tunnel token is not valid` and the
+operator's calls to `union-operator-proxy:10254` are refused. The intracluster and
+authless examples set it.
+
 Without an explicit model, a connected Helm upgrade preserves the model in the
 installed `union-operator` ConfigMap. This also applies to `--reuse-values` and
 `--reset-values`. If the installed model cannot be read or validated, rendering

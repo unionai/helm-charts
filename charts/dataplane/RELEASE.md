@@ -1,5 +1,15 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+### Self-hosted control planes: turn the tunnel off
+
+The intracluster (`examples/values.{aws,gcp}.intracluster.yaml`) and authless
+examples now set `operator.enableTunnelService: false`. A self-hosted control plane
+issues no tunnel token, so with the default `true` the operator-proxy `tunnel`
+sidecar crash-loops and the proxy Service has no endpoints. The base default is
+unchanged; the values comment and README call this out.
+
 ## 2026.11.2
 
 `version` and `appVersion` move `2026.11.0` → `2026.11.2`.
