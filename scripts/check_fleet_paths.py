@@ -46,8 +46,14 @@ def check_bundle(chart_dir: Path) -> list[str]:
             return "array"
         return "string"
 
-    def walk(values, expected, declared, path, label):
-        open_map = expected == {} or expected is None and "properties" not in declared
+    def walk(values, expected, declared, path, label, inherited_open=False):
+        declared_types = declared.get("type", [])
+        declared_types = [declared_types] if isinstance(declared_types, str) else declared_types
+        open_map = (
+            inherited_open
+            or expected == {}
+            or (expected is None and "properties" not in declared and "object" in declared_types)
+        )
         expected = expected or {}
         for key, value in values.items():
             at = path + [key]
@@ -74,7 +80,14 @@ def check_bundle(chart_dir: Path) -> list[str]:
                 failures.append(f"{label}: {where} has the wrong type")
                 continue
             if isinstance(value, dict):
-                walk(value, default if isinstance(default, dict) else None, node or {}, at, label)
+                walk(
+                    value,
+                    default if isinstance(default, dict) else None,
+                    node or {},
+                    at,
+                    label,
+                    open_map,
+                )
 
     providers = {"aws", "azure", "gcp", "metal"}
     coverage = {(s["provider"], s["variant"]) for s in bundle["scenarios"]}
