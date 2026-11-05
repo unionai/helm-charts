@@ -1,5 +1,15 @@
 # controlplane — Release Notes
 
+## Unreleased
+
+### `global.UNION_PUBLIC_PORT` keeps a non-443 port on the OAuth callback
+
+flyteadmin builds the OAuth `redirect_uri` from the first `authorizedUris` entry
+whose hostname matches, ignoring the port. A control plane served on, say, `:8443`
+was redirected to `https://<host>/callback` and got a 404. Set
+`global.UNION_PUBLIC_PORT` and the chart's public `authorizedUris` entries (the host
+and the `*.apps.` wildcard) carry the port. Unset, rendering is unchanged.
+
 ## 2026.11.2
 
 - Images no longer trust the root CAs behind the compromised eMudhra intermediates (`CVE-2026-114406`): OS CA bundles, certifi, Node, Envoy and `uv` are updated. `uv` in v2 customer image builds moves from 0.9.5 to 0.13.6, which can change how dependencies resolve
