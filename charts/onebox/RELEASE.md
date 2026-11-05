@@ -1,5 +1,9 @@
 # onebox — Release Notes
 
+## Unreleased
+
+- Secure namespaces (`secureNamespaces.enabled`, off by default): onebox creates them and their Cilium policies, places bound projects' task pods there with their secrets, and reports their traffic. Requires Cilium as the cluster's network plugin (with Hubble Relay for traffic).
+
 ## 2026.11.2
 
 `version` and `appVersion` move `2026.11.1` → `2026.11.2`.

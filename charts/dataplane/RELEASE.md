@@ -1,5 +1,9 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+- Secure namespaces (`config.operator.secureNamespaces.enabled`, off by default): the operator's config and a ClusterRole for namespaces, service accounts, secrets and Cilium policies, and the ingress routes the traffic report (`SecureNamespaceTrafficService`) to the operator proxy. Requires Cilium in the cluster, chained or as the network plugin, with Hubble Relay for traffic, and a control plane with secure namespaces on.
+
 ## 2026.11.2
 
 `version` and `appVersion` move `2026.11.0` → `2026.11.2`.
