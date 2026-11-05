@@ -92,3 +92,5 @@ lookup, including retained defaults under `--reuse-values`, explicit overrides,
 Set `HELM_BIN` to exercise another installed Helm version.
 
 Fleet source generation and packaged registration/target-values checks run in cloud. The required `fleet/schema-compatible` commit status validates each candidate against cloud main and pending cloud PR sources. See [the cloud automation runbook](https://github.com/unionai/cloud/tree/main/scripts/fleet_schema).
+
+Ordinary source generation retains existing declarations and coverage, adds the current run's contributions, and fails on conflicting declarations. Maintenance can propose removing unused fields in a separate reviewed PR. Bot-created schema PRs mention affected source PR authors, individual requested reviewers, and human review participants.
