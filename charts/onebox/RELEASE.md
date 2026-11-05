@@ -2,7 +2,28 @@
 
 ## Unreleased
 
+- `license`: a license key from a Secret (`existingSecret`), `enforce` to make
+  an install without a valid key read-only, `issueURL` where users get one, and
+  `trustedKeys` for a self-hosted issuer. Rendered only when set, and needs an
+  onebox image with licensing.
+- `caBundle`: a private CA bundle trusted by onebox, the console and every task
+  pod (S3, database, identity provider, registry).
+- `extraVolumes`/`extraVolumeMounts` for the onebox container, and
+  `taskPods.extraEnv`/`extraVolumes`/`extraVolumeMounts` for task pods, through
+  a PodTemplate every task pod starts from.
+- `serving.appHostOnly`: path-based apps on a host of their own, which serves
+  only apps, so app scripts run on a different origin from the console.
+- The apps gateway removes the caller's bearer token once it has authorized
+  them (`UNION_AUTH_STRIPCALLERCREDENTIALS`), so apps never receive it.
+- The image builder's task images default to `ghcr.io/unionai/imagebuilder`
+  at the chart's appVersion (`imageBuilder.taskImages.tag` defaults to it)
+  instead of a pinned canary build on public ECR, whose anonymous pulls are
+  rate limited.
 - Secure namespaces (`secureNamespaces.enabled`, off by default): onebox creates them and their Cilium policies, places bound projects' task pods there with their secrets, and reports their traffic. Requires Cilium as the cluster's network plugin (with Hubble Relay for traffic).
+
+The license values, `serving.appHostOnly` and the gateway's token removal need
+onebox images from a release with unionai/cloud#19283 and #19820, newer than
+2026.11.2.
 
 ## 2026.11.2
 
