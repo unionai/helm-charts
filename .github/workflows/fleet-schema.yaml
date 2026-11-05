@@ -1,7 +1,7 @@
 name: Fleet schema compatibility
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, closed]
+    types: [opened, synchronize, reopened, closed, edited]
   push:
     branches: [main]
   workflow_dispatch:
@@ -14,7 +14,7 @@ permissions:
   contents: read
 jobs:
   enqueue:
-    if: github.event_name == 'pull_request_target'
+    if: github.event_name == 'pull_request_target' && (github.event.action != 'edited' || github.event.changes.base != null)
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -31,10 +31,10 @@ jobs:
       contents: read
       id-token: write
     concurrency:
-      group: fleet-schema-dispatch
+      group: fleet-schema-dispatch-${{ inputs.chart_pr != '0' && inputs.chart_pr || 'refresh' }}
       cancel-in-progress: false
     steps:
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: ${{ vars.FLEET_SCHEMA_BOT_ROLE_ARN }}
           aws-region: us-east-2
@@ -43,7 +43,7 @@ jobs:
           schema_token="$(aws secretsmanager get-secret-value --secret-id buildkite/github-unionai-bot-token --query SecretString --output text)"
           echo "::add-mask::$schema_token"
           printf 'GH_TOKEN=%s\n' "$schema_token" >> "$GITHUB_ENV"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: unionai/cloud
           ref: main
