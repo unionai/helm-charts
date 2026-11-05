@@ -32,9 +32,13 @@ def check_bundle(chart_dir: Path) -> list[str]:
     failures = []
 
     def kind(value):
+        if value is None:
+            return "null"
         if isinstance(value, bool):
             return "boolean"
-        if isinstance(value, (int, float)):
+        if isinstance(value, int) or isinstance(value, float) and value.is_integer():
+            return "integer"
+        if isinstance(value, float):
             return "number"
         if isinstance(value, dict):
             return "object"
@@ -43,34 +47,34 @@ def check_bundle(chart_dir: Path) -> list[str]:
         return "string"
 
     def walk(values, expected, declared, path, label):
+        open_map = expected == {} or expected is None and "properties" not in declared
+        expected = expected or {}
         for key, value in values.items():
             at = path + [key]
             where = ".".join(at)
             node = declared.get("properties", {}).get(key)
-            if key in expected:
-                default = expected[key]
-                if value is None or default is None:
-                    continue
-                if kind(default) != kind(value):
-                    failures.append(f"{label}: {where} has the wrong type")
-                    continue
-                if isinstance(value, dict) and default:
-                    walk(value, default, node or {}, at, label)
-            elif node is not None:
-                types = node.get("type", [])
-                types = [types] if isinstance(types, str) else types
-                actual = kind(value)
-                if (
-                    value is not None
-                    and types
-                    and actual not in types
-                    and not (actual == "number" and "integer" in types)
-                ):
-                    failures.append(f"{label}: {where} has the wrong type")
-                elif isinstance(value, dict) and "properties" in node:
-                    walk(value, {}, node, at, label)
-            elif expected or "properties" in declared:
+            if key not in expected and node is None and not open_map:
                 failures.append(f"{label}: {where} is not declared")
+                continue
+            if key in expected and value is None:
+                continue
+            types = (node or {}).get("type", [])
+            types = [types] if isinstance(types, str) else types
+            actual = kind(value)
+            if types and actual not in types and not (actual == "integer" and "number" in types):
+                failures.append(f"{label}: {where} has the wrong type")
+                continue
+            default = expected.get(key)
+            if (
+                not types
+                and default is not None
+                and actual != kind(default)
+                and {actual, kind(default)} != {"integer", "number"}
+            ):
+                failures.append(f"{label}: {where} has the wrong type")
+                continue
+            if isinstance(value, dict):
+                walk(value, default if isinstance(default, dict) else None, node or {}, at, label)
 
     providers = {"aws", "azure", "gcp", "metal"}
     coverage = {(s["provider"], s["variant"]) for s in bundle["scenarios"]}
