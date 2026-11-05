@@ -1,29 +1,6 @@
 # dataplane — Release Notes
 
-## 2026.11.2
-
-`version` and `appVersion` move `2026.11.0` → `2026.11.2`.
-
-### Image mirrors and pre-warm (#638)
-### Packaged `values.schema.json` declares the values Union Fleet sets
-
-The chart now ships a partial, open JSON Schema generated from `# @schema`
-blocks in `values.yaml` (`make values-schema`). It declares the paths Fleet's
-vendor templates set that `values.yaml` does not default: `provider`,
-`global.AWS_ACCOUNT_ID`, `global.AWS_REGION`, the `awsConfig`/`azureConfig`/
-`gcpConfig` blocks under `config.proxy.smConfig` and
-`config.core.webhook.embeddedSecretManagerConfig`, the `azureLogAnalytics`/
-`gcpLogging` sources under `config.proxy.persistedLogs`, the node label,
-selector and toleration keys under `config.k8s.plugins.k8s`, and
-`azure-log-templates`/`stackdriver-enabled` under
-`leaseworker.task_logs.plugins.logs`. Fleet registration of this and later
-releases accepts those paths without a cloud-side compatibility list.
-
-Helm now type-checks exactly those keys on install and upgrade (for example
-`stackdriver-enabled` must be a boolean). No other key is constrained, no
-mapping is closed, and rendered manifests are unchanged.
-`tests/fleet-values-paths.txt` plus `make check-values-schema` fail CI when a
-chart change stops accepting a path Fleet writes.
+## Unreleased
 
 **Union's RBAC is reworked into a slot model, and `singleNamespace` replaces
 `low_privilege`.** RBAC is narrowed across the board and the privilege and namespace axes
@@ -83,7 +60,9 @@ are untangled. Several of these changes are breaking: read the sections below, e
     Either choice would silently flip scope. This also fires when layered values files use
     different names; see *Migration* below.
   - Either key set to a non-boolean. A quoted `"false"` used to be a non-empty string and so
-    meant **true**.
+    meant **true**. `values.schema.json` declares `low_privilege` as a boolean, so Fleet
+    registration accepts the key and Helm's schema check rejects a non-boolean
+    `low_privilege` before the chart renders.
 
 - **`singleNamespace: true` does not mean no cluster-scoped permissions.** It reduces the
   permission set to what the chart's features need while keeping them working. It promises
@@ -1035,6 +1014,31 @@ Also, in both modes:
   `singleNamespace: false`, kube-state-metrics sends 6 resources instead of 28, and targets
   found only through `prometheus.io/scrape` annotations are no longer scraped (see
   [Third-party subchart RBAC](#third-party-subchart-rbac)).
+
+## 2026.11.2
+
+`version` and `appVersion` move `2026.11.0` → `2026.11.2`.
+
+### Image mirrors and pre-warm (#638)
+### Packaged `values.schema.json` declares the values Union Fleet sets
+
+The chart now ships a partial, open JSON Schema generated from `# @schema`
+blocks in `values.yaml` (`make values-schema`). It declares the paths Fleet's
+vendor templates set that `values.yaml` does not default: `provider`,
+`global.AWS_ACCOUNT_ID`, `global.AWS_REGION`, the `awsConfig`/`azureConfig`/
+`gcpConfig` blocks under `config.proxy.smConfig` and
+`config.core.webhook.embeddedSecretManagerConfig`, the `azureLogAnalytics`/
+`gcpLogging` sources under `config.proxy.persistedLogs`, the node label,
+selector and toleration keys under `config.k8s.plugins.k8s`, and
+`azure-log-templates`/`stackdriver-enabled` under
+`leaseworker.task_logs.plugins.logs`. Fleet registration of this and later
+releases accepts those paths without a cloud-side compatibility list.
+
+Helm now type-checks exactly those keys on install and upgrade (for example
+`stackdriver-enabled` must be a boolean). No other key is constrained, no
+mapping is closed, and rendered manifests are unchanged.
+`tests/fleet-values-paths.txt` plus `make check-values-schema` fail CI when a
+chart change stops accepting a path Fleet writes.
 
 ### Image mirrors and pre-warm
 
