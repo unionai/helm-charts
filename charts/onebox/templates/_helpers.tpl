@@ -83,6 +83,16 @@ stow:
 {{- end }}
 {{- end }}
 
+{{/* basePath without its trailing slash ("" for the host's root), validated
+as onebox validates onebox.basePath. */}}
+{{- define "onebox.basePath" -}}
+{{- $p := trimSuffix "/" (.Values.basePath | default "") -}}
+{{- if and $p (not (regexMatch "^(/[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+$" $p)) -}}
+{{- fail (printf "basePath %q must be /-separated lowercase DNS labels, e.g. /onebox" .Values.basePath) -}}
+{{- end -}}
+{{- $p -}}
+{{- end }}
+
 {{- define "onebox.internalSecretName" -}}
 {{- default (printf "%s-internal" (include "onebox.fullname" .)) .Values.internalSecret.existingSecret }}
 {{- end }}
@@ -107,4 +117,85 @@ same values again is harmless. */}}
 {{- $_ = set .Values.storage "authType" "accesskey" }}
 {{- $_ = set .Values.storage "existingSecret" (printf "%s-s3" $name) }}
 {{- end }}
+{{- /* prometheus.enabled: read metrics from the bundled Prometheus, unless
+metrics.prometheusURL is set. The server's name follows the prometheus
+chart's prometheus.server.fullname. */}}
+{{- if and .Values.prometheus.enabled (not .Values.metrics.prometheusURL) }}
+{{- $p := .Values.prometheus }}
+{{- $server := dig "server" "fullnameOverride" "" $p }}
+{{- if not $server }}
+{{- $chart := default "prometheus" $p.nameOverride }}
+{{- $suffix := dig "server" "name" "server" $p }}
+{{- if contains $chart .Release.Name }}
+{{- $server = printf "%s-%s" .Release.Name $suffix | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- $server = printf "%s-%s-%s" .Release.Name $chart $suffix | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end }}
+{{- $port := dig "server" "service" "servicePort" 80 $p }}
+{{- $prefix := dig "server" "prefixURL" "" $p }}
+{{- $_ := set .Values.metrics "prometheusURL" (printf "http://%s.%s.svc:%v%s" $server (default .Release.Namespace $p.forceNamespace) $port $prefix) }}
+{{- end }}
+{{- /* imageBuilder.bundled.enabled: point the image builder at the bundled
+BuildKit and registry, where not set explicitly. */}}
+{{- if and .Values.imageBuilder.enabled .Values.imageBuilder.bundled.enabled }}
+{{- $name := include "onebox.fullname" . }}
+{{- $ib := .Values.imageBuilder }}
+{{- $_ := set $ib "buildkitURI" (default (printf "tcp://%s-buildkit.%s.svc:1234" $name .Release.Namespace) $ib.buildkitURI) }}
+{{- $bundledRepository := printf "localhost:%v/onebox" $ib.bundled.registry.nodePort }}
+{{- $_ = set $ib "repository" (default $bundledRepository $ib.repository) }}
+{{- if eq $ib.repository $bundledRepository }}
+{{- $_ = set $ib "lookupURL" (default (printf "http://%s-registry.%s.svc:5000/onebox" $name .Release.Namespace) $ib.lookupURL) }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/* The CA bundle's volume, mount and environment, for onebox and task pods. */}}
+{{- define "onebox.caBundle.enabled" -}}
+{{- if or .Values.caBundle.configMap .Values.caBundle.secret }}true{{- end }}
+{{- end }}
+
+{{- define "onebox.caBundle.path" -}}
+/etc/onebox/ca/{{ .Values.caBundle.key }}
+{{- end }}
+
+{{- define "onebox.caBundle.volume" -}}
+- name: onebox-ca-bundle
+  {{- if .Values.caBundle.secret }}
+  secret:
+    secretName: {{ .Values.caBundle.secret }}
+    items:
+      - key: {{ .Values.caBundle.key }}
+        path: {{ .Values.caBundle.key }}
+  {{- else }}
+  configMap:
+    name: {{ .Values.caBundle.configMap }}
+    items:
+      - key: {{ .Values.caBundle.key }}
+        path: {{ .Values.caBundle.key }}
+  {{- end }}
+{{- end }}
+
+{{- define "onebox.caBundle.mount" -}}
+- name: onebox-ca-bundle
+  mountPath: /etc/onebox/ca
+  readOnly: true
+{{- end }}
+
+{{/* Each client reads its own variable: Go and OpenSSL, Python requests, curl,
+the AWS SDKs (boto, obstore), gRPC, pip and uv. */}}
+{{- define "onebox.caBundle.env" -}}
+{{- $p := include "onebox.caBundle.path" . }}
+{{- range list "SSL_CERT_FILE" "REQUESTS_CA_BUNDLE" "CURL_CA_BUNDLE" "AWS_CA_BUNDLE" "GRPC_DEFAULT_SSL_ROOTS_FILE_PATH" "PIP_CERT" }}
+- name: {{ . }}
+  value: {{ $p }}
+{{- end }}
+{{- end }}
+
+{{- define "onebox.taskPodTemplate.enabled" -}}
+{{- if or (include "onebox.caBundle.enabled" .) .Values.taskPods.extraEnv .Values.taskPods.extraVolumes .Values.taskPods.extraVolumeMounts }}true{{- end }}
+{{- end }}
+
+{{- define "onebox.taskPodTemplate.name" -}}
+{{- printf "%s-task-defaults" (include "onebox.fullname" .) }}
 {{- end }}

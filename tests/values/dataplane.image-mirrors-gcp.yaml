@@ -1,0 +1,50 @@
+# helm-values: examples/values-test-certs.yaml
+# helm-args: --is-upgrade
+
+# Routes the chart's images through Artifact Registry remote repositories, as a
+# GCP dataplane would: Union's images from their public Artifact Registry copy,
+# and a mirror for every other upstream the chart pulls from. Exercises the
+# image pre-warm hook's Workload Identity login, the docker.io mirror keyed
+# registry-1.docker.io, and the task-pod rewrite rules in the webhook config.
+# Nydus lazy pulls are on, so node-bootstrap, its fluent-bit sidecar and the
+# Nydus BuildKit image must go through the mirror and be pre-warmed too.
+
+global:
+  CONTROLPLANE_HOST: "test-controlplane-host"
+  AUTH_CLIENT_ID: "test-client-id"
+  imageMirrors:
+    public.ecr.aws: us-central1-docker.pkg.dev/test-project/aws
+    registry-1.docker.io: us-central1-docker.pkg.dev/test-project/docker
+    ghcr.io: us-central1-docker.pkg.dev/test-project/ghcr
+    cr.flyte.org: us-central1-docker.pkg.dev/test-project/flyte
+    cr.fluentbit.io: us-central1-docker.pkg.dev/test-project/fluentbit
+    us-docker.pkg.dev: us-central1-docker.pkg.dev/test-project/gar
+
+secrets:
+  admin:
+    create: false
+
+# Offline hook rendering does not read an installed operator ConfigMap.
+config:
+  operator:
+    billing:
+      model: ResourceUsage
+
+# Workloads run on the Workload Identity pool; the pre-warm Job must too, or its
+# metadata-server login fails.
+scheduling:
+  nodeSelector:
+    iam.gke.io/gke-metadata-server-enabled: "true"
+
+nodeBootstrap:
+  enabled: true
+  cloudProvider: gcp
+
+imageBuilder:
+  # Selects the Nydus BuildKit image.
+  enableImageOptimization: true
+
+imagePrewarm:
+  serviceAccount:
+    annotations:
+      iam.gke.io/gcp-service-account: image-prewarm@test-project.iam.gserviceaccount.com

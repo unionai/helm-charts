@@ -1,6 +1,6 @@
 {{- if .Values.serving.enabled }}
 {{- $gw := .Values.serving.gateway }}
-{{- $knative := .Values.serving.knativeNamespace }}
+{{- $knative := include "onebox.knative.namespace" . }}
 {{- if $gw.auth.enabled }}
 {{- if not .Values.authMetadata.externalAuthServerBaseUrl }}
 {{- fail "serving.gateway.auth.enabled needs authMetadata.externalAuthServerBaseUrl: the union-apps filter reads onebox's OAuth2 metadata when the gateway starts" }}
@@ -348,6 +348,10 @@ spec:
               value: {{ required "serving.gateway.auth.signInURL is required with serving.gateway.auth.enabled" $gw.auth.signInURL | quote }}
             - name: UNION_AUTH_OVERRIDENORG
               value: {{ .Values.organization | quote }}
+            # Apps never receive the caller's bearer token: the filter
+            # removes it once the caller is authorized.
+            - name: UNION_AUTH_STRIPCALLERCREDENTIALS
+              value: "true"
             {{- end }}
           ports:
             - name: http2-external

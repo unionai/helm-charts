@@ -62,7 +62,27 @@ its data. The claims survive `helm uninstall`. The bucket's address is the
 in-cluster Service unless you set `bundled.s3.endpoint`, so downloading
 outputs and viewing reports in the console needs that set to an address
 browsers can reach too. `bundled.s3.nodePort` also exposes the store on
-every node, for an endpoint at a node's address.
+every node, for an endpoint at a node's address. The SDK uploads code and
+image build contexts there too, so `flyte run` and `flyte serve` from your
+machine need that set as well.
+
+Add apps, remote image builds and metrics, with nothing else to install (see
+[Apps](#apps), [Image builder](#image-builder) and [Metrics](#metrics)):
+
+```shell
+helm install onebox unionai/onebox -n union --create-namespace \
+  --set bundled.enabled=true \
+  --set bundled.s3.endpoint=<address browsers and the cluster resolve to the store> \
+  --set imageBuilder.enabled=true --set imageBuilder.bundled.enabled=true \
+  --set serving.enabled=true \
+  --set serving.publicURLPattern='http://%s.apps.127-0-0-1.nip.io:8080' \
+  --set serving.gateway.auth.enabled=false \
+  --set prometheus.enabled=true
+kubectl -n union port-forward svc/onebox 8080:80
+```
+
+Apps then answer at `http://<app>.apps.127-0-0-1.nip.io:8080` through the
+port-forward.
 
 ### Storage
 
@@ -76,6 +96,45 @@ Task pods run in the release namespace as its `default` service account
 (unless a task asks for another one). Give that service account the same
 bucket access, e.g. annotate it with the same IRSA role or GCP service
 account.
+
+### License key
+
+Without a valid key and with `license.enforce` on, onebox is read-only: reads
+work, changes are refused, and runs in flight finish. Account admins add keys in
+the console, or mount one from a Secret:
+
+```bash
+kubectl -n onebox create secret generic onebox-license --from-literal=license-key=<key>
+helm upgrade --install onebox ... --set license.existingSecret=onebox-license \
+  --set license.enforce=true --set license.issueURL=<where users get a key>
+```
+
+The console shows the install ID a key is issued for and links to `issueURL`
+with it. A rotated key in the Secret is picked up without a restart. Nothing is
+rendered while the `license` values are unset; they need an onebox image with
+licensing.
+
+### A private CA, extra mounts and proxies
+
+`caBundle` names a ConfigMap (or Secret) key holding a PEM bundle that onebox,
+the console and every task pod trust: for an S3 endpoint, database, identity
+provider or registry signed by a private CA. It replaces the system trust store
+(`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE`, `GRPC_DEFAULT_SSL_ROOTS_FILE_PATH`,
+`PIP_CERT`, `CURL_CA_BUNDLE`; the console adds it with `NODE_EXTRA_CA_CERTS`), so
+include the public roots if anything is reached over the internet:
+
+```bash
+cat /etc/ssl/certs/ca-certificates.crt corp-ca.pem > ca-bundle.pem
+kubectl -n onebox create configmap ca-bundle --from-file=ca-bundle.pem
+helm upgrade --install onebox ... --set caBundle.configMap=ca-bundle
+```
+
+`extraVolumes`/`extraVolumeMounts` add volumes to the onebox container. Task
+pods get theirs from `taskPods.extraVolumes`/`extraVolumeMounts`/`extraEnv` (an
+outbound proxy's `HTTPS_PROXY`/`NO_PROXY`, a shared dataset): the chart renders
+a PodTemplate every task pod starts from (`plugins.k8s.default-pod-template-name`)
+whenever any of these, or `caBundle`, is set. A task's own `pod_template` still
+applies on top.
 
 ## Who is calling: identity headers
 
@@ -203,8 +262,39 @@ plane's: while onebox is down, matching nodes cannot register.
 
 ## Not included (yet)
 
-- Apps / serving (needs Knative), image builder (needs BuildKit), artifacts.
+- Artifacts.
 - More than one replica, or more than one data plane cluster.
+
+## Metrics
+
+The console's Metrics tab reads task CPU and memory (and GPU) series from a
+Prometheus that scrapes cAdvisor and kube-state-metrics (and dcgm-exporter
+for GPUs). Set `metrics.prometheusURL` to yours, or set `prometheus.enabled`
+and the chart runs the prometheus-community/prometheus chart (server and
+kube-state-metrics only; any of its values go under `prometheus`) and points
+`metrics.prometheusURL` at it. It keeps `prometheus.server.retention` (3d) on
+an emptyDir, so a restart loses history.
+
+## Image builder
+
+`imageBuilder.enabled` builds images remotely (`flyte run --builder remote`,
+or images the SDK can't build locally) with a build-image task onebox
+registers in the system project. It needs a BuildKit daemon and a registry
+nodes can pull from: set `imageBuilder.buildkitURI`, `repository` and
+`lookupURL`, or, on a single-user or evaluation cluster, turn on
+`imageBuilder.bundled.enabled` and the chart runs both in the release
+namespace and fills those in:
+
+- BuildKit, privileged and on the node's network (to push to the registry at
+  `localhost`), listening without TLS on `imageBuilder.bundled.buildkit.hostPort`.
+- A registry on NodePort `imageBuilder.bundled.registry.nodePort` (30000),
+  taking anonymous pushes. BuildKit pushes to and nodes pull from
+  `localhost:30000/onebox`, which containerd and BuildKit allow over plain HTTP.
+  Images are on an emptyDir unless `imageBuilder.bundled.registry.storage` is
+  set.
+
+Anything that reaches them can run builds as root on a node or overwrite
+images, so don't use the bundled pair on a shared cluster.
 
 ## Ports
 
@@ -218,12 +308,28 @@ plane's: while onebox is down, matching nodes cannot register.
 
 ## Apps
 
-With `serving.enabled`, the chart installs Union's Kourier controller and
-Envoy gateway in the release namespace (the Kourier a Union data plane runs),
-and onebox forwards every app host (`serving.publicURLPattern`) to it. You
-install Knative Serving, with `config-network`'s `ingress-class` set to
-`kourier.ingress.networking.knative.dev`; the chart adds `config-kourier` to
-Knative's namespace (`serving.knativeNamespace`).
+With `serving.enabled`, the chart runs everything apps need in the release
+namespace: Knative Serving 1.23 (controller, activator, autoscaler, webhook;
+the same Knative a Union data plane runs, vendored from the dataplane chart)
+and Union's Kourier controller and Envoy gateway. onebox forwards every app
+host (`serving.publicURLPattern`) to the gateway. Knative is configured for
+Kourier, the pod-spec features Union apps use, and the image builder's
+registry (tag resolution skipped). Override any of its `config-*` data under
+`serving.knative.config`, and its components (replicas, images, resources,
+scheduling) under `serving.knative.components`; by default each runs one
+replica with small requests.
+
+Knative's CRDs are in the chart's `crds/`, so Helm installs them (once, even
+with serving off; it never upgrades them). `helm install --skip-crds` leaves
+them out: apply them yourself from the chart with
+`helm pull unionai/onebox --untar && kubectl apply --server-side -f onebox/crds/`.
+Knative is cluster-wide (fixed-name ClusterRoles and admission webhooks), so a
+cluster runs one. If it already has Knative Serving, set
+`serving.knative.install=false`: the chart then adds `config-kourier` to
+Knative's namespace (`serving.knativeNamespace`), and you set the
+`serving.knative.config` values on Knative's own ConfigMaps
+(`config-network`'s `ingress-class`, `config-features`,
+`config-deployment`'s `registries-skipping-tag-resolving`).
 
 With `serving.gateway.auth.enabled` (the default), the gateway's union-apps
 filter decides who may call each app, asking onebox's gateway port (8083): it
@@ -236,6 +342,55 @@ anonymous callers need their hosts to bypass the proxy.
 
 With networkPolicy on, only the gateway reaches port 8083, and only onebox and
 Kourier's controller reach the gateway's external listener.
+
+## Under a path of a shared host
+
+`basePath` serves onebox under a path of a host something else owns, e.g.
+`basePath: /onebox` for `https://platform.example.com/onebox/`: the console at
+`/onebox/v2`, the API, `/login` and `/logout` under `/onebox`. The proxy in
+front forwards `/onebox/` to the Service **with the path unchanged** (nginx: no
+URI on `proxy_pass`), keeps `Host`, sets `X-Forwarded-Proto`, passes WebSocket
+upgrades and doesn't buffer responses. Point the SDK and CLI at
+`https://platform.example.com/onebox`.
+
+```yaml
+basePath: /onebox
+serving:
+  enabled: true
+  publicURLPattern: https://platform.example.com/onebox/apps/%s/
+```
+
+Apps can share the host too, each under its own path, with a path-based
+`serving.publicURLPattern`. The path must be `<basePath>/apps/%s/`, as above:
+everything else under `basePath` is onebox's own (the console, its REST
+routes), and onebox refuses to start with apps anywhere they would shadow it.
+Requests reach an app with its path intact, and the app finds the path in
+`_U_APP_BASE_PATH`: the SDK's FastAPI and Streamlit apps serve under it on
+their own; pass it to other servers (Jupyter's `base_url`). For servers that
+only serve at `/`, `serving.stripAppPathPrefix: true` removes the path and
+sends it as `X-Forwarded-Prefix`.
+
+Path-based apps on the console's host share its origin with the console and
+everything else on the host. An app's script can make requests as the user who
+opens it, so use them only for apps whose authors you trust as much as the
+platform. To keep apps apart without wildcard DNS, give them a host of their
+own and set `serving.appHostOnly`:
+
+```yaml
+serving:
+  publicURLPattern: https://apps.example.com/onebox/apps/%s/
+  appHostOnly: true
+```
+
+That host then serves apps and nothing else, and the console's host serves no
+apps. Point it at the same proxy as onebox. Host-based app URLs keep apps
+isolated too. In every mode onebox keeps the user's session cookie, the
+proxy's tokens and its shared secret from apps, the apps gateway removes the
+caller's bearer token once it has authorized them, and an app cannot set the
+session cookie.
+
+Each `basePath` segment must be a lowercase DNS label. It needs onebox and
+onebox-console images with base path support.
 
 ## License
 

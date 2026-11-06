@@ -146,6 +146,15 @@ identity:
   # AWSELBAuthSessionCookie-2, AWSELBAuthSessionCookie-3].
   logoutClearCookies: []
 
+# -- Serve onebox under a path of a shared host, e.g. /onebox for
+# https://platform.example.com/onebox/: the console at /onebox/v2, the API,
+# /login and /logout under /onebox. The proxy in front forwards /onebox/ to the
+# Service with the path unchanged. Point the SDK at https://<host>/onebox.
+# Apps can share the host too (a path-based serving.publicURLPattern). Each
+# segment must be a lowercase DNS label. Needs onebox and onebox-console images
+# with base path support. Empty: the root of the host.
+basePath: ""
+
 # -- Scheme clients reach onebox with: http or https. Empty takes it from the
 # proxy's X-Forwarded-Proto (ALB and ingress controllers send it). Set https
 # when the proxy terminates TLS itself and does not send the header (e.g.
@@ -156,12 +165,42 @@ publicScheme: ""
 # that scrapes cAdvisor and kube-state-metrics (and dcgm-exporter for GPUs),
 # e.g. the prometheus-community/prometheus chart. Empty: no metrics.
 metrics:
+  # -- Defaults to the bundled Prometheus when prometheus.enabled.
   prometheusURL: ""
 
+# -- A Prometheus for the Metrics tab: the prometheus-community/prometheus
+# chart (as a subchart; any of its values can be set here), scraping cAdvisor
+# and kube-state-metrics across the cluster, with metrics.prometheusURL
+# pointed at it. Off: bring your own and set metrics.prometheusURL. It keeps
+# its data on an emptyDir for `retention`, so a restart loses history. For GPU
+# metrics, also run dcgm-exporter; Prometheus scrapes it through its
+# prometheus.io/scrape annotations.
+prometheus:
+  enabled: false
+  # Task CPU and memory come from cAdvisor (the kubelet) and
+  # kube-state-metrics; nothing else of the chart's is needed.
+  alertmanager:
+    enabled: false
+  prometheus-pushgateway:
+    enabled: false
+  prometheus-node-exporter:
+    enabled: false
+  kube-state-metrics:
+    enabled: true
+  server:
+    retention: 3d
+    persistentVolume:
+      enabled: false
+    emptyDir:
+      sizeLimit: 10Gi
+    resources:
+      requests: {cpu: 100m, memory: 512Mi}
+      limits: {memory: 2Gi}
+
 # -- Remote image builds (flyte run --builder remote, or images the SDK can't
-# build locally). Needs a BuildKit daemon and a registry nodes can pull from;
-# see the docs' image builder page. The build-image task itself is deployed
-# once into the system project.
+# build locally). Needs a BuildKit daemon and a registry nodes can pull from:
+# set the addresses below, or run both in the release namespace with bundled.
+# The build-image task itself is deployed once into the system project.
 imageBuilder:
   enabled: false
   # -- BuildKit's address, as task pods reach it.
@@ -174,17 +213,44 @@ imageBuilder:
   lookupURL: ""
   # -- The images of the build-image task, which onebox registers in
   # system/production: <repository>/build-image:<tag> and
-  # <repository>/frontend-v2:<tag>, at the version this chart was tested with;
-  # to use a mirror, copy both at this tag. These are Union's canary builds
-  # (imagebuilder-canary) for now, because the production repository
-  # (imagebuilder) has no arm64 frontend-v2 yet; they move to it once it has.
+  # <repository>/frontend-v2:<tag>. Union publishes both with each release
+  # (public, amd64 and arm64); to use a mirror, copy both at this tag.
   taskImages:
-    repository: public.ecr.aws/g1m2l3c1/imagebuilder-canary
-    tag: 412914d2f5764423efd200d68296b85c22a003a9
+    repository: ghcr.io/unionai/imagebuilder
+    # -- Defaults to the chart appVersion.
+    tag: ""
+  # -- Run a BuildKit daemon and a registry in the release namespace and point
+  # buildkitURI, repository and lookupURL at them (any of the three set above
+  # wins). For a single-user or evaluation cluster only: BuildKit is
+  # privileged, on the node's network and unauthenticated, and the registry
+  # takes anonymous pushes. Both address the registry as
+  # localhost:<registry.nodePort>, so built images are pulled from the node.
+  bundled:
+    enabled: false
+    buildkit:
+      image: docker.io/moby/buildkit:buildx-stable-1
+      # -- BuildKit's TCP port on the node it runs on (it uses the node's
+      # network); its Service forwards 1234 to it.
+      hostPort: 30234
+      resources:
+        requests: {cpu: 200m, memory: 512Mi}
+    registry:
+      image: mirror.gcr.io/library/registry:2
+      # -- The NodePort the registry listens on, on every node. Nodes pull
+      # built images from localhost:<nodePort>. 30000 is where the flyte SDK
+      # pushes when its endpoint is localhost, so local builds need no
+      # image.registry config.
+      nodePort: 30000
+      # -- A PersistentVolumeClaim of this size for the images. Empty: an
+      # emptyDir, so images are rebuilt after the registry restarts.
+      storage: ""
+      # -- Empty: the cluster's default StorageClass.
+      storageClassName: ""
+      resources:
+        requests: {cpu: 10m, memory: 32Mi}
 
 # -- Union apps (serving). Each app runs as a Knative Service in onebox's
-# namespace. Install Knative Serving yourself (with config-network's
-# ingress-class set to Kourier, see the docs' apps page); the chart installs
+# namespace. The chart runs Knative Serving (serving.knative) and installs
 # Union's Kourier controller and Envoy gateway beside onebox. onebox forwards
 # app hosts to that gateway, whose union-apps filter decides who may call
 # each app by asking onebox (port 8083).
@@ -192,11 +258,129 @@ serving:
   enabled: false
   # -- App URLs: fmt verbs for the app's subdomain and, optionally, the
   # organization, e.g. https://%s.apps.onebox.example.com. Point a wildcard
-  # DNS record (*.apps.onebox.example.com) at the same proxy as onebox.
+  # DNS record (*.apps.onebox.example.com) at the same proxy as onebox. With
+  # basePath, apps can share onebox's host instead, each under a path, which
+  # must be <basePath>/apps/%s/: https://platform.example.com/onebox/apps/%s/
+  # (onebox refuses any other path, where apps would shadow its own routes).
+  # Those apps share the host's origin with onebox and whatever else the host
+  # serves, so an app's script can act as whoever opens it: only for apps
+  # whose authors you trust. To keep them apart, give apps a host of their
+  # own (https://apps.example.com/onebox/apps/%s/) and set appHostOnly.
   publicURLPattern: ""
+  # -- Path-based app URLs on a host of their own: that host serves only apps,
+  # and no other host serves them, so app scripts run on a different origin
+  # from the console. Point the apps host at the same proxy as onebox.
+  appHostOnly: false
+  # -- Path-based app URLs: remove the app's path before it reaches the app
+  # (sent as X-Forwarded-Prefix), for servers that only serve at /. Off, apps
+  # get the path intact and serve under it, told by _U_APP_BASE_PATH
+  # (uvicorn --root-path, streamlit --server.baseUrlPath, gradio root_path).
+  stripAppPathPrefix: false
   # -- Knative Serving's namespace. Kourier reads its config-network there,
   # and the chart adds config-kourier to it.
+  # -- Knative Serving's namespace when serving.knative.install is false.
+  # Kourier reads its config-network there, and the chart adds config-kourier
+  # to it. Ignored when the chart runs Knative (it lives in the release
+  # namespace then).
   knativeNamespace: knative-serving
+  # -- Knative Serving 1.23, as a Union data plane runs it (vendored from the
+  # dataplane chart): its controller, activator, autoscaler and webhook run in
+  # the release namespace, configured for Kourier, the pod-spec features Union
+  # apps use, and the image builder's registry. Its CRDs are in the chart's
+  # crds/ (installed even with serving off; helm install --skip-crds to leave
+  # them out). Knative is cluster-wide (fixed-name ClusterRoles and admission
+  # webhooks), so one per cluster.
+  knative:
+    # -- false: use a Knative Serving installed separately in
+    # knativeNamespace, configured by hand as config below describes.
+    install: true
+    # -- Per component: replicas, labels, annotations, nodeSelector, affinity,
+    # tolerations, hpa, pdb, and containers.<name>: image (repository, tag),
+    # command, args, env, envFrom, resources. One replica each with small
+    # requests (the limits are Knative's) and no autoscalers or disruption
+    # budgets: a onebox cluster is often one node.
+    components:
+      activator:
+        containers:
+          activator:
+            image: {}
+            # Knative 1.23 refuses to start on Kubernetes older than 1.34;
+            # nothing else reads the server version (see the dataplane chart).
+            env: &knativeMinVersionEnv
+              - name: KUBERNETES_MIN_VERSION
+                value: v1.28.0
+            resources:
+              requests: {cpu: 10m, memory: 32Mi}
+              limits: {cpu: 1000m, memory: 1000Mi}
+      autoscaler:
+        containers:
+          autoscaler:
+            image: {}
+            env: *knativeMinVersionEnv
+            resources:
+              requests: {cpu: 10m, memory: 32Mi}
+              limits: {cpu: 1000m, memory: 1000Mi}
+      controller:
+        containers:
+          controller:
+            image: {}
+            env: *knativeMinVersionEnv
+            resources:
+              requests: {cpu: 10m, memory: 32Mi}
+              limits: {cpu: 1000m, memory: 1000Mi}
+      webhook:
+        containers:
+          webhook:
+            image: {}
+            env: *knativeMinVersionEnv
+            resources:
+              requests: {cpu: 10m, memory: 32Mi}
+              limits: {cpu: 500m, memory: 500Mi}
+    # -- Data for Knative's config-* ConfigMaps, by ConfigMap (config-<key>).
+    # Values are templates.
+    config:
+      network:
+        ingress-class: kourier.ingress.networking.knative.dev
+      # The pod-spec features a Union data plane enables: the app controller
+      # sets affinity, tolerations, fieldRef env and more on its Knative
+      # Services, and the webhook rejects them otherwise.
+      features:
+        kubernetes.podspec-affinity: enabled
+        kubernetes.podspec-dnsconfig: enabled
+        kubernetes.podspec-dnspolicy: enabled
+        kubernetes.podspec-fieldref: enabled
+        kubernetes.podspec-hostaliases: enabled
+        kubernetes.podspec-init-containers: enabled
+        kubernetes.podspec-nodeselector: enabled
+        kubernetes.podspec-persistent-volume-claim: enabled
+        kubernetes.podspec-persistent-volume-write: enabled
+        kubernetes.podspec-priorityclassname: enabled
+        kubernetes.podspec-runtimeclassname: enabled
+        kubernetes.podspec-schedulername: enabled
+        kubernetes.podspec-securitycontext: enabled
+        kubernetes.containerspec-addcapabilities: enabled
+        kubernetes.podspec-shareprocessnamespace: enabled
+        kubernetes.podspec-tolerations: enabled
+        kubernetes.podspec-topologyspreadconstraints: enabled
+        kubernetes.podspec-volumes-emptydir: enabled
+        kubernetes.podspec-volumes-hostpath: enabled
+        # Volumes (allow_volumes()) in apps: an inline CSI volume for the node
+        # agent's mount broker, mounted with propagation.
+        kubernetes.podspec-volumes-csi: enabled
+        kubernetes.podspec-volumes-mount-propagation: enabled
+      deployment:
+        # The image builder's registry (plain HTTP when bundled) is one
+        # Knative could not resolve tags against.
+        registries-skipping-tag-resolving: '{{ include "onebox.knative.skipTagRegistries" . }}'
+      autoscaler: {}
+      certmanager: {}
+      defaults: {}
+      domain: {}
+      gc: {}
+      leader-election: {}
+      logging: {}
+      observability: {}
+      tracing: {}
   gateway:
     auth:
       # -- The union-apps filter: callers of an app must be signed in and
@@ -383,6 +567,24 @@ taskDefaults:
   cpu: ""
   memory: ""
 
+# -- License key. Without a valid key, and with enforce on, onebox is
+# read-only: reads work, changes are refused, runs in flight finish. Keys can
+# also be added in the console (account admins), which keeps them in the
+# database. The install ID a key is issued for is shown in the console. Needs
+# an onebox image with licensing; nothing is rendered while these are unset.
+license:
+  # -- Refuse changes while the install has no valid key. Needs issueURL.
+  enforce: false
+  # -- A Secret holding a license key (re-read when the Secret changes).
+  existingSecret: ""
+  # -- The key in existingSecret.
+  key: license-key
+  # -- Where users get a key; the console adds ?install=<install ID>.
+  issueURL: ""
+  # -- Public keys of a license issuer you host: [{id: <kid>, pem: <PEM>}].
+  # Keys from Union's issuer verify without this.
+  trustedKeys: []
+
 # -- Projects created on first start.
 seedProjects: [default]
 
@@ -434,6 +636,29 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 extraEnv: []
+# -- Extra volumes and mounts for the onebox container.
+extraVolumes: []
+extraVolumeMounts: []
+
+# -- A CA bundle trusted by onebox, the console and every task pod: for an S3
+# endpoint, database, identity provider or registry with a private CA. A
+# ConfigMap or Secret key holding PEM certificates. It REPLACES the system trust
+# store (SSL_CERT_FILE, REQUESTS_CA_BUNDLE, AWS_CA_BUNDLE, ...), so include the
+# public roots if anything is reached over the internet, e.g.
+#   cat /etc/ssl/certs/ca-certificates.crt corp-ca.pem > ca-bundle.pem
+#   kubectl create configmap ca-bundle --from-file=ca-bundle.pem
+caBundle:
+  configMap: ""
+  secret: ""
+  key: ca-bundle.pem
+
+# -- Every task pod (and the build-image task) starts from a PodTemplate the
+# chart renders when any of this, or caBundle, is set. A task's own
+# pod_template still applies on top.
+taskPods:
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
 
 podSecurityContext:
   runAsNonRoot: true
