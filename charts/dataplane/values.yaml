@@ -201,9 +201,11 @@ clusterresourcesync:
   enabled: false
   # -- Override service account values for the syncresources service
   serviceAccount:
-    # -- Override the service account name for the syncresources service
+    # -- Override the dedicated account's name, union-<name>. Ignored when
+    # commonServiceAccount.enabled is true, where the service runs on the common account.
     name: ""
-    # -- Additional annotations for the syncresources service account
+    # -- Additional annotations for the dedicated account. Ignored when
+    # commonServiceAccount.enabled is true; set commonServiceAccount.annotations instead.
     annotations: {}
   # -- Extra cluster-wide rules for the syncresources service. The chart already
   # grants get/create/patch on every kind `templates` and `additionalTemplates`
@@ -1390,10 +1392,13 @@ flytepropeller:
   configPath: /etc/flyte/config/*.yaml
 
   # -- Configuration for service accounts for FlytePropeller
+  # FlytePropeller runs on the common account when commonServiceAccount.enabled is
+  # true, and these settings are then ignored: set commonServiceAccount.annotations and
+  # commonServiceAccount.imagePullSecrets instead.
   serviceAccount:
-    # -- Annotations for ServiceAccount attached to FlytePropeller pods
+    # -- Annotations for the dedicated flytepropeller-system ServiceAccount.
     annotations: { }
-    # -- ImapgePullSecrets to automatically assign to the service account
+    # -- ImagePullSecrets for the dedicated flytepropeller-system ServiceAccount.
     imagePullSecrets: [ ]
   # -- Security context for the Flytepropeller container.
   securityContext: {}
@@ -2128,6 +2133,12 @@ ingress:
 # to avoid creating ServiceMonitor CRDs.
 prometheus:
   enabled: true
+  # To run the Prometheus server on the chart's common service account, disable
+  # the subchart-managed account and set this name to commonServiceAccount.name:
+  # serviceAccounts:
+  #   server:
+  #     create: false
+  #     name: union-system
   # The label the operator's cluster snapshot discovers Union workloads by; the
   # subchart puts commonMetaLabels on every resource it renders, pods included.
   commonMetaLabels:

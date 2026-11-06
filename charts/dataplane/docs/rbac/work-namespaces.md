@@ -60,6 +60,11 @@ A compromised `clusterresourcesync` could therefore bind `<release-ns>-work-ns` 
 namespace, `kube-system` included. That would give Union's accounts `pods: create` there,
 and through it the permissions of every ServiceAccount in that namespace.
 
+With `commonServiceAccount.enabled: true`, the default, `clusterresourcesync` runs on the
+common account, so every component on that account holds this RoleBinding write too. Set
+`commonServiceAccount.enabled: false` to keep it on its own `union-clustersync-system`
+account.
+
 This is the accepted cost of provisioning namespaces at runtime. You have two ways to manage
 it:
 
@@ -67,4 +72,5 @@ it:
   trust.
 - **Bound it.** Add an admission policy, such as Kyverno or Gatekeeper, that limits
   `clusterresourcesync`'s Namespace and RoleBinding writes to your project-namespace naming
-  convention.
+  convention. The policy matches on the account `clusterresourcesync` runs as, so on the
+  common account it bounds every component on it.

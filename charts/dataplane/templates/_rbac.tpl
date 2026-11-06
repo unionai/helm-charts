@@ -13,7 +13,7 @@
 {{- $components = append $components (dict "name" "webhook" "sa" (include "webhook.serviceAccountName" .)) -}}
 {{- end -}}
 {{- if .Values.flytepropeller.enabled -}}
-{{- $components = append $components (dict "name" "flytepropeller" "sa" "flytepropeller-system") -}}
+{{- $components = append $components (dict "name" "flytepropeller" "sa" (include "flytepropeller.serviceAccountName" .)) -}}
 {{- end -}}
 {{- if .Values.nodeobserver.enabled -}}
 {{- $components = append $components (dict "name" "nodeobserver" "sa" (include "nodeobserver.serviceAccountName" .)) -}}
@@ -22,7 +22,7 @@
 {{- $components = append $components (dict "name" "node-bootstrap" "sa" "union-node-bootstrap") -}}
 {{- end -}}
 {{- if and .Values.clusterresourcesync.enabled (not (include "singleNamespace" .)) -}}
-{{- $components = append $components (dict "name" "clusterresourcesync" "sa" (printf "union-%s" (include "clusterresourcesync.serviceAccountName" .))) -}}
+{{- $components = append $components (dict "name" "clusterresourcesync" "sa" (include "clusterresourcesync.workloadServiceAccountName" .)) -}}
 {{- end -}}
 {{- if include "serving.useVendoredGateway" . -}}
 {{- $components = append $components (dict "name" "knative-controller" "sa" (include "knative.controller.serviceAccountName" .)) -}}

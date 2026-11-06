@@ -350,6 +350,21 @@ fewer series and annotation-discovered targets stop.
 
 ### Other changes
 
+- **FlytePropeller and `clusterresourcesync` run on the common account** when
+  `commonServiceAccount.enabled` is true, the default, so `commonServiceAccount.annotations`
+  and `imagePullSecrets` reach them. The chart no longer creates `flytepropeller-system` or
+  `union-clustersync-system` then, and their RBAC binds `commonServiceAccount.name`, so the
+  common account now also holds `clusterresourcesync`'s cluster-wide Namespace and
+  RoleBinding writes ([docs/rbac/work-namespaces.md](docs/rbac/work-namespaces.md)). Move any
+  `flytepropeller.serviceAccount.*` or `clusterresourcesync.serviceAccount.annotations`
+  settings to `commonServiceAccount`. Make sure a cloud identity bound to either old account
+  also trusts the common account: `flytepropeller-system`, or `clusterresourcesync`'s
+  `union-clustersync-system` (`union-<name>` if you set `clusterresourcesync.serviceAccount.name`).
+  That identity can be an IRSA trust subject, a Workload Identity member, or a federated
+  credential. Set `commonServiceAccount.enabled: false` to keep the dedicated accounts.
+- **Prometheus can run on the common account.** The parent chart's Prometheus bindings
+  already follow `prometheus.serviceAccounts.server.name`; set `create: false` and
+  `name: union-system` there to use it.
 - **`uvolMountBroker.block.allow` defaults to where Union's tasks run** (#606). Before this
   change block mode was off under `singleNamespace`. It is now allowed in the release
   namespace, and at `singleNamespace: false` it is still allowed for every pod.
