@@ -357,10 +357,11 @@ fewer series and annotation-discovered targets stop.
   common account now also holds `clusterresourcesync`'s cluster-wide Namespace and
   RoleBinding writes ([docs/rbac/work-namespaces.md](docs/rbac/work-namespaces.md)). Move any
   `flytepropeller.serviceAccount.*` or `clusterresourcesync.serviceAccount.annotations`
-  settings to `commonServiceAccount`, and make sure a cloud identity bound to
-  `flytepropeller-system` (an IRSA trust subject, a Workload Identity member, or a federated
-  credential) also trusts the common account. Set `commonServiceAccount.enabled: false` to
-  keep the dedicated accounts.
+  settings to `commonServiceAccount`. Make sure a cloud identity bound to either old account
+  also trusts the common account: `flytepropeller-system`, or `clusterresourcesync`'s
+  `union-clustersync-system` (`union-<name>` if you set `clusterresourcesync.serviceAccount.name`).
+  That identity can be an IRSA trust subject, a Workload Identity member, or a federated
+  credential. Set `commonServiceAccount.enabled: false` to keep the dedicated accounts.
 - **Prometheus can run on the common account.** The parent chart's Prometheus bindings
   already follow `prometheus.serviceAccounts.server.name`; set `create: false` and
   `name: union-system` there to use it.
