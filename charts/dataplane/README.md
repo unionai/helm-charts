@@ -445,14 +445,11 @@ covers the routes.
 
 [docs/rbac/](docs/rbac/README.md) is the full reference:
 
-- [scope.md](docs/rbac/scope.md) covers what each scope mode grants, and the components that
-  hold cluster-scoped permissions in either mode.
-- [slots.md](docs/rbac/slots.md) covers how Union's own components declare their grants.
+- [README.md](docs/rbac/README.md) covers the scope keys, what each mode promises, and where
+  in the code each grant is declared.
+- [slots.md](docs/rbac/slots.md) covers the slot system that Union's own components declare
+  their grants through.
 - [work-namespaces.md](docs/rbac/work-namespaces.md) covers the work-namespace RoleBinding.
-- [cluster-writes.md](docs/rbac/cluster-writes.md) lists every cluster-scoped write.
-- [identities.md](docs/rbac/identities.md) covers shared and per-component ServiceAccounts.
-- [subcharts.md](docs/rbac/subcharts.md) covers the third-party subcharts.
-- [app-serving.md](docs/rbac/app-serving.md) covers the Knative stack.
 
 ---
 

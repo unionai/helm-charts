@@ -103,7 +103,8 @@ entry renders clean, and the controller's sync is refused per template at runtim
 
 - **`commonServiceAccount.enabled: false` now takes effect in single-namespace mode.** Before
   this change the chart ignored it there. Each component gets its own ServiceAccount, and each
-  new name needs a cloud-side workload-identity binding. See [Identities](docs/rbac/identities.md).
+  new name needs a cloud-side workload-identity binding. See
+  [Caveats](docs/rbac/README.md#caveats).
 - **On the vendored gateway, the app-serving workloads change ServiceAccount.** The vendored
   gateway is `apps.enabled: true` with `gateway.enabled: true`, the default. The
   `knative-operator` path keeps upstream's names.
@@ -183,8 +184,8 @@ pipelines stringify scalars, and `yamlencode` emits real booleans.
 ### Single-namespace mode
 
 Single-namespace mode now scopes grants and leaves features on. It keeps a fixed allowlist
-of cluster-scoped reads, which `tests/test-rbac-guards.sh` enforces. See
-[docs/rbac/scope.md](docs/rbac/scope.md#what-singlenamespace-still-reads-cluster-wide).
+of cluster-scoped reads, `SCOPE_ALLOWLIST` in `tests/test-rbac-guards.sh`. See
+[What `singleNamespace: true` promises](docs/rbac/README.md#what-singlenamespace-true-promises).
 
 These changes reach every existing `low_privilege: true` install:
 
@@ -200,8 +201,7 @@ These changes reach every existing `low_privilege: true` install:
   flytepropeller is enabled. Set `priorityClass.create: false` on either to bring your own.
 - The operator's Prometheus heartbeat is dropped only when `prometheus.enabled` is false.
 - App serving stays on by default and brings Knative's cluster-wide reads, the one exception
-  to the allowlist. Set `apps.enabled: false` to hold the install to the list. See
-  [docs/rbac/app-serving.md](docs/rbac/app-serving.md).
+  to the allowlist. Set `apps.enabled: false` to hold the install to the list.
 
 The chart now parses the operator's boolean flags the way the operator does. A string
 `"True"` or `"1"` for `collectUsages.enabled` or `disableClusterPermissions` counts as on, and
@@ -211,7 +211,7 @@ With `commonServiceAccount.enabled: false`, the operator, proxy and webhook acco
 pooled work-ns wildcard in the release namespace. That covers Union's own Deployments and
 Secrets. Before this change each held only its own resources there. At the default shared
 identity, the one account already held the wildcard. See
-[The work-ns wildcard](docs/rbac/slots.md#the-work-ns-wildcard).
+[The wildcard is not the boundary](docs/rbac/slots.md#the-wildcard-is-not-the-boundary).
 
 ### RBAC by destination
 
@@ -258,20 +258,20 @@ Cluster-wide grants that are narrowed or removed:
   `MutatingWebhookConfiguration` in the cluster. Every rule is now pinned by `resourceNames` to
   the four objects the Job deletes.
 
-[docs/rbac/cluster-writes.md](docs/rbac/cluster-writes.md) lists every cluster-scoped write
-that remains.
+Each remaining cluster-scoped write is a `cluster-write` declaration, commented with its
+reason. [The `clusterresourcesync` risk](docs/rbac/work-namespaces.md#the-clusterresourcesync-risk)
+covers the broadest one.
 
 Grants added or moved:
 
 - **`taskPluginClusterReadRules` (new)** gives leaseworker and flytepropeller cluster-wide
   `list`/`watch` on the CRDs you list, at `singleNamespace: false`. Spark, Ray, Dask, Kubeflow
-  and JobSet plugins need it there. See
-  [Plugin CRD reads](docs/rbac/scope.md#plugin-crd-reads-at-singlenamespace-false).
+  and JobSet plugins need it there. The key's comment in `values.yaml` lists the entries for
+  the stock plugins.
 - **Each component's release-namespace calls are granted in its own `comp-ns` Role.** At
   `singleNamespace: false` the work-ns role is not bound in the release namespace. A new
   `<release-ns>-secret-read` Role in `proxy.secretsNamespace` covers the webhook's and
-  leaseworker's Secret reads. See
-  [Release-namespace grants](docs/rbac/slots.md#release-namespace-grants-do-not-come-from-work-ns).
+  leaseworker's Secret reads. See [Choosing a slot](docs/rbac/slots.md#choosing-a-slot).
 - **The leaseworker's event watcher is granted** through `-work-ns-cluster-read` at
   `singleNamespace: false`. Under `singleNamespace` it needs a leaseworker image that includes
   [cloud#18782](https://github.com/unionai/cloud/pull/18782), which `appVersion` `2026.10.0`
@@ -319,8 +319,8 @@ At the chart default, cluster-scoped write grants in an app-serving render drop 
 
 ### Third-party subchart RBAC
 
-The chart writes the prometheus and kube-state-metrics RBAC itself, the same in either mode.
-See [docs/rbac/subcharts.md](docs/rbac/subcharts.md).
+The chart writes the prometheus and kube-state-metrics RBAC itself, the same in either mode,
+in `templates/prometheus/rbac.yaml`.
 
 - `kubernetes-cadvisor` is scraped through the API server proxy in both modes, so Task-Level
   Monitoring works under `singleNamespace`.
