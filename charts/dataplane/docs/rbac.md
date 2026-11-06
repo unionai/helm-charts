@@ -25,7 +25,8 @@ work-ns to named resources would make the role harder to read without making it 
 The boundary is in two other places:
 
 - **Where work-ns is bound.** At `singleNamespace: false` it is bound only in the work
-  namespaces, by a RoleBinding the chart or `clusterresourcesync` writes in each one. It is
+  namespaces, by a RoleBinding the chart, `clusterresourcesync` or your own tooling writes in
+  each one ([namespaces.md](namespaces.md#three-routes-to-create-them)). It is
   never bound in the release namespace, where Union's own Deployments and Secrets live, and
   the chart refuses a `namespaces.static` that lists the release namespace. Each component's
   release-namespace access comes from its own `comp-ns-read` and `comp-ns-write` Roles.

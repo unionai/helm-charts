@@ -198,9 +198,13 @@ are untangled. Several of these changes are breaking: read the sections below, e
   `namespaces.enabled: true`. It defaults to the six names `common/namespaces.yaml` previously
   hardcoded (`flytesnacks-{development,staging,production}` and
   `union-health-monitoring-{development,staging,production}`), so rendered output is
-  unchanged unless you set it. It is not the full set a dataplane uses: `clusterresourcesync`
-  creates one namespace per project/domain at runtime. `namespaces.enabled: false` remains the
-  supported path for externally managed namespaces, which Helm never touches.
+  unchanged unless you set it. It is not the full set a dataplane uses: projects registered
+  later get their namespaces from `clusterresourcesync`, when it is enabled, or from your own
+  tooling. The six defaults are work namespaces only under the `{{ project }}-{{ domain }}`
+  mapping; under `values.gcp.yaml` and `values.azure.yaml`, which map to `{{ domain }}`, no
+  run uses them. `namespaces.enabled: false` remains the supported path for externally
+  managed namespaces, which Helm never touches. See
+  [docs/namespaces.md](docs/namespaces.md).
 
 - **`namespaces.labels` and `namespaces.annotations` (new)** set metadata on every Namespace
   the chart creates: Pod Security Standards levels, service-mesh injection, cost attribution,
@@ -850,19 +854,24 @@ Also, in both modes:
   The routes are additive; see
   [Who creates the work-namespace binding](docs/rbac-union.md#who-creates-the-work-namespace-binding).
 
-  - **`clusterresourcesync.enabled: true` (the usual answer, and now automatic).** It creates
-    the work namespaces as projects are registered and now creates the `union-work-ns`
-    `RoleBinding` in each one. The chart adds the binding to `union-clusterresource-template`
-    as `ab_work_ns_binding.yaml`, keyed to sort ahead of the ServiceAccount and ResourceQuota
-    entries so a new project is reachable before the objects that depend on that access are
-    created. It also grants the controller's ServiceAccount `bind` on the `union-work-ns`
-    `ClusterRole`, restricted to that role by `resourceNames`. No configuration is needed, and
-    `clusterresourcesync.templates` stays yours to override.
+  - **`clusterresourcesync.enabled: true` (the usual answer; it defaults to `false`).** It
+    creates the work namespaces as projects are registered and now creates the
+    `union-work-ns` `RoleBinding` in each one. The chart adds the binding to
+    `union-clusterresource-template` as `ab_work_ns_binding.yaml`, keyed to sort ahead of the
+    ServiceAccount and ResourceQuota entries so a new project is reachable before the objects
+    that depend on that access are created. It also grants the controller's ServiceAccount
+    `bind` on the `union-work-ns` `ClusterRole`, restricted to that role by `resourceNames`.
+    No configuration is needed, and `clusterresourcesync.templates` stays yours to override.
   - **Static** (`namespaces.enabled: true` with a non-empty `namespaces.static`). This chart
     emits one `RoleBinding` per listed namespace; the count does not grow with the number of
     components or with `commonServiceAccount.enabled: false`. **This covers the listed names
     only.** `namespaces.static` is a pre-seeded subset, so namespaces for projects registered
-    later still need `clusterresourcesync` or your own tooling.
+    later still need `clusterresourcesync` or your own tooling. It also creates only the
+    Namespace and the `RoleBinding`: a static namespace that `clusterresourcesync` does not
+    also provision has no workload-identity annotation on its `default` ServiceAccount, no
+    `project-quota`, and no `union.ai/namespace-type: flyte` label, without which the
+    operator does not copy `build-image-config` into it. Add those yourself, the label
+    through `namespaces.labels`.
   - **Your own tooling.** If you provision work namespaces yourself, create the binding
     alongside each one: a `RoleBinding` named `union-work-ns` in that namespace, with `roleRef`
     pointing at the `ClusterRole` of the same name and one `ServiceAccount` subject per Union
@@ -890,11 +899,13 @@ Also, in both modes:
   and neither applies.
 
 - **BREAKING for `namespaces.enabled: false` + `singleNamespace: false`: this mode becomes a
-  genuine multi-namespace deployment.** If you ran that combination and relied on it behaving
-  as single-namespace, it no longer does. Task pods are no longer pinned to the release
-  namespace (propeller returns to `limit-namespace: all`, and `namespace_mapping` falls back to
-  its `{{ project }}-{{ domain }}` default unless you set `namespace_mapping.template`), and
-  the single-namespace task PodTemplate, the `union` task ServiceAccount and the image-builder
+  genuine multi-namespace deployment.** `low_privilege: false` is the same setting under its
+  older name, so this covers `low_privilege: false` with `namespaces.enabled: false` too. If
+  you ran that combination and relied on it behaving as single-namespace, it no longer does.
+  Task pods are no longer pinned to the release namespace (propeller returns to
+  `limit-namespace: all`, and `namespace_mapping` falls back to its
+  `{{ project }}-{{ domain }}` default unless you set `namespace_mapping.template`), and the
+  single-namespace task PodTemplate, the `union` task ServiceAccount and the image-builder
   ConfigMap stop rendering. Union's own RBAC does not change *because of this*: it already
   keyed on `singleNamespace`, which this combination already had set to `false`. The
   destination split above, which applies to every privilege mode, is what changes it.

@@ -24,11 +24,13 @@ are a fixed allowlist, enforced by `tests/test-rbac-guards.sh` and listed in
 key's older name and still works as an alias; the chart refuses to render if both are set
 and disagree.
 
-**`namespaces.enabled` pre-seeds namespaces; it does not change scope.** It creates the
-Namespace objects named in `namespaces.static` and, at `singleNamespace: false`, their
-work-namespace RoleBindings. It changes no role's rules, but those bindings make the
-`work-ns` grant effective in each listed namespace, so it decides *where* that grant
-lands. `singleNamespace: true` ignores it.
+**`namespaces.enabled` pre-seeds namespaces; it does not change scope.** At
+`singleNamespace: false` it creates the Namespace objects named in `namespaces.static` and
+a work-namespace RoleBinding in each, and nothing else. It changes no role's rules, but
+those bindings make the `work-ns` grant effective in each listed namespace, so it decides
+*where* that grant lands. `singleNamespace: true` ignores it, render checks included. See
+[namespaces.md](namespaces.md) for naming, the routes that create work namespaces, and their
+lifecycle.
 
 **`commonServiceAccount.enabled` shares identity; it changes no rule.** The chart emits the
 same set of roles either way, but which workload can exercise which role differs. See
@@ -268,10 +270,13 @@ combined:
   immediately after the Namespace itself;
 - **your own tooling**, if you provision work namespaces yourself.
 
-`namespaces.static` is a *subset*: projects registered after install get their namespaces
-from `clusterresourcesync` regardless. The chart therefore emits the provisioner's grant in
-**both** postures, and where both routes cover a namespace they produce the identical
-object.
+`namespaces.static` is fixed at install: projects registered later get their namespaces
+only from `clusterresourcesync`, when it is enabled, or from your own tooling. With
+`clusterresourcesync` enabled, the chart emits its binding entry and `bind` grant whether or
+not `namespaces.enabled` is set, and where both routes cover a namespace they produce the
+identical object. The static route creates only the Namespace and the RoleBinding, not the
+`default` ServiceAccount annotation, quota or label the `clusterresourcesync` templates add;
+see [What a work namespace needs](namespaces.md#what-a-work-namespace-needs).
 
 Whatever creates the binding also needs `bind` on the `<release-ns>-work-ns` ClusterRole,
 because Kubernetes lets a caller grant only permissions it holds itself. Creating the
@@ -380,9 +385,9 @@ substitution only.
 This is the accepted cost of provisioning namespaces at runtime. You can avoid it or bound
 it. **To avoid it,** turn `clusterresourcesync` off and handle namespace provisioning and
 project mapping with something you trust. Pre-seeding with `namespaces.enabled: true` and
-`namespaces.static` is not enough on its own: static namespaces are a pre-seeded *subset*,
-so projects registered after install are still provisioned at runtime and both halves of the
-grant stay. **To bound it while keeping it,** use an admission policy (Kyverno,
+`namespaces.static` does not replace it: the list is fixed at install, so projects
+registered later need that tooling, and a static namespace gets only its Namespace and
+RoleBinding. **To bound it while keeping it,** use an admission policy (Kyverno,
 OPA/Gatekeeper) that restricts its RoleBinding and Namespace writes to your
 project-namespace naming convention. Only an admission policy can express that constraint
 on the *shape* of what it creates; re-cutting the RBAC cannot.

@@ -513,6 +513,8 @@ both default to `false`, so setting only `singleNamespace: false` renders the Cl
 unbound, and the render still succeeds. After registering a project, confirm the RoleBinding
 exists in its namespace. See
 [docs/rbac-union.md](docs/rbac-union.md#the-union-work-ns-clusterrole-can-render-present-but-unbound).
+[docs/namespaces.md](docs/namespaces.md) covers how work namespaces are named, what each
+route creates, and what upgrades and scope changes leave behind.
 
 ---
 
