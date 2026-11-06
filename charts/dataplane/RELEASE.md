@@ -101,11 +101,6 @@ are untangled. Several of these changes are breaking: read the sections below, e
   - The operator's dependency heartbeat checks Prometheus. It is now dropped only when
     `prometheus.enabled` is false, in either mode.
 
-  To keep the old behavior, set `config.operator.disableClusterPermissions: true` and
-  `config.operator.collectUsages.enabled: false` explicitly. With cluster permissions disabled,
-  set `config.operator.clusterData.cloudProvider`, which defaults to the top-level `provider`,
-  since the operator cannot detect it from node labels.
-
 - **The operator RBAC gates now parse the operator's flags the way the operator does.** A
   string `"True"` or `"1"` for `collectUsages.enabled` or `disableClusterPermissions` counts as
   on, and a value the operator cannot parse fails the render. Before this change only the
@@ -728,8 +723,8 @@ Also, in both modes:
 
 - **Every `low_privilege: true` install gains a cluster-wide `nodes` read and starts
   collecting usage.** See [`singleNamespace` replaces
-  `low_privilege`](#singlenamespace-replaces-low_privilege) for what changes and the two
-  values that restore the old behavior.
+  `low_privilege`](#singlenamespace-replaces-low_privilege) for what changes. No values change
+  is required.
 
 - **Use one name for the scope flag across every values file you layer.** The shipped
   examples (`examples/values.full-privilege.yaml`, `values-legacy.yaml`) and the app-serving
