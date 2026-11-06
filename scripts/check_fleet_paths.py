@@ -1,25 +1,12 @@
 #!/usr/bin/env python3
-"""Fail when the dataplane chart stops accepting a value path that Union Fleet writes.
+"""Check generated Fleet coverage against the dataplane values and schema.
 
-Fleet renders each dataplane's values from templates kept in unionai/cloud
-(cluster/fleet/templates). Fleet admission accepts a rendered path only when
-the chart's values.yaml has it, an ancestor is an empty mapping (an open
-dictionary), or the packaged values.schema.json declares it. A chart change
-that renames or drops one of those keys breaks registration of the next
-release, and nothing in this repo would say so.
+The default check reads fleet-contract.json and validates synthetic common,
+vendor, and merged output, including optional inputs, for all four providers.
+Cloud automation generates this bundle from current templates and image-pinned
+Go types. This local check requires neither Helm nor cross-repository access.
 
-tests/fleet-values-paths.txt lists every path the templates write. This check
-applies the same three acceptance rules to each one. It reads only
-values.yaml, values.schema.json and the fixture, so it needs neither helm nor
-network. A path that only a packaged subchart defaults would need a tgz
-reader; none of the listed paths is one.
-
-Fixture syntax: one dotted path per line; `#` starts a comment. A segment that
-contains `.`, `/` or whitespace is written in brackets, for example
-`proxy.podAnnotations["karpenter.sh/do-not-disrupt"]`.
-
-Usage:
-    python scripts/check_fleet_paths.py [--chart charts/dataplane] [--fixture tests/fleet-values-paths.txt]
+The explicit --fixture option retains the small path-checker test interface.
 """
 
 from __future__ import annotations
@@ -33,7 +20,91 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CHART = "charts/dataplane"
-DEFAULT_FIXTURE = "tests/fleet-values-paths.txt"
+
+
+def check_bundle(chart_dir: Path) -> list[str]:
+    """Check synthetic common, vendor and merged output without network or Helm."""
+    bundle = json.loads((chart_dir / "fleet-contract.json").read_text())
+    if bundle.get("version") != 1 or not bundle.get("scenarios"):
+        return ["Fleet contract must contain version 1 coverage scenarios"]
+    defaults = yaml.safe_load((chart_dir / "values.yaml").read_text())
+    schema = json.loads((chart_dir / "values.schema.json").read_text())
+    failures = []
+
+    def kind(value):
+        if value is None:
+            return "null"
+        if isinstance(value, bool):
+            return "boolean"
+        if isinstance(value, int) or isinstance(value, float) and value.is_integer():
+            return "integer"
+        if isinstance(value, float):
+            return "number"
+        if isinstance(value, dict):
+            return "object"
+        if isinstance(value, list):
+            return "array"
+        return "string"
+
+    def walk(values, expected, declared, path, label, inherited_open=False):
+        declared_types = declared.get("type", [])
+        declared_types = [declared_types] if isinstance(declared_types, str) else declared_types
+        open_map = (
+            inherited_open
+            or expected == {}
+            or (expected is None and "properties" not in declared and "object" in declared_types)
+        )
+        expected = expected or {}
+        for key, value in values.items():
+            at = path + [key]
+            where = ".".join(at)
+            node = declared.get("properties", {}).get(key)
+            if key not in expected and node is None and not open_map:
+                failures.append(f"{label}: {where} is not declared")
+                continue
+            if key in expected and value is None:
+                continue
+            types = (node or {}).get("type", [])
+            types = [types] if isinstance(types, str) else types
+            actual = kind(value)
+            if types and actual not in types and not (actual == "integer" and "number" in types):
+                failures.append(f"{label}: {where} has the wrong type")
+                continue
+            default = expected.get(key)
+            if (
+                not types
+                and default is not None
+                and actual != kind(default)
+                and {actual, kind(default)} != {"integer", "number"}
+            ):
+                failures.append(f"{label}: {where} has the wrong type")
+                continue
+            if isinstance(value, dict):
+                walk(
+                    value,
+                    default if isinstance(default, dict) else None,
+                    node or {},
+                    at,
+                    label,
+                    open_map,
+                )
+
+    providers = {"aws", "azure", "gcp", "metal"}
+    coverage = {(s["provider"], s["variant"]) for s in bundle["scenarios"]}
+    if not all((provider, variant) in coverage for provider in providers for variant in (0, 1)):
+        failures.append(
+            "Fleet coverage must include optional inputs present and absent for all four providers"
+        )
+    for scenario in bundle["scenarios"]:
+        for part in ("common", "vendor", "merged"):
+            walk(
+                scenario[part],
+                defaults,
+                schema,
+                [],
+                f"{scenario['provider']}/{scenario['variant']}/{part}",
+            )
+    return failures
 
 
 def parse_path(text: str) -> list[str]:
@@ -124,11 +195,15 @@ def check(chart_dir: Path, fixture: Path) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--chart", default=DEFAULT_CHART)
-    parser.add_argument("--fixture", default=DEFAULT_FIXTURE)
+    parser.add_argument("--fixture", help="legacy path fixture for isolated checker tests")
     args = parser.parse_args(argv)
     chart_dir = Path(args.chart) if Path(args.chart).is_absolute() else REPO_ROOT / args.chart
-    fixture = Path(args.fixture) if Path(args.fixture).is_absolute() else REPO_ROOT / args.fixture
-    failures = check(chart_dir, fixture)
+    fixture = None
+    if args.fixture:
+        fixture = (
+            Path(args.fixture) if Path(args.fixture).is_absolute() else REPO_ROOT / args.fixture
+        )
+    failures = check(chart_dir, fixture) if fixture else check_bundle(chart_dir)
     for failure in failures:
         print(failure, file=sys.stderr)
     if failures:
@@ -137,9 +212,7 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
-    print(
-        f"all Fleet value paths in {fixture.relative_to(REPO_ROOT) if fixture.is_relative_to(REPO_ROOT) else fixture} are accepted"
-    )
+    print("all generated Fleet coverage scenarios are accepted")
     return 0
 
 
