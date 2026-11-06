@@ -31,6 +31,29 @@ mapping is closed, and rendered manifests are unchanged.
 `tests/fleet-values-paths.txt` plus `make check-values-schema` fail CI when a
 chart change stops accepting a path Fleet writes.
 
+### Common service account coverage
+
+When `commonServiceAccount.enabled` is true, FlytePropeller and cluster-resource-sync
+now use the common service account and bind their existing RBAC to it instead of
+creating dedicated service accounts. In single-namespace mode (`low_privilege: true`
+or `namespaces.enabled: false`), FlytePropeller uses the common account even when
+`commonServiceAccount.enabled: false`; cluster-resource-sync is not rendered.
+Their historical `flytepropeller-system` and `union-clustersync-system` accounts
+remain unchanged only when `commonServiceAccount.enabled: false`,
+`low_privilege: false`, and `namespaces.enabled: true`.
+
+The parent Prometheus RoleBinding now follows
+`prometheus.serviceAccounts.server.name`. This allows the Prometheus subchart to use
+the common account without losing its scrape permissions:
+
+```yaml
+prometheus:
+  serviceAccounts:
+    server:
+      create: false
+      name: union-system
+```
+
 ### Image mirrors and pre-warm
 
 `global.imageMirrors` (upstream registry => mirror prefix) routes the chart's images
