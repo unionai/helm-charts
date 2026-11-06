@@ -71,7 +71,7 @@ are untangled. Several of these changes are breaking: read the sections below, e
     that can be namespaced is.
   - Cluster-scoped reads come only from a fixed allowlist, each entry tied to the code that
     needs it. See
-    [docs/rbac.md](docs/rbac.md#what-singlenamespace-still-reads-cluster-wide).
+    [docs/rbac/scope.md](docs/rbac/scope.md#what-singlenamespace-still-reads-cluster-wide).
   - Cluster-scoped writes are pinned to named objects, and the pre-upgrade hook that deletes
     the legacy `flyte-pod-webhook` is one of them. The exceptions are the unpinned `nodes`
     `update` of nodeobserver and node-bootstrap, both off by default.
@@ -134,7 +134,7 @@ are untangled. Several of these changes are breaking: read the sections below, e
   `comp-ns-read` or `comp-ns-write` Role, and its rules are pinned by `resourceNames` where the
   name is fixed. This replaces relying on sharing `union-system` with the proxy's Secret Role.
   The operator, webhook and leaseworker grants and their conditions are listed in
-  [docs/rbac-union.md](docs/rbac-union.md#release-namespace-grants-do-not-come-from-work-ns).
+  [docs/rbac/slots.md](docs/rbac/slots.md#release-namespace-grants-do-not-come-from-work-ns).
   They include a `<release-ns>-secret-read` Role in `proxy.secretsNamespace` granting `secrets`
   `get`, for the webhook's and leaseworker's K8s secret manager reads.
 - **The leaseworker's event watcher is granted at `singleNamespace: false`.** With no limit
@@ -153,10 +153,10 @@ are untangled. Several of these changes are breaking: read the sections below, e
   wildcard, a write verb, or a built-in group fails the render. The built-in groups are the
   core group, `apps`, `batch`, every group without a dot, `rbac.authorization.k8s.io` and
   `certificates.k8s.io`. It renders nothing under `singleNamespace`. See
-  [docs/rbac.md](docs/rbac.md#plugin-crd-reads-at-singlenamespace-false).
+  [docs/rbac/scope.md](docs/rbac/scope.md#plugin-crd-reads-at-singlenamespace-false).
 - **`apiGroups: ["*"]` is refused outside the work-ns role.** work-ns keeps its wildcard on
   purpose, since a grant that can create pods in a namespace is already admin of it. See
-  [docs/rbac.md](docs/rbac.md#the-work-ns-wildcard). Every other slot now refuses an
+  [docs/rbac/slots.md](docs/rbac/slots.md#the-work-ns-wildcard). Every other slot now refuses an
   all-groups rule, `clusterresourcesync.clusterRoleRules` included. **Breaking** if an
   overlay puts `apiGroups: ["*"]` in `clusterRoleRules`: name the groups instead.
 
@@ -200,7 +200,7 @@ are untangled. Several of these changes are breaking: read the sections below, e
   The key does not change `Role` versus `ClusterRole` scope. It partitions the existing grants
   across identities. A compromised workload then exercises only its own component's grants,
   except in the pooled work-namespace role, which *Union RBAC is split by destination*
-  describes. See [Identities](docs/rbac-union.md#identities).
+  describes. See [Identities](docs/rbac/identities.md).
 
 - **`namespaces.static` (new)** lists the work namespaces to pre-create when
   `namespaces.enabled: true`. It defaults to the six names `common/namespaces.yaml` previously
@@ -212,7 +212,7 @@ are untangled. Several of these changes are breaking: read the sections below, e
   `{{ project }}-{{ domain }}` mapping. Under `values.gcp.yaml` and `values.azure.yaml`, which
   map to `{{ domain }}`, no run uses them. `namespaces.enabled: false` remains the supported
   path for externally managed namespaces, which Helm leaves alone. See
-  [docs/namespaces.md](docs/namespaces.md).
+  [docs/rbac/work-namespaces.md](docs/rbac/work-namespaces.md).
 
 - **`namespaces.labels` and `namespaces.annotations` (new)** set metadata on every Namespace
   the chart creates: Pod Security Standards levels, service-mesh injection, cost attribution,
@@ -258,7 +258,7 @@ resource declarations redistributed unchanged and the verbs narrowed as describe
 name stops matching**, because nothing named `union-comp-ns-*` renders any more. An audit
 policy, a `RoleBinding` and a Kyverno rule are examples. `work-ns` stays shared because its
 namespaces are created at runtime, and one role there means one `RoleBinding` and one `bind`
-grant per namespace instead of one per component. See [Pooling](docs/rbac-union.md#pooling).
+grant per namespace instead of one per component. See [Pooling](docs/rbac/slots.md#pooling).
 
 **Every RBAC rule in the chart now declares its own `verbs`, and they are narrowed.** The
 three release-namespace and work-namespace slots used to stamp a fixed verb set onto every
@@ -384,7 +384,7 @@ included `secrets`, `roles` and `clusterrolebindings`. `bind` is pinned by `reso
 the `union-work-ns` `ClusterRole`, so it cannot grant any other role. Every namespaced Union
 grant outside this table lands in the release namespace, a namespace listed in
 `namespaces.static`, or one `clusterresourcesync` provisions. See [The cluster-scoped write
-surface](docs/rbac-union.md#the-cluster-scoped-write-surface).
+surface](docs/rbac/cluster-writes.md).
 
 The `clusterresourcesync` and webhook writes are cut to the calls each binary makes.
 `clusterresourcesync` applies every template with a create, then on `AlreadyExists` a get and a
@@ -521,7 +521,7 @@ chart has no ServiceAccount override there, and nothing below applies to it.
   different PodAutoscaler class, and it held exactly the autoscaler's grants before. Kourier
   keeps its upstream name `net-kourier`, so it is the one account whose name is unchanged
   under per-component identities. See
-  [Knative ServiceAccount naming](docs/rbac-union.md#knative-serviceaccount-naming).
+  [Knative ServiceAccount naming](docs/rbac/identities.md#knative-serviceaccount-naming).
 
 - **Splitting the account leaves the webhook and autoscalers authorized.** Upstream conveys
   their whole grant through roles bound to the shared `controller` account. The next section
@@ -651,7 +651,7 @@ as is the `knative-operator` path (`gateway.enabled: false`), which installs its
   **Behavior change:** digest resolution now depends on the `<release-ns>-work-ns`
   `RoleBinding` existing in the app's namespace. If it is missing, the Revision is marked
   `ContainerMissing`, a visible failure in the Revision status and one more symptom of
-  [the work-namespace binding being absent](docs/rbac-union.md#the-union-work-ns-clusterrole-can-render-present-but-unbound).
+  [the work-namespace binding being absent](docs/rbac/work-namespaces.md#the-union-work-ns-clusterrole-can-render-present-but-unbound).
   The effective grant is unchanged at the `commonServiceAccount.enabled: true` default, since
   `<release-ns>-work-ns` already carries `leaseworker`'s and `flytepropeller`'s resource
   wildcard.
@@ -661,7 +661,7 @@ as is the `knative-operator` path (`gateway.enabled: false`), which installs its
   and it reads the same config key propeller does, so scoping it would pin propeller's own
   informer. It holds `list`/`watch`, which returns every Secret's contents, so it is broader
   than the named `get` removed here. It is listed with its removal condition in
-  [docs/rbac-union.md](docs/rbac-union.md#where-a-secrets-rule-belongs). `net-kourier`'s
+  [docs/rbac/slots.md](docs/rbac/slots.md#where-a-secrets-rule-belongs). `net-kourier`'s
   cluster-wide read is gone, as the `net-kourier` bullet above describes.
 
 - **The autoscaler's scale-subresource rule is namespaced.** Upstream's `*/scale` `patch`
@@ -686,7 +686,7 @@ as is the `knative-operator` path (`gateway.enabled: false`), which installs its
 
 The chart now writes prometheus and kube-state-metrics RBAC itself, and both are pinned to
 `rbac.create: false`. It grants each the reads its scrape jobs and collectors use, identically
-in either scope mode. Rationale and per-subchart detail are in [docs/rbac.md](docs/rbac.md).
+in either scope mode. Rationale and per-subchart detail are in [docs/rbac/subcharts.md](docs/rbac/subcharts.md).
 
 Two broken metrics families are fixed, both under `singleNamespace`:
 
@@ -733,7 +733,7 @@ Also, in both modes:
 
 - **Use one name for the scope flag across every values file you layer.** The shipped
   examples (`examples/values.full-privilege.yaml`, `values-legacy.yaml`) and the app-serving
-  recipe in `docs/rbac.md` now set `singleNamespace: false`. Layered with an overlay that sets
+  recipe in `docs/rbac/app-serving.md` now set `singleNamespace: false`. Layered with an overlay that sets
   `low_privilege: true`, the later file used to win. Now the render fails with
   `singleNamespace is false but low_privilege is true`, because picking either would silently
   flip scope. Migrate overlays to `singleNamespace`, or set the same value under both names.
@@ -869,7 +869,7 @@ Also, in both modes:
   `singleNamespace: false`, and the chart cannot check that it happened.** No Union role is
   bound cluster-wide to reach work namespaces any more, so the binding is what grants access.
   The routes are additive. See
-  [Who creates the work-namespace binding](docs/rbac-union.md#who-creates-the-work-namespace-binding).
+  [Who creates the work-namespace binding](docs/rbac/work-namespaces.md#who-creates-the-work-namespace-binding).
 
   - **`clusterresourcesync.enabled: true`.** This is the usual answer, though it defaults to
     `false`. It creates the work namespaces as projects are registered and now creates the
@@ -1031,7 +1031,7 @@ Also, in both modes:
   being consulted. The Envoy gateway, dataproxy and tunnel-service ingress gate on
   `serving.renderGateway`, which is `gateway.enabled` with either app serving or zero trust.
   Therefore `apps.enabled: false` leaves the zero-trust dataplane fully working. See
-  [docs/rbac.md](docs/rbac.md#app-serving).
+  [docs/rbac/app-serving.md](docs/rbac/app-serving.md).
 
 - **App serving: Knative TLS certificate provisioning is removed** on the vendored gateway.
   The `config-certmanager` ConfigMap and the `routing-serving-certs` `Certificate` are gone,

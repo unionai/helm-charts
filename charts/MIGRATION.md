@@ -4,81 +4,113 @@ Tracking the migration story for the helm-charts cloud overlays. New entries at 
 
 ---
 
-## dataplane — `low_privilege` becomes `singleNamespace`, and stops disabling usage collection
+## dataplane — `singleNamespace` replaces `low_privilege`, and work namespaces need a binding
 
-### What changed
+Find the scenario that matches your values and apply its snippet. The dataplane
+[release notes](dataplane/RELEASE.md#migration--action-required) list every change.
 
-`low_privilege` is renamed `singleNamespace`, because the flag has always decided scope:
-Union in the release namespace with namespaced Roles, or across per-project namespaces with
-ClusterRoles. The dataplane README's [RBAC section](dataplane/README.md#rbac) lists what
-`singleNamespace: true` promises.
+### Single-namespace: the default, or `low_privilege: true`
 
-**`low_privilege` still works as an alias**, and the values true and false resolve as before. Both
-keys are unset in `values.yaml`, which still means single-namespace. Two cases now fail the
-render: the two keys set to different values, and a quoted string such as `"false"`, which
-used to read as true.
+No change is required. `low_privilege` still works. To use the new name:
 
-**Single-namespace mode now honors two operator settings it used to force.** Before this
-change it set `config.operator.collectUsages.enabled` to `false`. It also set
-`config.operator.disableClusterPermissions` to `true`. Both now follow their own values:
+```yaml
+singleNamespace: true   # replaces low_privilege: true
+```
 
-- `collectUsages` is on by default, so single-namespace operators start collecting usage. The
-  operator confines its pod and pod-metrics reads to `limitNamespace`, so the pod-metrics
-  grant stays a Role in the release namespace.
-- `disableClusterPermissions` defaults to `false`, so the operator's node informer runs in
-  single-namespace mode too. The chart adds a ClusterRole and ClusterRoleBinding named
-  `<release-ns>-operator-cluster-read`, which grant `list` and `watch` on `nodes`. The informer
-  drives GPU attribution by node label, the Legacy/Shadow node-based billing collector, and
-  cloud-provider detection from node labels.
+### `low_privilege: false` with `namespaces.enabled: false`
 
-When deciding the grants, the chart parses those flags with `strconv.ParseBool`, as the
-operator does. A string `"True"` or `"1"` counts as on, and a value the operator cannot parse
-fails the render.
+This install ran as single-namespace, and on upgrade it becomes multi-namespace. To keep it
+single-namespace, replace `low_privilege: false` with:
 
-### Operational impact
+```yaml
+singleNamespace: true
+```
 
-- **A new cluster-scoped read on every single-namespace dataplane**: `nodes` `list`/`watch`
-  for the operator's ServiceAccount. A namespace-confined install identity was already too narrow
-  to deploy this chart. See the dataplane README's RBAC section.
-- **Usage collection starts** on single-namespace dataplanes, and the operator's config
-  checksum changes, so the operator and proxy roll on upgrade.
-- To keep the old behavior, set it explicitly:
+To make it multi-namespace, follow the next scenario.
 
-  ```yaml
-  config:
-    operator:
-      disableClusterPermissions: true   # no node informer, no nodes grant
-      collectUsages:
-        enabled: false
-  ```
+### Multi-namespace
 
-  With cluster permissions disabled, also set `config.operator.clusterData.cloudProvider`,
-  which defaults to the top-level `provider`. The operator cannot then detect the cloud
-  provider from node labels.
-- **Use one name for the scope flag across every values file you layer.**
-  Two example files and the app-serving recipe in `dataplane/docs/rbac.md` now set
-  `singleNamespace: false`. The files are `examples/values.full-privilege.yaml` and
-  `examples/values-legacy.yaml`.
-  - Layered with an overlay that sets `low_privilege: true`, the later file used to win.
-    Now the render fails with `singleNamespace is false but low_privilege is true`, because
-    either choice would flip scope.
-  - Migrate overlays to `singleNamespace`, or set the same value under both names until
-    every file is migrated.
-- **Replace `.Values.low_privilege` in your own templated values.** `values.yaml` leaves it
-  unset, so unless an overlay sets it, `{{ if not .Values.low_privilege }}` is true at the
-  single-namespace default.
-  - Use `{{ if not (include "singleNamespace" .) }}` instead, in every value the chart
-    renders through `tpl`. Those are `extraObjects` and the `config.*` blocks.
-  - `prometheus.serverFiles` is passed through as written.
-- **Drop any scope guard around the `kubernetes-cadvisor` job** in a
-  `prometheus.extraScrapeConfigs` override copied from a pre-release `values.yaml`.
-  Prometheus now scrapes cadvisor through the API server proxy in both scope modes, so a
-  guard only removes container CPU and memory metrics from single-namespace installs.
+This covers `low_privilege: false` with `namespaces.enabled: true`, and an install you are
+moving to multi-namespace. Every work namespace now needs a `<release-ns>-work-ns` RoleBinding. Pick one or more of
+these ways to create the namespaces and their bindings, and set `singleNamespace: false`
+in place of `low_privilege: false`.
+
+**`clusterresourcesync`** creates each namespace and its binding as projects are registered:
+
+```yaml
+singleNamespace: false
+clusterresourcesync:
+  enabled: true
+```
+
+**`namespaces.static`** creates the listed namespaces and their bindings at chart install
+and upgrade. List the names your `namespace_mapping` produces, which are
+`<project>-<domain>` by default:
+
+```yaml
+singleNamespace: false
+namespaces:
+  enabled: true
+  static:
+    - flytesnacks-development
+    - flytesnacks-staging
+    - flytesnacks-production
+```
+
+The chart creates only the Namespace and the RoleBinding there. Projects registered later
+need their names added, or one of the other two ways.
+
+**Your own tooling** creates the namespaces, and it must create the RoleBinding in each one as
+well. See
+[Who creates the work-namespace binding](dataplane/docs/rbac/work-namespaces.md#who-creates-the-work-namespace-binding).
+
+Drop no names from `namespaces.static` in this upgrade. The upgrade adds
+`helm.sh/resource-policy: keep` to each listed namespace, so a name you drop in the same
+upgrade is deleted with its contents. Adding names is safe, and you can drop names in a later
+upgrade.
+
+Layer `examples/values.full-privilege.yaml` so that kube-state-metrics collects from the work
+namespaces.
+
+### Several layered values files
+
+Use one name for the scope key in every file. The render fails when one file sets
+`singleNamespace: false` and another sets `low_privilege: true`.
+`examples/values.full-privilege.yaml` and `examples/values-legacy.yaml` now set
+`singleNamespace: false`.
+
+### Generated values
+
+Write the scope key as an unquoted boolean. The render fails on a quoted string:
+
+```yaml
+singleNamespace: false   # "false" fails the render
+```
+
+### Templated values that read `.Values.low_privilege`
+
+`values.yaml` no longer sets `low_privilege`. In `extraObjects` and the `config.*` blocks,
+replace the check:
+
+```yaml
+# before
+{{ if not .Values.low_privilege }}
+# after
+{{ if not (include "singleNamespace" .) }}
+```
+
+### Prometheus overrides
+
+Remove `prometheus.rbac.create` and `prometheus.kube-state-metrics.rbac.create` from your
+values. The chart writes that RBAC itself and refuses to render if either is `true`.
+
+In a `prometheus.extraScrapeConfigs` override, remove any scope guard around the
+`kubernetes-cadvisor` job. The job now runs in both scope modes.
 
 ### Rollback
 
-Revert the chart change. Overlays that still set `low_privilege` keep working. An overlay that
-switched to `singleNamespace` must switch back.
+Revert the chart version. Overlays that still set `low_privilege` keep working. An overlay
+that switched to `singleNamespace` must switch back.
 
 ---
 
