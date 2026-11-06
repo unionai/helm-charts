@@ -90,6 +90,17 @@ Adds custom PodSpec values.
 {{- printf "%s-flytepropeller" $name }}
 {{- end }}
 
+{{/*
+Returns the FlytePropeller service account name, using the common SA when enabled.
+*/}}
+{{- define "flytepropeller.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+flytepropeller-system
+{{- end -}}
+{{- end -}}
+
 {{- define "flytepropeller.serviceAccount.annotations" -}}
 {{- include "global.serviceAccountAnnotations" . }}
 {{- with .Values.flytepropeller.serviceAccount.annotations }}
@@ -509,6 +520,19 @@ Create the name of the clusterresources service account
 {{- define "clusterresourcesync.serviceAccountName" -}}
 {{- default "clustersync-system" .Values.clusterresourcesync.serviceAccount.name }}
 {{- end }}
+
+{{/*
+Returns the complete cluster-resource-sync service account name, using the
+common SA when enabled while preserving the historical union- prefix for the
+standalone account.
+*/}}
+{{- define "clusterresourcesync.workloadServiceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+{{- printf "union-%s" (include "clusterresourcesync.serviceAccountName" .) -}}
+{{- end -}}
+{{- end -}}
 
 {{- define "clusterresourcesync.serviceAccount.annotations" -}}
 {{- include "global.serviceAccountAnnotations" . }}
