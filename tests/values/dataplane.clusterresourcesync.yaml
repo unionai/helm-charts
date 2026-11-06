@@ -1,10 +1,5 @@
 # helm-values: examples/values-test-certs.yaml
 
-# Exercises the clusterresourcesync ClusterRole template, which is only rendered
-# when namespaces.enabled=true and low_privilege=false (i.e. not singleNamespace
-# mode). Locks in the default clusterRoleRules (including limitranges) and
-# verifies that custom rules render through to the union-clustersync-resource
-# ClusterRole.
 host: test.example.com
 
 low_privilege: false
@@ -25,24 +20,6 @@ clusterresourcesync:
         enable: false
   clusterRoleRules:
     - apiGroups:
-        - ""
-        - rbac.authorization.k8s.io
-      resources:
-        - clusterrolebindings
-        - configmaps
-        - limitranges
-        - namespaces
-        - podtemplates
-        - pods
-        - resourcequotas
-        - rolebindings
-        - roles
-        - secrets
-        - serviceaccounts
-        - services
-      verbs:
-        - '*'
-    - apiGroups:
         - example.com
       resources:
         - widgets
@@ -50,3 +27,29 @@ clusterresourcesync:
         - get
         - list
         - watch
+        - create
+        - patch
+  # Kinds whose resource name is not the naive plural: the derived grant must name
+  # endpoints, gateways and networkpolicies.
+  additionalTemplates:
+    - key: d_endpoints
+      value: |
+        apiVersion: v1
+        kind: Endpoints
+        metadata:
+          name: external-db
+          namespace: {{ namespace }}
+    - key: e_gateway
+      value: |
+        apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          name: tenant
+          namespace: {{ namespace }}
+    - key: f_networkpolicy
+      value: |
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        metadata:
+          name: default-deny
+          namespace: {{ namespace }}
