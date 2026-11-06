@@ -20,6 +20,33 @@ def test_all_generated_scenarios_are_accepted():
     assert check_fleet_paths.check_bundle(REAL_CHART) == []
 
 
+@pytest.mark.parametrize(
+    "selector_values,valid",
+    [(["on-demand", "reserved"], True), (False, False), ("on-demand", False)],
+)
+def test_documented_aws_non_interruptible_selector_values(tmp_path, selector_values, valid):
+    chart = chart_copy(tmp_path)
+    bundle = json.loads((chart / "fleet-contract.json").read_text())
+    scenario = next(scenario for scenario in bundle["scenarios"] if scenario["provider"] == "aws")
+    scenario["vendor"] = {
+        "config": {
+            "k8s": {
+                "plugins": {
+                    "k8s": {
+                        "non-interruptible-node-selector-requirement": {
+                            "key": "karpenter.sh/capacity-type",
+                            "operator": "In",
+                            "values": selector_values,
+                        }
+                    }
+                }
+            }
+        }
+    }
+    (chart / "fleet-contract.json").write_text(json.dumps(bundle))
+    assert (check_fleet_paths.check_bundle(chart) == []) == valid
+
+
 def test_coverage_detects_unknown_paths_and_wrong_types(tmp_path):
     chart = chart_copy(tmp_path)
     original = json.loads((chart / "fleet-contract.json").read_text())
