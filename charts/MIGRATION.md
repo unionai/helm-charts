@@ -13,33 +13,33 @@ Union in the release namespace with namespaced Roles, or across per-project name
 ClusterRoles. The dataplane README's [RBAC section](dataplane/README.md#rbac) lists what
 `singleNamespace: true` promises.
 
-**`low_privilege` still works as an alias**, and `true` and `false` resolve as before. Both
-keys are unset in `values.yaml`, which still means single-namespace. Two values now fail the
+**`low_privilege` still works as an alias**, and the values true and false resolve as before. Both
+keys are unset in `values.yaml`, which still means single-namespace. Two cases now fail the
 render: the two keys set to different values, and a quoted string such as `"false"`, which
 used to read as true.
 
-**Single-namespace mode no longer switches features off.** It used to force
-`config.operator.collectUsages.enabled` to `false` and `config.operator.disableClusterPermissions`
-to `true`. Both now follow their own values:
+**Single-namespace mode now honors two operator settings it used to force.** Before this
+change it set `config.operator.collectUsages.enabled` to `false`. It also set
+`config.operator.disableClusterPermissions` to `true`. Both now follow their own values:
 
 - `collectUsages` is on by default, so single-namespace operators start collecting usage. The
   operator confines its pod and pod-metrics reads to `limitNamespace`, so the pod-metrics
   grant stays a Role in the release namespace.
 - `disableClusterPermissions` defaults to `false`, so the operator's node informer runs in
-  single-namespace mode too. The chart adds the ClusterRole and ClusterRoleBinding
-  `<release-ns>-operator-cluster-read`, granting `nodes` `list` and `watch`. The informer
+  single-namespace mode too. The chart adds a ClusterRole and ClusterRoleBinding named
+  `<release-ns>-operator-cluster-read`, which grant `list` and `watch` on `nodes`. The informer
   drives GPU attribution by node label, the Legacy/Shadow node-based billing collector, and
   cloud-provider detection from node labels.
 
-The chart parses those operator flags as the operator does (`strconv.ParseBool`) when
-deciding the grants: a string `"True"` or `"1"` counts as on, and a value the operator cannot
-parse fails the render.
+When deciding the grants, the chart parses those flags with `strconv.ParseBool`, as the
+operator does. A string `"True"` or `"1"` counts as on, and a value the operator cannot parse
+fails the render.
 
 ### Operational impact
 
 - **A new cluster-scoped read on every single-namespace dataplane**: `nodes` `list`/`watch`
-  for the operator's ServiceAccount. A namespace-confined install identity already could not
-  deploy this chart; see the dataplane README's RBAC section.
+  for the operator's ServiceAccount. A namespace-confined install identity was already too narrow
+  to deploy this chart. See the dataplane README's RBAC section.
 - **Usage collection starts** on single-namespace dataplanes, and the operator's config
   checksum changes, so the operator and proxy roll on upgrade.
 - To keep the old behavior, set it explicitly:
@@ -52,29 +52,32 @@ parse fails the render.
         enabled: false
   ```
 
-  With cluster permissions disabled, set `config.operator.clusterData.cloudProvider` (it
-  defaults to the top-level `provider`), because the operator can then no longer detect it
-  from node labels.
+  With cluster permissions disabled, also set `config.operator.clusterData.cloudProvider`,
+  which defaults to the top-level `provider`. The operator cannot then detect the cloud
+  provider from node labels.
 - **Use one name for the scope flag across every values file you layer.**
-  `examples/values.full-privilege.yaml`, `examples/values-legacy.yaml` and the app-serving
-  recipe in `dataplane/docs/rbac.md` now set `singleNamespace: false`. Layered with an overlay
-  that sets `low_privilege: true`, the later file used to win; the render now fails with
-  `singleNamespace is false but low_privilege is true`, because either choice would silently
-  flip scope. Migrate overlays to `singleNamespace`, or set the same value under both names
-  until every file is migrated.
-- **Replace `.Values.low_privilege` in your own templated values.** `values.yaml` no longer
-  sets it, so unless an overlay does, `{{ if not .Values.low_privilege }}` is true at the
-  single-namespace default. Use `{{ if not (include "singleNamespace" .) }}` instead, in every
-  value the chart renders through `tpl`: `extraObjects` and the `config.*` blocks.
-  `prometheus.serverFiles` is not rendered through `tpl`.
+  Two example files and the app-serving recipe in `dataplane/docs/rbac.md` now set
+  `singleNamespace: false`. The files are `examples/values.full-privilege.yaml` and
+  `examples/values-legacy.yaml`.
+  - Layered with an overlay that sets `low_privilege: true`, the later file used to win.
+    Now the render fails with `singleNamespace is false but low_privilege is true`, because
+    either choice would flip scope.
+  - Migrate overlays to `singleNamespace`, or set the same value under both names until
+    every file is migrated.
+- **Replace `.Values.low_privilege` in your own templated values.** `values.yaml` leaves it
+  unset, so unless an overlay sets it, `{{ if not .Values.low_privilege }}` is true at the
+  single-namespace default.
+  - Use `{{ if not (include "singleNamespace" .) }}` instead, in every value the chart
+    renders through `tpl`. Those are `extraObjects` and the `config.*` blocks.
+  - `prometheus.serverFiles` is passed through as written.
 - **Drop any scope guard around the `kubernetes-cadvisor` job** in a
-  `prometheus.extraScrapeConfigs` override (copied from a pre-release `values.yaml`).
+  `prometheus.extraScrapeConfigs` override copied from a pre-release `values.yaml`.
   Prometheus now scrapes cadvisor through the API server proxy in both scope modes, so a
   guard only removes container CPU and memory metrics from single-namespace installs.
 
 ### Rollback
 
-Revert the chart change. Overlays that set `low_privilege` need no edit either way; one that
+Revert the chart change. Overlays that still set `low_privilege` keep working. An overlay that
 switched to `singleNamespace` must switch back.
 
 ---
