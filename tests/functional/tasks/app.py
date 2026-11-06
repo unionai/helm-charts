@@ -28,7 +28,7 @@ _CACHE_BUST = os.environ.get("FUNCTIONAL_IMAGE_CACHE_BUST", "")
 # multi-dataplane-safe (shared wildcard, last-writer-wins), so poll the app's
 # intra-cluster k8s Service FQDN instead: <project>-<domain>-<app>.<ns>.svc.cluster.local
 # (project == CLUSTER_NAME); INTERNAL_APP_ENDPOINT_PATTERN makes it _app_env.endpoint.
-# _app_ns = the release namespace the operator pins app pods to under low_privilege
+# _app_ns = the release namespace the operator pins app pods to under singleNamespace
 # ("dataplane" on standing legs, "union" on k3d); APP_NAMESPACE overrides per leg.
 _app_ns = os.environ.get("APP_NAMESPACE", "dataplane")
 _INTERNAL_APP_ENDPOINT = f"http://{_cluster}-development-{{app_fqdn}}.{_app_ns}.svc.cluster.local"

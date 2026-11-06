@@ -383,6 +383,8 @@ data:
 
     def test_real_chart_config_and_workload_inventory(self):
         inventories = []
+        comp_ns_read = []
+        cluster_read = []
         for model in ("None", "ResourceUsage"):
             result = self.helm(
                 "template",
@@ -394,16 +396,49 @@ data:
                 CHART / "examples/values-test-certs.yaml",
                 "--set-string",
                 f"config.operator.billing.model={model}",
+                "--set",
+                "config.operator.collectUsages.enabled=false",
+                "--set",
+                "imageBuilder.enabled=false",
             )
             self.assertEqual(model, self.operator(result.stdout)["billing"]["model"])
+            docs = [doc for doc in yaml.safe_load_all(result.stdout) if doc]
             inventories.append(
+                {(doc["apiVersion"], doc["kind"], doc["metadata"]["name"]) for doc in docs}
+            )
+            comp_ns_read.append(
                 {
-                    (doc["apiVersion"], doc["kind"], doc["metadata"]["name"])
-                    for doc in yaml.safe_load_all(result.stdout)
-                    if doc
+                    (group, resource)
+                    for doc in docs
+                    if doc["kind"] == "Role"
+                    and doc["metadata"]["name"] == f"{NAMESPACE}-operator-comp-ns-read"
+                    for rule in doc.get("rules") or []
+                    for group in rule.get("apiGroups") or []
+                    for resource in rule.get("resources") or []
                 }
             )
-        self.assertEqual(*inventories)
+            cluster_read.append(
+                {
+                    (group, resource)
+                    for doc in docs
+                    if doc["kind"] == "ClusterRole"
+                    and doc["metadata"]["name"] == f"{NAMESPACE}-operator-cluster-read"
+                    for rule in doc.get("rules") or []
+                    for group in rule.get("apiGroups") or []
+                    for resource in rule.get("resources") or []
+                }
+            )
+        none, resource_usage = inventories
+        # The cluster read role exists under either model, for the API server's /metrics;
+        # usage collection adds only its nodes read.
+        self.assertEqual(set(), resource_usage - none)
+        self.assertEqual(set(), none - resource_usage)
+        none_cluster, resource_usage_cluster = cluster_read
+        self.assertEqual({("", "nodes")}, resource_usage_cluster - none_cluster)
+        self.assertEqual(set(), none_cluster - resource_usage_cluster)
+        none_rules, resource_usage_rules = comp_ns_read
+        self.assertEqual({("metrics.k8s.io", "pods")}, resource_usage_rules - none_rules)
+        self.assertEqual(set(), none_rules - resource_usage_rules)
 
 
 if __name__ == "__main__":
