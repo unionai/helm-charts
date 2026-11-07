@@ -34,7 +34,7 @@ def test_logs(flyte_ctx):
     Logs reach the backend via an async, batched sync whose latency is variable
     and can exceed our wait, so a hard timing gate only flakes CI. Best-effort:
     poll up to _LOG_SYNC_TIMEOUT, WARN (not fail) on timeout. Task pods live in the
-    RELEASE namespace (low_privilege), not "{project}-development".
+    RELEASE namespace (singleNamespace), not "{project}-development".
     """
 
     async def _run() -> None:
