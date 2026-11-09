@@ -3591,7 +3591,7 @@ data:
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "description": "Runs and finalizes leaseworker is holding.",
+          "description": "Runs and finalizes leaseworker is holding. Finished leases hold no capacity; a growing count means the leasor is not accepting reports.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3659,6 +3659,17 @@ data:
               "legendFormat": "finalize",
               "range": true,
               "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "leaseworker:finished_run_leases{namespace=~\"$namespace\"}",
+              "legendFormat": "finished, awaiting leasor",
+              "range": true,
+              "refId": "C"
             }
           ],
           "title": "Active leases",
@@ -3744,7 +3755,7 @@ data:
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "description": "Actions queued in the leaseworker dispatcher.",
+          "description": "Attempt keys waiting in the leaseworker dispatcher's work queue. The main lane is the backlog of actions awaiting evaluation; the priority lane holds finalize (cleanup) leases on their first admission and is drained first, so it normally reads zero.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3797,10 +3808,21 @@ data:
                 "uid": "${datasource}"
               },
               "editorMode": "code",
-              "expr": "leaseworker:dispatcher:queue_depth{namespace=~\"$namespace\"}",
-              "legendFormat": "depth",
+              "expr": "leaseworker:dispatcher:queue_main_depth{namespace=~\"$namespace\"}",
+              "legendFormat": "main",
               "range": true,
               "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "leaseworker:dispatcher:queue_priority_depth{namespace=~\"$namespace\"}",
+              "legendFormat": "priority (finalize)",
+              "range": true,
+              "refId": "B"
             }
           ],
           "title": "Dispatcher queue depth",
@@ -4042,6 +4064,229 @@ data:
             }
           ],
           "title": "Task assignment (no capacity / no workers)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Actions this leaseworker drove to a terminal phase, per second. Compare ACTION_PHASE_SUCCEEDED against FAILED, ABORTED and TIMED_OUT.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 48
+          },
+          "id": 4007,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "sum by (phase) (rate(leaseworker:dispatcher:actions_terminated{namespace=~\"$namespace\"}[$__rate_interval]))",
+              "legendFormat": "{{phase}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Actions terminated (by phase)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Transient platform errors while executing actions, and actions failed because consecutive system errors reached maxConsecutiveErrors. Any sustained 'exhausted' rate is an action lost for a platform reason.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 48
+          },
+          "id": 4008,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "sum(rate(leaseworker:dispatcher:system_errors{namespace=~\"$namespace\"}[$__rate_interval]))",
+              "legendFormat": "transient",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "sum(rate(leaseworker:dispatcher:system_errors_exhausted{namespace=~\"$namespace\"}[$__rate_interval]))",
+              "legendFormat": "exhausted (action failed)",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "System errors: transient vs exhausted",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Failed heartbeat RPCs to the leasor and lease-stream reconnections. Sustained heartbeat errors expire leases and retry healthy actions; a steady reconnect rate is an unstable connection to the control plane.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 48
+          },
+          "id": 4009,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "sum(rate(leaseworker:heartbeater:request_errors{namespace=~\"$namespace\"}[$__rate_interval]))",
+              "legendFormat": "heartbeat errors",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "sum(rate(leaseworker:stream:reconnections{namespace=~\"$namespace\"}[$__rate_interval]))",
+              "legendFormat": "stream reconnects",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Control-plane link: heartbeat errors / stream reconnects",
           "type": "timeseries"
         }
       ],

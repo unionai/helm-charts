@@ -370,6 +370,12 @@ fewer series and annotation-discovered targets stop.
   namespace, and at `singleNamespace: false` it is still allowed for every pod.
 - **`uvolMountBroker.block.allow` is rendered through `tpl`.** `[]` still disables block
   mode.
+- **The Union Dataplane Overview dashboard's `V2 — leaseworker` row gains three panels:**
+  *Actions terminated (by phase)* (`leaseworker:dispatcher:actions_terminated`), *System errors:
+  transient vs exhausted* (`leaseworker:dispatcher:system_errors`, `system_errors_exhausted`) and
+  *Control-plane link: heartbeat errors / stream reconnects* (`leaseworker:heartbeater:request_errors`,
+  `leaseworker:stream:reconnections`). *Active leases* also plots `leaseworker:finished_run_leases`,
+  the finished actions whose report the leasor has not accepted yet.
 
 ### Fixes
 
@@ -388,6 +394,10 @@ fewer series and annotation-discovered targets stop.
 - Prometheus scrapes itself at `/prometheus/metrics`, under `server.prefixURL`. If you change
   `prefixURL`, change the job with it.
 - The "deployments available" dashboard panel has data again.
+- The *Dispatcher queue depth* panel of the Union Dataplane Overview dashboard has data again.
+  It read `leaseworker:dispatcher:queue_depth`, which the leaseworker does not emit; it now plots
+  `leaseworker:dispatcher:queue_main_depth` and `queue_priority_depth`, the two lanes of the
+  dispatcher's work queue.
 - `gpu-metrics` looks for dcgm-exporter in the release namespace instead of `kube-system`.
 
 ## 2026.11.3
