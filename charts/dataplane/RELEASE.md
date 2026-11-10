@@ -15,6 +15,9 @@ Before this change the keys were in plain text in the `union-operator`, `leasewo
   two variables with `valueFrom.secretKeyRef` on the Secret.
 - In single-namespace mode task pods get `FLYTE_AWS_ACCESS_KEY_ID` / `FLYTE_AWS_SECRET_ACCESS_KEY`
   from the Secret on the `task-template` PodTemplate instead of literal `default-env-vars`.
+- Fluent Bit is a subchart, so it does not get the variables automatically. Set `fluentbit.env` to
+  the same `secretKeyRef`s (see the comment on `fluentbit.env` in `values.yaml`); without them,
+  persisted task logs fail to upload and the console's Logs tab is empty once the pod is gone.
 - A Secret that does not exist now stops pods from starting (`CreateContainerConfigError`) instead
   of silently rendering empty credentials.
 
