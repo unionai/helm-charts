@@ -1,5 +1,31 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+### Object-store keys no longer copied into ConfigMaps
+
+When `storage.credentialsSecretRef` names a Secret in the release namespace, the chart no longer
+reads it with `lookup` and writes the decoded `access_key_id` / `secret_key` into rendered config.
+Before this change the keys were in plain text in the `union-operator`, `leaseworker` and
+`build-image-config` ConfigMaps and, through `default-env-vars`, in every task pod's environment.
+
+- The stow S3 config uses `auth_type: iam` and carries no keys; the AWS SDK's default chain reads
+  them from `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`.
+- The operator, proxy, dataproxy, leaseworker, pod webhook and flytepropeller containers get those
+  two variables with `valueFrom.secretKeyRef` on the Secret.
+- In single-namespace mode task pods get `FLYTE_AWS_ACCESS_KEY_ID` / `FLYTE_AWS_SECRET_ACCESS_KEY`
+  from the Secret on the `task-template` PodTemplate instead of literal `default-env-vars`.
+- Fluent Bit is a subchart, so it does not get the variables automatically. Set `fluentbit.env` to
+  the same `secretKeyRef`s (see the comment on `fluentbit.env` in `values.yaml`); without them,
+  persisted task logs fail to upload and the console's Logs tab is empty once the pod is gone.
+- A Secret that does not exist now stops pods from starting (`CreateContainerConfigError`) instead
+  of silently rendering empty credentials.
+
+Unchanged: a `credentialsSecretRef.namespace` other than the release namespace (a pod cannot
+reference a Secret elsewhere), task pods in multi-namespace mode, and inline `storage.accessKey` /
+`storage.secretKey` keep rendering the keys as before. Rotate keys that have been exposed through
+the old ConfigMaps once this version is deployed.
+
 ## 2026.11.4
 
 `version` moves `2026.11.3` → `2026.11.4` and `appVersion` moves `2026.11.2` →
