@@ -53,7 +53,7 @@ ROOT_MARKER = "# @schema.root"
 
 # JSON Schema keywords an annotation may use. Everything else is rejected so
 # the generated schema stays open and self-contained.
-ALLOWED_KEYS = {"type", "title", "description", "enum", "items", "properties", "$comment"}
+ALLOWED_KEYS = {"type", "title", "description", "items", "properties", "$comment"}
 # The type names Fleet's path check understands (cluster/fleet/validate/paths.go schemaKinds).
 ALLOWED_TYPES = {"string", "boolean", "number", "integer", "object", "array", "null"}
 
@@ -219,8 +219,6 @@ def _validate_node(node: object, where: str, line_no: int) -> dict:
     for text_key in ("title", "description", "$comment"):
         if text_key in node and not isinstance(node[text_key], str):
             raise AnnotationError(f"line {line_no}: `{where}` {text_key} must be a string")
-    if "enum" in node and (not isinstance(node["enum"], list) or not node["enum"]):
-        raise AnnotationError(f"line {line_no}: `{where}` enum must be a non-empty list")
     if "items" in node:
         node["items"] = _validate_node(node["items"], f"{where}.items", line_no)
     if "properties" in node:
@@ -274,7 +272,19 @@ def render(schema: dict) -> str:
 
 def generate(chart_dir: Path) -> str:
     root, annotations = parse_annotations((chart_dir / VALUES_FILE).read_text())
-    return render(build_schema(root, annotations))
+    schema = build_schema(root, annotations)
+    bundle_path = chart_dir / "fleet-contract.json"
+    if bundle_path.exists():
+        bundle = json.loads(bundle_path.read_text())
+        if bundle.get("version") != 1:
+            raise AnnotationError(
+                "unsupported Fleet contract version; regenerate with cloud tooling"
+            )
+        fragment = _validate_node(bundle["schema"], "Fleet contract", 0)
+        _merge(schema, fragment, "Fleet contract", 0)
+    elif (chart_dir / "fleet-sources.json").exists():
+        raise AnnotationError("missing generated fleet-contract.json")
+    return render(schema)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -287,10 +297,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--check", action="store_true", help="verify the committed schema matches; write nothing"
     )
+    parser.add_argument(
+        "--dump-owned",
+        action="store_true",
+        help="print chart annotations without generated Fleet declarations",
+    )
     args = parser.parse_args(argv)
     chart_dir = Path(args.chart) if Path(args.chart).is_absolute() else REPO_ROOT / args.chart
     schema_path = chart_dir / SCHEMA_FILE
     try:
+        if args.dump_owned:
+            root, annotations = parse_annotations((chart_dir / VALUES_FILE).read_text())
+            print(render(build_schema(root, annotations)), end="")
+            return 0
         rendered = generate(chart_dir)
     except AnnotationError as err:
         print(f"{chart_dir / VALUES_FILE}: {err}", file=sys.stderr)
