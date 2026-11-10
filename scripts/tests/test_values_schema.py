@@ -27,6 +27,8 @@ FLEET_LEAVES = {
     "config.k8s.plugins.k8s.interruptible-tolerations": "array",
     "config.k8s.plugins.k8s.gpu-device-node-label": "string",
     "config.k8s.plugins.k8s.gpu-partition-size-node-label": "string",
+    "config.k8s.plugins.k8s.accelerator-device-classes": ["object", "array"],
+    "config.k8s.plugins.k8s.accelerator-devices": ["object", "array"],
     "config.k8s.plugins.k8s.interruptible-node-selector-requirement.key": "string",
     "config.k8s.plugins.k8s.interruptible-node-selector-requirement.operator": "string",
     "config.k8s.plugins.k8s.interruptible-node-selector-requirement.values": "array",
