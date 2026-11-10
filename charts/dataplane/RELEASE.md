@@ -1,5 +1,14 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+- `config.k8s.plugins.k8s.accelerator-device-classes` and `config.k8s.plugins.k8s.accelerator-devices`
+  are declared in `values.schema.json`, as a mapping or a list of one-key mappings, so Union Fleet
+  accepts them as values edits. They let a cluster point an accelerator device class at the node
+  label its nodes carry, e.g. AMD MI355X nodes labelled `amp.dev/amd-gpu=true` on National Compute,
+  so `flyte.Resources(gpu="MI355X:8")` schedules there. Nothing is set by default; rendered
+  manifests are unchanged.
+
 ## 2026.11.4
 
 `version` moves `2026.11.3` → `2026.11.4` and `appVersion` moves `2026.11.2` →
