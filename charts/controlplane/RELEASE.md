@@ -1,5 +1,34 @@
 # controlplane — Release Notes
 
+## 2026.11.4
+
+`version` moves `2026.11.3` → `2026.11.4` and `appVersion` moves `2026.11.2` →
+`2026.11.4`, picking up the new control-plane images. No control-plane template
+or values changes; lockstep release with the `dataplane` chart.
+
+Notable image changes (unionai/cloud `release/2026.11.2..release/2026.11.4`):
+
+- leaseworker stamps action identity labels on the finalize context, so pools
+  started by a cross-project launch scale down
+  ([cloud#19863](https://github.com/unionai/cloud/pull/19863)).
+- leasor looks up a queue created since its last sync instead of aborting its
+  actions ([cloud#19838](https://github.com/unionai/cloud/pull/19838)), and
+  backpressure throttles new runs rather than admitted ones
+  ([cloud#19876](https://github.com/unionai/cloud/pull/19876),
+  [cloud#19875](https://github.com/unionai/cloud/pull/19875)).
+- dataproxy reads `GetActionData` from the bucket in the action's URI
+  ([cloud#19832](https://github.com/unionai/cloud/pull/19832)).
+- List filters match `LIKE` wildcards literally
+  ([cloud#19840](https://github.com/unionai/cloud/pull/19840)).
+- node-bootstrap keeps the base CRI config in the containerd 1.x override
+  ([cloud#19847](https://github.com/unionai/cloud/pull/19847)).
+- GPU: MIG pools with partition labels and scale-from-zero, and unified fault
+  watching in the node agent
+  ([cloud#19105](https://github.com/unionai/cloud/pull/19105),
+  [cloud#19106](https://github.com/unionai/cloud/pull/19106),
+  [cloud#19099](https://github.com/unionai/cloud/pull/19099),
+  [cloud#18751](https://github.com/unionai/cloud/pull/18751)).
+
 ## 2026.11.3
 
 `version` moves `2026.11.2` → `2026.11.3`. `appVersion` stays `2026.11.2`: this is a
