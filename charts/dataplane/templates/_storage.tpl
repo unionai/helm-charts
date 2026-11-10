@@ -4,14 +4,63 @@ Storage helpers.  This migrates all of the storage configurations to
 the stow based options to provide additional configuration flexibility.
 */}}
 
+{{/*
+storage.credentialsFromSecretRef is "true" when the object store's access keys can reach pods at
+runtime from the customer's Secret (env valueFrom.secretKeyRef) instead of being copied into
+rendered config: credentialsSecretRef names a Secret in the release namespace. A pod cannot
+reference a Secret in another namespace, so one elsewhere keeps the render-time copy.
+*/}}
+{{- define "storage.credentialsFromSecretRef" -}}
+{{- $ref := .Values.storage.credentialsSecretRef -}}
+{{- if and $ref.name (or (not $ref.namespace) (eq $ref.namespace .Release.Namespace)) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+storage.credentialsEnv is the AWS_* env a platform container needs to reach the object store when
+its storage config uses auth_type iam: the AWS SDK's default chain reads these variables, so the
+keys stay in the Secret. Empty unless storage.credentialsFromSecretRef.
+*/}}
+{{- define "storage.credentialsEnv" -}}
+{{- if include "storage.credentialsFromSecretRef" . }}
+{{- $ref := .Values.storage.credentialsSecretRef }}
+- name: AWS_ACCESS_KEY_ID
+  valueFrom:
+    secretKeyRef:
+      name: {{ $ref.name | quote }}
+      key: {{ $ref.accessKeyIdKey | default "access_key_id" | quote }}
+- name: AWS_SECRET_ACCESS_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ $ref.name | quote }}
+      key: {{ $ref.secretKeyKey | default "secret_key" | quote }}
+{{- end }}
+{{- end -}}
+
+{{/*
+storage.taskCredentialsFromPodTemplate is "true" when task pods get the object store's keys as
+FLYTE_AWS_* env from the Secret, set on the task-template PodTemplate (common/task-podtemplate.yaml)
+rather than as literal default-env-vars. Task pods must run in the release namespace to reference
+the Secret, so this needs single-namespace mode as well as storage.credentialsFromSecretRef.
+*/}}
+{{- define "storage.taskCredentialsFromPodTemplate" -}}
+{{- if and (include "storage.credentialsFromSecretRef" .) (include "singleNamespace" .) -}}true{{- end -}}
+{{- end -}}
+
 {{- define "storage.base" -}}
 {{- if or (eq .Values.storage.provider "compat") (eq .Values.storage.provider "oci") }}
   type: stow
   stow:
     kind: s3
     config:
+      {{- if include "storage.credentialsFromSecretRef" . }}
+      # The access keys reach each pod as AWS_* env from credentialsSecretRef
+      # (storage.credentialsEnv); iam makes the client read them from there.
+      auth_type: iam
+      {{- else }}
       auth_type: accesskey
-      {{- if .Values.storage.credentialsSecretRef.name }}
+      {{- end }}
+      {{- if include "storage.credentialsFromSecretRef" . }}
+      {{- else if .Values.storage.credentialsSecretRef.name }}
       {{- $secret := lookup "v1" "Secret" (.Values.storage.credentialsSecretRef.namespace | default .Release.Namespace) .Values.storage.credentialsSecretRef.name }}
       {{- if $secret }}
       access_key_id: {{ index $secret.data (.Values.storage.credentialsSecretRef.accessKeyIdKey | default "access_key_id") | b64dec | quote }}
@@ -34,9 +83,14 @@ the stow based options to provide additional configuration flexibility.
   stow:
     kind: s3
     config:
+      {{- if and (eq .Values.storage.authType "accesskey") (include "storage.credentialsFromSecretRef" .) }}
+      # The access keys reach each pod as AWS_* env from credentialsSecretRef.
+      auth_type: iam
+      {{- else }}
       auth_type: {{ .Values.storage.authType }}
+      {{- end }}
       region: {{ .Values.storage.region }}
-      {{- if eq .Values.storage.authType "accesskey" }}
+      {{- if and (eq .Values.storage.authType "accesskey") (not (include "storage.credentialsFromSecretRef" .)) }}
       {{- if .Values.storage.credentialsSecretRef.name }}
       {{- $secret := lookup "v1" "Secret" (.Values.storage.credentialsSecretRef.namespace | default .Release.Namespace) .Values.storage.credentialsSecretRef.name }}
       {{- if $secret }}
@@ -63,7 +117,12 @@ the stow based options to provide additional configuration flexibility.
   {{- $stowKind := default "" $stow.kind -}}
   {{- $stowConfig := default dict $stow.config -}}
 
-  {{- if and .Values.storage.credentialsSecretRef.name (eq $customType "stow") (eq $stowKind "s3") -}}
+  {{- if and (include "storage.credentialsFromSecretRef" .) (eq $customType "stow") (eq $stowKind "s3") -}}
+    {{- /* The keys reach each pod as AWS_* env; iam makes the client read them from there. */ -}}
+    {{- $mergedStowConfig := omit (mergeOverwrite (deepCopy $stowConfig) (dict "auth_type" "iam")) "access_key_id" "secret_key" -}}
+    {{- $_ := set $stow "config" $mergedStowConfig -}}
+    {{- $_ := set $custom "stow" $stow -}}
+  {{- else if and .Values.storage.credentialsSecretRef.name (eq $customType "stow") (eq $stowKind "s3") -}}
     {{- $secret := lookup "v1" "Secret" (.Values.storage.credentialsSecretRef.namespace | default .Release.Namespace) .Values.storage.credentialsSecretRef.name -}}
     {{- if $secret -}}
       {{- $secretCreds := dict

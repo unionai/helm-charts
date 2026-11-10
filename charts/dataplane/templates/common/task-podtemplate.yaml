@@ -16,6 +16,22 @@ template:
     containers:
       - name: default
         image: docker.io/rwgrim/docker-noop
+{{- if include "storage.taskCredentialsFromPodTemplate" . }}
+{{- $ref := .Values.storage.credentialsSecretRef }}
+        # The object store's keys, read from the Secret at pod start rather than
+        # copied into the task config (storage.taskCredentialsFromPodTemplate).
+        env:
+          - name: FLYTE_AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: {{ $ref.name | quote }}
+                key: {{ $ref.accessKeyIdKey | default "access_key_id" | quote }}
+          - name: FLYTE_AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: {{ $ref.name | quote }}
+                key: {{ $ref.secretKeyKey | default "secret_key" | quote }}
+{{- end }}
 {{- with .Values.taskPodTemplate.workingDir }}
         workingDir: {{ . | quote }}
 {{- end }}
