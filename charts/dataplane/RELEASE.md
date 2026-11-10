@@ -1,6 +1,42 @@
 # dataplane — Release Notes
 
-## Unreleased
+## 2026.11.4
+
+`version` moves `2026.11.3` → `2026.11.4` and `appVersion` moves `2026.11.2` →
+`2026.11.4`, picking up the new images. This release carries the RBAC rework
+below, which is breaking: read *Migration / action required* before upgrading.
+Union Fleet clusters need
+[cloud#19932](https://github.com/unionai/cloud/pull/19932) (Fleet values for
+2026.11.4: `low_privilege: true`, no `prometheus.rbac.create`) before they move
+to this chart.
+
+Notable image changes (unionai/cloud `release/2026.11.2..release/2026.11.4`):
+
+- leaseworker stamps action identity labels on the finalize context, so pools
+  started by a cross-project launch scale down
+  ([cloud#19863](https://github.com/unionai/cloud/pull/19863)).
+- leasor looks up a queue created since its last sync instead of aborting its
+  actions ([cloud#19838](https://github.com/unionai/cloud/pull/19838)), and
+  backpressure throttles new runs rather than admitted ones
+  ([cloud#19876](https://github.com/unionai/cloud/pull/19876),
+  [cloud#19875](https://github.com/unionai/cloud/pull/19875)).
+- dataproxy reads `GetActionData` from the bucket in the action's URI
+  ([cloud#19832](https://github.com/unionai/cloud/pull/19832)).
+- List filters match `LIKE` wildcards literally
+  ([cloud#19840](https://github.com/unionai/cloud/pull/19840)).
+- node-bootstrap keeps the base CRI config in the containerd 1.x override
+  ([cloud#19847](https://github.com/unionai/cloud/pull/19847)).
+- GPU: MIG pools with partition labels and scale-from-zero, and unified fault
+  watching in the node agent
+  ([cloud#19105](https://github.com/unionai/cloud/pull/19105),
+  [cloud#19106](https://github.com/unionai/cloud/pull/19106),
+  [cloud#19099](https://github.com/unionai/cloud/pull/19099),
+  [cloud#18751](https://github.com/unionai/cloud/pull/18751)).
+
+Chart changes: RBAC rework (#661), common service accounts for flytepropeller,
+clusterresourcesync and union-operator-prometheus (#667), leaseworker dashboard
+panels (#676).
+
 
 Union's RBAC is reorganized by where each grant applies, and `singleNamespace` replaces
 `low_privilege` as the scope key. Several changes are breaking, so read *Migration / action
@@ -370,6 +406,12 @@ fewer series and annotation-discovered targets stop.
   namespace, and at `singleNamespace: false` it is still allowed for every pod.
 - **`uvolMountBroker.block.allow` is rendered through `tpl`.** `[]` still disables block
   mode.
+- **The Union Dataplane Overview dashboard's `V2 — leaseworker` row gains three panels:**
+  *Actions terminated (by phase)* (`leaseworker:dispatcher:actions_terminated`), *System errors:
+  transient vs exhausted* (`leaseworker:dispatcher:system_errors`, `system_errors_exhausted`) and
+  *Control-plane link: heartbeat errors / stream reconnects* (`leaseworker:heartbeater:request_errors`,
+  `leaseworker:stream:reconnections`). *Active leases* also plots `leaseworker:finished_run_leases`,
+  the finished actions whose report the leasor has not accepted yet.
 
 ### Fixes
 
@@ -388,6 +430,10 @@ fewer series and annotation-discovered targets stop.
 - Prometheus scrapes itself at `/prometheus/metrics`, under `server.prefixURL`. If you change
   `prefixURL`, change the job with it.
 - The "deployments available" dashboard panel has data again.
+- The *Dispatcher queue depth* panel of the Union Dataplane Overview dashboard has data again.
+  It read `leaseworker:dispatcher:queue_depth`, which the leaseworker does not emit; it now plots
+  `leaseworker:dispatcher:queue_main_depth` and `queue_priority_depth`, the two lanes of the
+  dispatcher's work queue.
 - `gpu-metrics` looks for dcgm-exporter in the release namespace instead of `kube-system`.
 
 ## 2026.11.3
