@@ -1,5 +1,29 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+### Image builder: registry credentials from a Kubernetes Secret
+
+`imageBuilder.authenticationType` accepts `dockerconfig`, for dataplanes with no
+cloud workload identity (on-prem / `metal`) that build into a private registry
+([cloud#19959](https://github.com/unionai/cloud/issues/19959)). Create a Secret
+of type `kubernetes.io/dockerconfigjson` named `union-registry-credentials` in
+the release namespace; the name is fixed. With the mode set, the chart:
+
+- writes `authentication-type: dockerconfig` to `build-image-config` and the
+  operator config; the build-image task mounts the Secret to push and to pull
+  private base images (needs the matching union image release);
+- mounts the Secret read-only into the operator proxy at
+  `/var/run/secrets/union/registry-credentials/` for image-existence checks
+  (`optional: true`, so the proxy starts even if the Secret is created later);
+- in single-namespace mode, adds it to the `imagePullSecrets` of the task
+  ServiceAccount `union`, after any `serviceAccount.imagePullSecrets`, so task
+  pods can pull the built images.
+
+The chart never creates, reads or `lookup`s the Secret, so no credentials are
+rendered into any manifest. Other modes render exactly as before. The `basic`
+mode, which the build-image task never implemented, is documented as such.
+
 ## 2026.11.4
 
 `version` moves `2026.11.3` → `2026.11.4` and `appVersion` moves `2026.11.2` →

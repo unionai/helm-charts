@@ -1852,6 +1852,57 @@ Otherwise, build it from imagebuilder.defaultRegistry plus the provider-specific
 {{- end -}}
 {{- end -}}
 
+{{/*
+The Secret that holds registry credentials when imageBuilder.authenticationType
+is "dockerconfig". The name is fixed: the build-image task and the operator
+proxy look for exactly this name, so it is not a value. The customer (or Union
+Fleet) creates it in the release namespace as a kubernetes.io/dockerconfigjson
+Secret; the chart only references it by name and never reads or renders it.
+*/}}
+{{- define "imagebuilder.registryCredentialsSecretName" -}}
+union-registry-credentials
+{{- end -}}
+
+{{/*
+Returns "true" when the image builder authenticates to the registry with the
+mounted dockerconfigjson Secret (imageBuilder.authenticationType: dockerconfig),
+and an empty string otherwise.
+*/}}
+{{- define "imagebuilder.dockerconfigAuth" -}}
+{{- if eq (toString .Values.imageBuilder.authenticationType) "dockerconfig" -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/*
+imagePullSecrets for the task ServiceAccount `union`: serviceAccount.imagePullSecrets
+(templated), plus the registry credentials Secret when the image builder uses
+dockerconfig auth, so task pods can pull the images it pushes. The Secret is
+appended once; an entry that already names it is not duplicated. Renders a YAML
+list, or nothing when the list is empty.
+*/}}
+{{- define "union.serviceAccount.imagePullSecrets" -}}
+{{- $secrets := list -}}
+{{- with .Values.serviceAccount.imagePullSecrets -}}
+{{- $secrets = fromYamlArray (tpl (toYaml .) $) -}}
+{{- end -}}
+{{- if include "imagebuilder.dockerconfigAuth" . -}}
+{{- $name := include "imagebuilder.registryCredentialsSecretName" . -}}
+{{- $found := false -}}
+{{- range $secrets -}}
+{{- if and (kindIs "map" .) (eq (toString (get . "name")) $name) -}}
+{{- $found = true -}}
+{{- end -}}
+{{- end -}}
+{{- if not $found -}}
+{{- $secrets = append $secrets (dict "name" $name) -}}
+{{- end -}}
+{{- end -}}
+{{- with $secrets -}}
+{{- toYaml . -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "singleNamespace" -}}
 {{- $set := dict -}}
 {{- range $key := list "singleNamespace" "low_privilege" -}}
