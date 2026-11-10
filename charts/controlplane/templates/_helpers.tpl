@@ -163,7 +163,14 @@ Args: root context (.)
 
 {{- define "unionai.env" -}}
 {{- if and (hasKey .config "env") -}}
-{{- toYaml .config.env -}}
+  {{- if kindIs "map" .config.env -}}
+    {{- range $k, $v := .config.env }}
+- name: {{ $k }}
+  value: {{ $v | quote }}
+    {{- end }}
+  {{- else -}}
+    {{- toYaml .config.env -}}
+  {{- end -}}
 {{- else if and (hasKey .Values "env") }}
 {{- toYaml .Values.env -}}
 {{- end }}
