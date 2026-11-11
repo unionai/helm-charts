@@ -1,5 +1,15 @@
 # controlplane — Release Notes
 
+## Unreleased
+
+### `global.UNION_PUBLIC_PORT` keeps a non-443 port on the OAuth callback
+
+flyteadmin builds the OAuth `redirect_uri` from the first `authorizedUris` entry
+whose hostname matches, ignoring the port. A control plane served on, say, `:8443`
+was redirected to `https://<host>/callback` and got a 404. Set
+`global.UNION_PUBLIC_PORT` and the chart's public `authorizedUris` entries (the host
+and the `*.apps.` wildcard) carry the port. Unset, rendering is unchanged.
+
 ## 2026.11.5
 
 `version` moves `2026.11.4` → `2026.11.5`. `appVersion` stays `2026.11.4`: this is a
