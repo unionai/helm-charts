@@ -1,13 +1,16 @@
 # dataplane — Release Notes
 
-## Unreleased
+## 2026.11.5
+
+`version` moves `2026.11.4` → `2026.11.5`. `appVersion` stays `2026.11.4`: this is a
+chart-only release; no image changes.
 
 - `config.k8s.plugins.k8s.accelerator-device-classes` and `config.k8s.plugins.k8s.accelerator-devices`
   are declared in `values.schema.json`, as a mapping or a list of one-key mappings, so Union Fleet
   accepts them as values edits. They let a cluster point an accelerator device class at the node
   label its nodes carry, e.g. AMD MI355X nodes labelled `amp.dev/amd-gpu=true` on National Compute,
   so `flyte.Resources(gpu="MI355X:8")` schedules there. Nothing is set by default; rendered
-  manifests are unchanged.
+  manifests are unchanged ([#679](https://github.com/unionai/helm-charts/pull/679)).
 
 ## 2026.11.4
 
