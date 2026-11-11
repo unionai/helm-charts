@@ -1,5 +1,39 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+- Depot mode can use a `depot-token` Secret that the chart does not own. Until now the chart
+  always rendered `depot-token` with a placeholder `.dockerconfigjson` (`{"auths":{}}`), so every
+  `helm upgrade` (each Union Fleet apply) wiped the `registry.depot.dev` credentials an admin had
+  added by hand, and task pods failed to pull with "no basic auth credentials". New value
+  `imageBuilder.depot.createSecret` (default `true`, which renders as before): set it to `false`
+  and the chart no longer renders `depot-token`. The task PodTemplate still lists `depot-token`
+  in `imagePullSecrets`, and the build task still reads `DEPOT_TOKEN` and `DEPOT_PROJECT_ID` from
+  it, so the Secret must keep that name.
+- The rendered `depot-token` now carries `helm.sh/resource-policy: keep`. Helm no longer deletes
+  it when `createSecret` is switched to `false` or the release is uninstalled; delete it by hand
+  if it is no longer needed. Non-Depot releases render nothing new.
+
+### Migration for a Depot cluster
+
+1. Create `depot-token` in the release namespace, or keep the existing one, with type
+   `kubernetes.io/dockerconfigjson` and these keys:
+   - `.dockerconfigjson`: an `auths` entry for `registry.depot.dev` with username `x-token` and
+     the Depot token as password;
+   - `DEPOT_TOKEN`: the Depot token;
+   - `DEPOT_PROJECT_ID`: the Depot project ID.
+2. Set `imageBuilder.depot.createSecret: false`.
+
+Helm checks the keep annotation on the live Secret before it deletes a resource the new revision
+no longer renders. A release already on this chart has the annotation, so the first upgrade with
+`createSecret: false` leaves the existing Secret and its data untouched. A release coming straight
+from an older chart does not: either upgrade once with `createSecret: true` first (note that this
+upgrade still resets `.dockerconfigjson`, so restore it afterwards), or annotate the live Secret
+before upgrading with `false`:
+`kubectl -n <namespace> annotate secret depot-token helm.sh/resource-policy=keep`.
+Argo CD does not honour `helm.sh/resource-policy`; an Argo CD app with pruning enabled will prune
+the Secret unless it is excluded from pruning.
+
 ## 2026.11.5
 
 `version` moves `2026.11.4` → `2026.11.5`. `appVersion` stays `2026.11.4`: this is a
