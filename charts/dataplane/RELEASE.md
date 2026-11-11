@@ -1,5 +1,15 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+- In Depot mode (`imageBuilder.enabled: true`, `imageBuilder.buildkit.enabled: false`, empty
+  `imageBuilder.buildkitUri`), the `operator-proxy` container gets `DEPOT_TOKEN` and
+  `DEPOT_PROJECT_ID` from the `depot-token` Secret, both `optional: true`. With an operator image
+  that supports it, the proxy's image-exists check then looks up Depot-built images in
+  `registry.depot.dev/<DEPOT_PROJECT_ID>` as `x-token`, so runs stop rebuilding images that
+  already exist. Without the Secret keys, or with an older image, the proxy behaves as before.
+  Other modes render nothing new.
+
 ## 2026.11.5
 
 `version` moves `2026.11.4` → `2026.11.5`. `appVersion` stays `2026.11.4`: this is a
