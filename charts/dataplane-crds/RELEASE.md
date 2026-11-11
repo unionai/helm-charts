@@ -1,5 +1,17 @@
 # dataplane-crds — Release Notes
 
+## 2026.11.5
+
+Lockstep release with the `dataplane` chart. `version` moves to `2026.11.5`; the
+informational `appVersion` stays `2026.11.4`. No CRD changes, no functional changes.
+This chart remains deprecated; use the vendored CRDs under `crds/dataplane/`.
+
+## 2026.11.4
+
+Lockstep release with the `dataplane` chart. `version` and the informational
+`appVersion` move to `2026.11.4`. No CRD changes. This chart remains deprecated;
+use the vendored CRDs under `crds/dataplane/`.
+
 ## 2026.11.3
 
 Lockstep release with the `dataplane` chart. `version` moves to `2026.11.3`; the

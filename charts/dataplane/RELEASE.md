@@ -1,6 +1,54 @@
 # dataplane — Release Notes
 
-## Unreleased
+## 2026.11.5
+
+`version` moves `2026.11.4` → `2026.11.5`. `appVersion` stays `2026.11.4`: this is a
+chart-only release; no image changes.
+
+- `config.k8s.plugins.k8s.accelerator-device-classes` and `config.k8s.plugins.k8s.accelerator-devices`
+  are declared in `values.schema.json`, as a mapping or a list of one-key mappings, so Union Fleet
+  accepts them as values edits. They let a cluster point an accelerator device class at the node
+  label its nodes carry, e.g. AMD MI355X nodes labelled `amp.dev/amd-gpu=true` on National Compute,
+  so `flyte.Resources(gpu="MI355X:8")` schedules there. Nothing is set by default; rendered
+  manifests are unchanged ([#679](https://github.com/unionai/helm-charts/pull/679)).
+
+## 2026.11.4
+
+`version` moves `2026.11.3` → `2026.11.4` and `appVersion` moves `2026.11.2` →
+`2026.11.4`, picking up the new images. This release carries the RBAC rework
+below, which is breaking: read *Migration / action required* before upgrading.
+Union Fleet clusters need
+[cloud#19932](https://github.com/unionai/cloud/pull/19932) (Fleet values for
+2026.11.4: `low_privilege: true`, no `prometheus.rbac.create`) before they move
+to this chart.
+
+Notable image changes (unionai/cloud `release/2026.11.2..release/2026.11.4`):
+
+- leaseworker stamps action identity labels on the finalize context, so pools
+  started by a cross-project launch scale down
+  ([cloud#19863](https://github.com/unionai/cloud/pull/19863)).
+- leasor looks up a queue created since its last sync instead of aborting its
+  actions ([cloud#19838](https://github.com/unionai/cloud/pull/19838)), and
+  backpressure throttles new runs rather than admitted ones
+  ([cloud#19876](https://github.com/unionai/cloud/pull/19876),
+  [cloud#19875](https://github.com/unionai/cloud/pull/19875)).
+- dataproxy reads `GetActionData` from the bucket in the action's URI
+  ([cloud#19832](https://github.com/unionai/cloud/pull/19832)).
+- List filters match `LIKE` wildcards literally
+  ([cloud#19840](https://github.com/unionai/cloud/pull/19840)).
+- node-bootstrap keeps the base CRI config in the containerd 1.x override
+  ([cloud#19847](https://github.com/unionai/cloud/pull/19847)).
+- GPU: MIG pools with partition labels and scale-from-zero, and unified fault
+  watching in the node agent
+  ([cloud#19105](https://github.com/unionai/cloud/pull/19105),
+  [cloud#19106](https://github.com/unionai/cloud/pull/19106),
+  [cloud#19099](https://github.com/unionai/cloud/pull/19099),
+  [cloud#18751](https://github.com/unionai/cloud/pull/18751)).
+
+Chart changes: RBAC rework (#661), common service accounts for flytepropeller,
+clusterresourcesync and union-operator-prometheus (#667), leaseworker dashboard
+panels (#676).
+
 
 Union's RBAC is reorganized by where each grant applies, and `singleNamespace` replaces
 `low_privilege` as the scope key. Several changes are breaking, so read *Migration / action
