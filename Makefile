@@ -115,7 +115,7 @@ buildkit-arm-test: requirements
 	uv run python tests/test-buildkit-arm.py
 
 # Keep in sync with the flyte pin in the cloud repo's imagebuild/build-image-bootstrap/Dockerfile.
-BUILD_IMAGE_TASK_FLYTE_VERSION ?= 2.13.1
+BUILD_IMAGE_TASK_FLYTE_VERSION ?= 2.13.2
 
 .PHONY: build-image-task-test
 build-image-task-test:

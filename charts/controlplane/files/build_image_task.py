@@ -35,7 +35,6 @@ from kubernetes.client import (
 
 import flyte
 from flyte.extras import ContainerTask
-from flyteidl2.core import tasks_pb2
 
 
 _DEFAULT_CONFIGMAP_NAME = "build-image-config"
@@ -54,17 +53,10 @@ if not union_image_name_prefix:
 app_version = os.getenv("APP_VERSION")
 if not app_version:
     raise ValueError("APP_VERSION environment variable must be set")
-
-
-class BuildTask(ContainerTask):
-    # imagebuild writes its outputs to --remote-outputs-prefix itself, so the pod must not
-    # get CoPilot containers (flyte >= 2.12.3 sends data_config for pod-template tasks).
-    def data_loading_config(self, sctx):
-        return tasks_pb2.DataLoadingConfig(enabled=False)
-
-
-build_image_task = BuildTask(
+build_image_task = ContainerTask(
     name="build-image",
+    # imagebuild writes its outputs to --remote-outputs-prefix itself: no CoPilot.
+    data_loading=False,
     cache=flyte.Cache(behavior="auto"),
     image=f"{union_image_name_prefix}/build-image:{app_version}",
     inputs={"spec": str, "context": str, "target_image": str},
