@@ -1,5 +1,11 @@
 # onebox — Release Notes
 
+## 2026.11.5
+
+`version` moves `2026.11.4` → `2026.11.5`; `appVersion` stays `2026.11.4`. Lockstep
+chart-only release with the `controlplane` / `dataplane` charts; no onebox template,
+values or image changes, no functional changes.
+
 ## 2026.11.4
 
 `version` moves `2026.11.3` → `2026.11.4` and `appVersion` moves `2026.11.2` →

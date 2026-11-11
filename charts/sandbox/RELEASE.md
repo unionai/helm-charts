@@ -1,5 +1,11 @@
 # sandbox — Release Notes
 
+## 2026.11.5
+
+Lockstep release with the `controlplane` / `dataplane` charts. `version` moves to
+`2026.11.5`; the informational `appVersion` stays `2026.11.4`. No sandbox template
+or image changes, no functional changes.
+
 ## 2026.11.4
 
 Lockstep release with the `controlplane` / `dataplane` charts. `version` and the

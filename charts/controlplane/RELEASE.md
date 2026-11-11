@@ -1,5 +1,11 @@
 # controlplane — Release Notes
 
+## 2026.11.5
+
+`version` moves `2026.11.4` → `2026.11.5`. `appVersion` stays `2026.11.4`: this is a
+chart-only lockstep release with the `dataplane` chart ([#679](https://github.com/unionai/helm-charts/pull/679)); no control-plane
+template, values or image changes.
+
 ## 2026.11.4
 
 `version` moves `2026.11.3` → `2026.11.4` and `appVersion` moves `2026.11.2` →
