@@ -91,7 +91,7 @@ check-vendored-crds:
 	exit $${fail}
 
 .PHONY: helm-test
-helm-test: $(TMP_DIR) snapshot-generator-test k3d-storage-test billing-test buildkit-arm-test workload-labels-test rbac-guard-test
+helm-test: $(TMP_DIR) snapshot-generator-test k3d-storage-test billing-test buildkit-arm-test workload-labels-test rbac-guard-test build-image-task-test
 	./tests/run.sh helm
 
 # Every Union workload the dataplane chart renders carries the component label the
@@ -113,6 +113,13 @@ billing-test: requirements
 buildkit-arm-test: requirements
 	helm dependency update $(CHART_DIR)
 	uv run python tests/test-buildkit-arm.py
+
+# Keep in sync with the flyte pin in the cloud repo's imagebuild/build-image-bootstrap/Dockerfile.
+BUILD_IMAGE_TASK_FLYTE_VERSION ?= 2.13.1
+
+.PHONY: build-image-task-test
+build-image-task-test:
+	uv run --no-project --with flyte==$(BUILD_IMAGE_TASK_FLYTE_VERSION) --with kubernetes python tests/test-build-image-task.py
 
 .PHONY: kubeconform-test
 kubeconform-test:
