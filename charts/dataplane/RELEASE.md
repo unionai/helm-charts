@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+**Breaking (Depot mode only).** Depot mode is `imageBuilder.enabled: true`,
+`imageBuilder.buildkit.enabled: false` and an empty `imageBuilder.buildkitUri`. Other
+releases render nothing new.
+
+- The chart no longer renders the `depot-token` Secret. It used to render one with a
+  placeholder `.dockerconfigjson` (`{"auths":{}}`), so every `helm upgrade` (each Union Fleet
+  apply) reset the `registry.depot.dev` credentials an admin had added by hand, and task pods
+  failed with "no basic auth credentials". Upgrades now leave `depot-token` alone. The task
+  PodTemplate still lists `depot-token` in `imagePullSecrets`, and the build task still reads
+  `DEPOT_TOKEN` and `DEPOT_PROJECT_ID` from it, so the admin creates it under that name.
+- If you filled the chart-rendered `depot-token`, run this **before** upgrading, or Helm
+  deletes the Secret on the upgrade:
+
+  ```bash
+  kubectl -n <namespace> annotate secret depot-token helm.sh/resource-policy=keep
+  ```
+
+- Argo CD ignores `helm.sh/resource-policy`. With pruning on, also add
+  `argocd.argoproj.io/sync-options: Prune=false` to the Secret, or re-create it after the sync:
+
+  ```bash
+  kubectl -n <namespace> annotate secret depot-token argocd.argoproj.io/sync-options=Prune=false
+  ```
+
+- Clusters that never filled `depot-token` lose only the empty placeholder. Create the Secret
+  before running image builds.
+
 - In Depot mode (`imageBuilder.enabled: true`, `imageBuilder.buildkit.enabled: false`, empty
   `imageBuilder.buildkitUri`), the `operator-proxy` container gets `DEPOT_TOKEN` and
   `DEPOT_PROJECT_ID` from the `depot-token` Secret, both `optional: true`. With an operator image
@@ -9,6 +36,25 @@
   `registry.depot.dev/<DEPOT_PROJECT_ID>` as `x-token`, so runs stop rebuilding images that
   already exist. Without the Secret keys, or with an older image, the proxy behaves as before.
   Other modes render nothing new.
+
+### Creating `depot-token`
+
+The Secret lives in the release namespace, has type `kubernetes.io/dockerconfigjson`, and holds
+a `registry.depot.dev` auth entry (username `x-token`, password the Depot token) plus
+`DEPOT_TOKEN` and `DEPOT_PROJECT_ID`:
+
+```bash
+NS=<release namespace>
+DEPOT_TOKEN=<depot token>
+DEPOT_PROJECT_ID=<depot project id>
+
+kubectl -n "$NS" create secret docker-registry depot-token \
+  --docker-server=registry.depot.dev \
+  --docker-username=x-token \
+  --docker-password="$DEPOT_TOKEN"
+
+kubectl -n "$NS" patch secret depot-token --type merge -p "{\"stringData\":{\"DEPOT_TOKEN\":\"$DEPOT_TOKEN\",\"DEPOT_PROJECT_ID\":\"$DEPOT_PROJECT_ID\"}}"
+```
 
 ## 2026.11.5
 
