@@ -1,5 +1,89 @@
 # dataplane — Release Notes
 
+## 2026.11.6
+
+`version` moves `2026.11.5` → `2026.11.6` and `appVersion` moves `2026.11.4` →
+`2026.11.6`, picking up the new images. This release stops rendering the
+`depot-token` Secret ([#683](https://github.com/unionai/helm-charts/pull/683)), which is breaking for Depot mode: read below
+before upgrading.
+
+Notable image changes (unionai/cloud `release/2026.11.4..fc8a27db50`, tagged
+`release/2026.11.6`):
+
+- **Union On-Demand:** shared queues, Modal GPU, per-org storage and managed
+  secrets. The operator proxy gains an `orgDepot` lookup: with
+  `imageBuilderConfig.orgDepot.enabled`, each org's images are looked up in its
+  own Depot project, read from the `depot-token` Secret in that org's task
+  namespace ([cloud#19890](https://github.com/unionai/cloud/pull/19890)).
+- **Image builder:** one registry lookup for ECR, Artifact Registry and ACR
+  (go-containerregistry), a new `basic` authentication type for registries that
+  speak docker basic auth (GHCR, Depot, private registries), and Depot tags
+  longer than 128 characters are shortened with a hash suffix so different
+  image specs no longer collide on one tag ([cloud#15338](https://github.com/unionai/cloud/pull/15338)). A failed build's error
+  leads with BuildKit's last lines ([cloud#19918](https://github.com/unionai/cloud/pull/19918)).
+- **leasor:** enforces org capability limits: max concurrent runs
+  ([cloud#19671](https://github.com/unionai/cloud/pull/19671)), max actions per run ([cloud#19704](https://github.com/unionai/cloud/pull/19704)), `max_queue_depth`
+  ([cloud#19961](https://github.com/unionai/cloud/pull/19961)) and `max_concurrent_actions` ([cloud#20021](https://github.com/unionai/cloud/pull/20021)). A lease is closed as
+  final when the actions service reports the action not found ([cloud#19931](https://github.com/unionai/cloud/pull/19931)),
+  and the actions service no longer enqueues an action the leasor already has
+  ([cloud#19993](https://github.com/unionai/cloud/pull/19993)).
+- **leaseworker:** inline leaseworker retries orchestrators the way flyte-sdk
+  retries tasks ([cloud#19928](https://github.com/unionai/cloud/pull/19928)).
+- **operator:** cluster health judges DaemonSet pods by their node's readiness
+  ([cloud#19965](https://github.com/unionai/cloud/pull/19965)); the operator reports secret names and checks the org's max
+  secrets before creating one ([cloud#19861](https://github.com/unionai/cloud/pull/19861)).
+- **dataproxy:** reads action data from the pool of the action's queue
+  ([cloud#19898](https://github.com/unionai/cloud/pull/19898)).
+- Go 1.27.4 ([cloud#20007](https://github.com/unionai/cloud/pull/20007)).
+
+### Chart: `depot-token` is no longer rendered ([#683](https://github.com/unionai/helm-charts/pull/683))
+
+**Breaking (Depot mode only).** Depot mode is `imageBuilder.enabled: true`,
+`imageBuilder.buildkit.enabled: false` and an empty `imageBuilder.buildkitUri`. Other
+releases render nothing new.
+
+- The chart no longer renders the `depot-token` Secret. It used to render one with a
+  placeholder `.dockerconfigjson` (`{"auths":{}}`), so every `helm upgrade` (each Union Fleet
+  apply) reset the `registry.depot.dev` credentials an admin had added by hand, and task pods
+  failed with "no basic auth credentials". Upgrades now leave `depot-token` alone. The task
+  PodTemplate still lists `depot-token` in `imagePullSecrets`, and the build task still reads
+  `DEPOT_TOKEN` and `DEPOT_PROJECT_ID` from it, so the admin creates it under that name.
+- If you filled the chart-rendered `depot-token`, run this **before** upgrading, or Helm
+  deletes the Secret on the upgrade:
+
+  ```bash
+  kubectl -n <namespace> annotate secret depot-token helm.sh/resource-policy=keep
+  ```
+
+- Argo CD ignores `helm.sh/resource-policy`. With pruning on, also add
+  `argocd.argoproj.io/sync-options: Prune=false` to the Secret, or re-create it after the sync:
+
+  ```bash
+  kubectl -n <namespace> annotate secret depot-token argocd.argoproj.io/sync-options=Prune=false
+  ```
+
+- Clusters that never filled `depot-token` lose only the empty placeholder. Create the Secret
+  before running image builds.
+
+### Creating `depot-token`
+
+The Secret lives in the release namespace, has type `kubernetes.io/dockerconfigjson`, and holds
+a `registry.depot.dev` auth entry (username `x-token`, password the Depot token) plus
+`DEPOT_TOKEN` and `DEPOT_PROJECT_ID`:
+
+```bash
+NS=<release namespace>
+DEPOT_TOKEN=<depot token>
+DEPOT_PROJECT_ID=<depot project id>
+
+kubectl -n "$NS" create secret docker-registry depot-token \
+  --docker-server=registry.depot.dev \
+  --docker-username=x-token \
+  --docker-password="$DEPOT_TOKEN"
+
+kubectl -n "$NS" patch secret depot-token --type merge -p "{\"stringData\":{\"DEPOT_TOKEN\":\"$DEPOT_TOKEN\",\"DEPOT_PROJECT_ID\":\"$DEPOT_PROJECT_ID\"}}"
+```
+
 ## 2026.11.5
 
 `version` moves `2026.11.4` → `2026.11.5`. `appVersion` stays `2026.11.4`: this is a
