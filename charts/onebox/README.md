@@ -106,11 +106,13 @@ the console, or mount one from a Secret:
 ```bash
 kubectl -n onebox create secret generic onebox-license --from-literal=license-key=<key>
 helm upgrade --install onebox ... --set license.existingSecret=onebox-license \
-  --set license.enforce=true --set license.issueURL=<where users get a key>
+  --set license.enforce=true
 ```
 
 The console shows the install ID a key is issued for and links to `issueURL`
-with it. A rotated key in the Secret is picked up without a restart. Nothing is
+with it: by default, with `enforce` on, Union's sign-up, which lands people on
+their organization's License Keys page for this install. Set `issueURL` to send
+them to an issuer you host instead. A rotated key in the Secret is picked up without a restart. Nothing is
 rendered while the `license` values are unset; they need an onebox image with
 licensing.
 
