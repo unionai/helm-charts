@@ -1,5 +1,85 @@
 # controlplane — Release Notes
 
+## Unreleased
+
+### `global.UNION_PUBLIC_PORT` keeps a non-443 port on the OAuth callback
+
+flyteadmin builds the OAuth `redirect_uri` from the first `authorizedUris` entry
+whose hostname matches, ignoring the port. A control plane served on, say, `:8443`
+was redirected to `https://<host>/callback` and got a 404. Set
+`global.UNION_PUBLIC_PORT` and the chart's public `authorizedUris` entries (the host
+and the `*.apps.` wildcard) carry the port. Unset, rendering is unchanged.
+
+## 2026.11.5
+
+`version` moves `2026.11.4` → `2026.11.5`. `appVersion` stays `2026.11.4`: this is a
+chart-only lockstep release with the `dataplane` chart ([#679](https://github.com/unionai/helm-charts/pull/679)); no control-plane
+template, values or image changes.
+
+## 2026.11.4
+
+`version` moves `2026.11.3` → `2026.11.4` and `appVersion` moves `2026.11.2` →
+`2026.11.4`, picking up the new control-plane images. No control-plane template
+or values changes; lockstep release with the `dataplane` chart.
+
+Notable image changes (unionai/cloud `release/2026.11.2..release/2026.11.4`):
+
+- leaseworker stamps action identity labels on the finalize context, so pools
+  started by a cross-project launch scale down
+  ([cloud#19863](https://github.com/unionai/cloud/pull/19863)).
+- leasor looks up a queue created since its last sync instead of aborting its
+  actions ([cloud#19838](https://github.com/unionai/cloud/pull/19838)), and
+  backpressure throttles new runs rather than admitted ones
+  ([cloud#19876](https://github.com/unionai/cloud/pull/19876),
+  [cloud#19875](https://github.com/unionai/cloud/pull/19875)).
+- dataproxy reads `GetActionData` from the bucket in the action's URI
+  ([cloud#19832](https://github.com/unionai/cloud/pull/19832)).
+- List filters match `LIKE` wildcards literally
+  ([cloud#19840](https://github.com/unionai/cloud/pull/19840)).
+- node-bootstrap keeps the base CRI config in the containerd 1.x override
+  ([cloud#19847](https://github.com/unionai/cloud/pull/19847)).
+- GPU: MIG pools with partition labels and scale-from-zero, and unified fault
+  watching in the node agent
+  ([cloud#19105](https://github.com/unionai/cloud/pull/19105),
+  [cloud#19106](https://github.com/unionai/cloud/pull/19106),
+  [cloud#19099](https://github.com/unionai/cloud/pull/19099),
+  [cloud#18751](https://github.com/unionai/cloud/pull/18751)).
+
+## 2026.11.3
+
+`version` moves `2026.11.2` → `2026.11.3`. `appVersion` stays `2026.11.2`: this is a
+chart-only lockstep release with the `onebox` chart (#669); no control-plane template,
+values or image changes.
+
+## 2026.11.2
+
+- Images no longer trust the root CAs behind the compromised eMudhra intermediates (`CVE-2026-114406`): OS CA bundles, certifi, Node, Envoy and `uv` are updated. `uv` in v2 customer image builds moves from 0.9.5 to 0.13.6, which can change how dependencies resolve
+
+- `version` and `appVersion` move `2026.11.0` → `2026.11.2`. No template or values
+changes; lockstep release picking up the `2026.11.2` control-plane images.
+
+## 2026.11.0
+
+`version` moves `2026.10.1` → `2026.10.2`; `appVersion` moves `2026.10.0` → `2026.10.5`.
+
+### Executions migrations follow the control-plane deployment type
+
+From `2026.10.5`, executions picks its Postgres migrations from `controlPlane.deploymentType` instead
+of per-feature flags (unionai/cloud#19713). The chart now sets it explicitly for the executions
+service:
+
+```yaml
+services:
+  executions:
+    configMap:
+      controlPlane:
+        deploymentType: selfhosted
+```
+
+`selfhosted` (also the image default) applies only the migrations every deployment shares, so
+upgrading adds no indexes. `executions.postgresDashboards.enabled` no longer exists; nothing in this
+chart set it.
+
 ## 2026.10.1
 
 `version` moves `2026.10.0` → `2026.10.1`. `appVersion` stays `2026.10.0`: this is

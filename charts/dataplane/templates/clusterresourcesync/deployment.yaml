@@ -16,6 +16,7 @@ spec:
     metadata:
       annotations:
         configChecksum: {{ include "dataplane.configMapDataChecksum" (dict "root" . "path" (print .Template.BasePath "/clusterresourcesync/configmap.yaml") "name" "union-clusterresourcesync-config") | quote }}
+        templateChecksum: {{ include "dataplane.configMapDataChecksum" (dict "root" . "path" (print .Template.BasePath "/clusterresourcesync/configmap.yaml") "name" "union-clusterresource-template") | quote }}
         {{- with .Values.clusterresourcesync.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -37,7 +38,7 @@ spec:
             {{- with .Values.clusterresourcesync.podEnv -}}
             {{- toYaml . | nindent 10 }}
             {{- end }}
-          image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
+          image: "{{ tpl .Values.image.union.repository . }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
           imagePullPolicy: "{{ .Values.image.union.pullPolicy }}"
           name: sync-cluster-resources
           {{- with .Values.clusterresourcesync.resources }}
@@ -64,7 +65,7 @@ spec:
             - name: debug
               containerPort: 10254
               protocol: TCP
-      serviceAccountName: union-{{ include "clusterresourcesync.serviceAccountName" . }}
+      serviceAccountName: {{ include "clusterresourcesync.workloadServiceAccountName" . }}
       volumes:
         - configMap:
             name: union-clusterresource-template

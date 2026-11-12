@@ -4,6 +4,10 @@
 global:
   # --- Deployment Identity ---
   UNION_HOST: ""            # Control plane FQDN (e.g. "mycompany.union.ai")
+  # Public port, only when browsers reach the control plane on a port other
+  # than 443 (e.g. "8443"). Added to the public `authorizedUris` entries so the
+  # OAuth callback keeps it (see flyte.configmap.adminServer.auth.authorizedUris).
+  UNION_PUBLIC_PORT: ""
   UNION_ORG: ""             # Organization name (must match dataplane)
 
   # --- Infrastructure ---
@@ -350,7 +354,8 @@ ingress:
   #
   # When OIDC auth is enabled, each extra host must ALSO be added to:
   #   - `flyte.configmap.adminServer.auth.authorizedUris` (so flyteadmin
-  #     trusts the host for OAuth redirect URL construction)
+  #     trusts the host for OAuth redirect URL construction; include the port
+  #     if it isn't 443 — flyteadmin takes the first hostname match)
   #   - `flyte.configmap.adminServer.auth.appAuth.externalAuthServer.allowedAudience`
   #     (so tokens with aud=<extra-host> validate)
   #   - the IdP application's redirect URI list (`https://<host>/callback`)
@@ -1103,6 +1108,11 @@ services:
     configMap:
       workspace:
         enable: false
+      # Control-plane deployment type: picks which executions migrations run. selfhosted applies only
+      # the migrations every deployment shares; Union-managed control planes set union in
+      # unionai/cloud (see workflow/repositories/impl/migrations_union/README.md there).
+      controlPlane:
+        deploymentType: selfhosted
       sharedService:
         metrics:
           scope: "executions:"
@@ -2225,13 +2235,19 @@ flyte:
         # internal service URL and the IdP will reject the resulting
         # /authorize request. Must include every public hostname listed in
         # `ingress.host` and `ingress.extraHosts`.
+        #
+        # flyteadmin uses the FIRST entry whose hostname and scheme match, and
+        # ignores the port (ingress-nginx forwards Host without it). So when the
+        # control plane is served on a non-443 port, set global.UNION_PUBLIC_PORT
+        # rather than adding a second entry: otherwise a port-less entry listed
+        # first wins and the callback lands on https://<host>/callback.
         authorizedUris:
           - "http://flyteadmin:80"
           - 'http://flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:80'
-          - 'https://{{ .Values.global.UNION_HOST }}'
+          - 'https://{{ .Values.global.UNION_HOST }}{{ with .Values.global.UNION_PUBLIC_PORT }}:{{ . }}{{ end }}'
           # Allow post-login redirect back to app subdomains (single-label
           # wildcard); else login falls back to the console.
-          - 'https://*.apps.{{ .Values.global.UNION_HOST }}'
+          - 'https://*.apps.{{ .Values.global.UNION_HOST }}{{ with .Values.global.UNION_PUBLIC_PORT }}:{{ . }}{{ end }}'
           # - 'https://<each ingress.extraHosts entry>'
 
         appAuth:

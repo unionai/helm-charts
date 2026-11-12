@@ -32,6 +32,116 @@ Revert the chart change. Both binaries read the same tables.
 
 ---
 
+## dataplane — `singleNamespace` replaces `low_privilege`, and work namespaces need a binding
+
+Find the scenario that matches your values and apply its snippet. The dataplane
+[release notes](dataplane/RELEASE.md#migration--action-required) list every change.
+
+### Single-namespace: the default, or `low_privilege: true`
+
+No change is required. `low_privilege` still works. To use the new name:
+
+```yaml
+singleNamespace: true   # replaces low_privilege: true
+```
+
+### `low_privilege: false` with `namespaces.enabled: false`
+
+This install ran as single-namespace, and on upgrade it becomes multi-namespace. To keep it
+single-namespace, replace `low_privilege: false` with:
+
+```yaml
+singleNamespace: true
+```
+
+To make it multi-namespace, follow the next scenario.
+
+### Multi-namespace
+
+This covers `low_privilege: false` with `namespaces.enabled: true`, and an install you are
+moving to multi-namespace. Every work namespace now needs a `<release-ns>-work-ns` RoleBinding. Pick one or more of
+these ways to create the namespaces and their bindings, and set `singleNamespace: false`
+in place of `low_privilege: false`.
+
+**`clusterresourcesync`** creates each namespace and its binding as projects are registered:
+
+```yaml
+singleNamespace: false
+clusterresourcesync:
+  enabled: true
+```
+
+**`namespaces.static`** creates the listed namespaces and their bindings at chart install
+and upgrade. List the names your `namespace_mapping` produces, which are
+`<project>-<domain>` by default:
+
+```yaml
+singleNamespace: false
+namespaces:
+  enabled: true
+  static:
+    - flytesnacks-development
+    - flytesnacks-staging
+    - flytesnacks-production
+```
+
+The chart creates only the Namespace and the RoleBinding there. Projects registered later
+need their names added, or one of the other two ways.
+
+**Your own tooling** creates the namespaces, and it must create the RoleBinding in each one as
+well. See
+[Who creates the work-namespace binding](dataplane/docs/rbac/work-namespaces.md#who-creates-the-work-namespace-binding).
+
+Drop no names from `namespaces.static` in this upgrade. The upgrade adds
+`helm.sh/resource-policy: keep` to each listed namespace, so a name you drop in the same
+upgrade is deleted with its contents. Adding names is safe, and you can drop names in a later
+upgrade.
+
+Layer `examples/values.full-privilege.yaml` so that kube-state-metrics collects from the work
+namespaces.
+
+### Several layered values files
+
+Use one name for the scope key in every file. The render fails when one file sets
+`singleNamespace: false` and another sets `low_privilege: true`.
+`examples/values.full-privilege.yaml` and `examples/values-legacy.yaml` now set
+`singleNamespace: false`.
+
+### Generated values
+
+Write the scope key as an unquoted boolean. The render fails on a quoted string:
+
+```yaml
+singleNamespace: false   # "false" fails the render
+```
+
+### Templated values that read `.Values.low_privilege`
+
+`values.yaml` no longer sets `low_privilege`. In `extraObjects` and the `config.*` blocks,
+replace the check:
+
+```yaml
+# before
+{{ if not .Values.low_privilege }}
+# after
+{{ if not (include "singleNamespace" .) }}
+```
+
+### Prometheus overrides
+
+Remove `prometheus.rbac.create` and `prometheus.kube-state-metrics.rbac.create` from your
+values. The chart writes that RBAC itself and refuses to render if either is `true`.
+
+In a `prometheus.extraScrapeConfigs` override, remove any scope guard around the
+`kubernetes-cadvisor` job. The job now runs in both scope modes.
+
+### Rollback
+
+Revert the chart version. Overlays that still set `low_privilege` keep working. An overlay
+that switched to `singleNamespace` must switch back.
+
+---
+
 ## dataplane — vendored Knative Serving gateway bumped 1.16.0 → 1.23.0
 
 ### What changed

@@ -1,0 +1,51 @@
+# Authz on, S3-compatible store with access keys, custom proxy headers.
+database:
+  host: postgres.example.internal
+  password: example-not-a-secret
+  sslMode: require
+storage:
+  type: s3
+  bucket: onebox-data
+  endpoint: https://minio.example.internal
+  authType: accesskey
+  existingSecret: onebox-s3
+identity:
+  subjectHeaders: [X-Forwarded-User]
+  emailHeaders: [X-Forwarded-Email]
+  claimsJWTHeaders: [Cf-Access-Jwt-Assertion]
+  logoutRedirect: /oauth2/sign_out
+  proxySecret:
+    existingSecret: onebox-proxy
+authMetadata:
+  externalAuthServerBaseUrl: https://example.okta.com/oauth2/default
+  flyteClient:
+    clientId: 0oa-sdk-client
+authz:
+  enabled: true
+  adminUsers: [admin@example.com]
+  defaultRole: contributor
+internalSecret:
+  existingSecret: onebox-internal
+networkPolicy:
+  # enabled: unset, so authz turns it on.
+  tasksFrom:
+    - namespaceSelector:
+        matchLabels:
+          union.ai/onebox-tasks: "true"
+  proxyFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: auth
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: oauth2-proxy
+rbac:
+  extraRules:
+    - apiGroups: [ray.io]
+      resources: [rayjobs, rayclusters]
+      verbs: [get, list, watch, create, update, patch, delete]
+webhook:
+  certificate:
+    # A generated cert would differ on every render.
+    provider: external
+    external: {caCert: test-ca, tlsCrt: test-crt, tlsKey: test-key}

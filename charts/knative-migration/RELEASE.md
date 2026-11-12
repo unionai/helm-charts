@@ -2,6 +2,33 @@
 
 `appVersion` tracks the migration tool's own `0.1.0`, not the control-plane / data-plane image tag.
 
+## 2026.11.5
+
+Lockstep chart-only release with the `controlplane` / `dataplane` charts.
+`appVersion` stays `0.1.0`; no migration-tool or template changes, no functional changes.
+
+## 2026.11.4
+
+Lockstep chart-only release with the `controlplane` / `dataplane` charts.
+`appVersion` stays `0.1.0`; no migration-tool or template changes. The README
+notes that the `routing-serving-certs` upgrade race applies only to dataplane
+`2026.8.3` and earlier (#661).
+
+## 2026.11.3
+
+Lockstep chart-only release with the `controlplane` / `dataplane` charts.
+`appVersion` stays `0.1.0`; no migration-tool or template changes.
+
+## 2026.11.2
+
+Lockstep chart-only release with the `controlplane` / `dataplane` charts.
+`appVersion` stays `0.1.0`; no migration-tool or template changes.
+
+## 2026.11.0
+
+Lockstep chart-only release with the `controlplane` / `dataplane` charts.
+`appVersion` stays `0.1.0`; no migration-tool or template changes.
+
 ## 2026.10.1
 
 Lockstep chart-only release with the `controlplane` / `dataplane` charts.
