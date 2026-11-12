@@ -106,12 +106,12 @@ k3d-storage-test:
 
 .PHONY: billing-test
 billing-test: requirements
-	helm dependency update $(CHART_DIR)
+	./tests/lib/ensure-chart-deps.sh $(CHART_DIR)
 	uv run python tests/test-operator-billing.py
 
 .PHONY: buildkit-arm-test
 buildkit-arm-test: requirements
-	helm dependency update $(CHART_DIR)
+	./tests/lib/ensure-chart-deps.sh $(CHART_DIR)
 	uv run python tests/test-buildkit-arm.py
 
 .PHONY: kubeconform-test
