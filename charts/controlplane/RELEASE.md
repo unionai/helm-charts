@@ -1,8 +1,41 @@
 # controlplane — Release Notes
 
-## Unreleased
+## 2026.11.6
 
-### `global.UNION_PUBLIC_PORT` keeps a non-443 port on the OAuth callback
+`version` moves `2026.11.5` → `2026.11.6` and `appVersion` moves `2026.11.4` →
+`2026.11.6`, picking up the new images. Lockstep release with the `dataplane`
+chart.
+
+Notable image changes (unionai/cloud `release/2026.11.4..fc8a27db50`, tagged
+`release/2026.11.6`):
+
+- **Union On-Demand:** shared queues, Modal GPU, per-org storage and managed
+  secrets. The operator proxy gains an `orgDepot` lookup: with
+  `imageBuilderConfig.orgDepot.enabled`, each org's images are looked up in its
+  own Depot project, read from the `depot-token` Secret in that org's task
+  namespace ([cloud#19890](https://github.com/unionai/cloud/pull/19890)).
+- **Image builder:** one registry lookup for ECR, Artifact Registry and ACR
+  (go-containerregistry), a new `basic` authentication type for registries that
+  speak docker basic auth (GHCR, Depot, private registries), and Depot tags
+  longer than 128 characters are shortened with a hash suffix so different
+  image specs no longer collide on one tag ([cloud#15338](https://github.com/unionai/cloud/pull/15338)). A failed build's error
+  leads with BuildKit's last lines ([cloud#19918](https://github.com/unionai/cloud/pull/19918)).
+- **leasor:** enforces org capability limits: max concurrent runs
+  ([cloud#19671](https://github.com/unionai/cloud/pull/19671)), max actions per run ([cloud#19704](https://github.com/unionai/cloud/pull/19704)), `max_queue_depth`
+  ([cloud#19961](https://github.com/unionai/cloud/pull/19961)) and `max_concurrent_actions` ([cloud#20021](https://github.com/unionai/cloud/pull/20021)). A lease is closed as
+  final when the actions service reports the action not found ([cloud#19931](https://github.com/unionai/cloud/pull/19931)),
+  and the actions service no longer enqueues an action the leasor already has
+  ([cloud#19993](https://github.com/unionai/cloud/pull/19993)).
+- **leaseworker:** inline leaseworker retries orchestrators the way flyte-sdk
+  retries tasks ([cloud#19928](https://github.com/unionai/cloud/pull/19928)).
+- **operator:** cluster health judges DaemonSet pods by their node's readiness
+  ([cloud#19965](https://github.com/unionai/cloud/pull/19965)); the operator reports secret names and checks the org's max
+  secrets before creating one ([cloud#19861](https://github.com/unionai/cloud/pull/19861)).
+- **dataproxy:** reads action data from the pool of the action's queue
+  ([cloud#19898](https://github.com/unionai/cloud/pull/19898)).
+- Go 1.27.4 ([cloud#20007](https://github.com/unionai/cloud/pull/20007)).
+
+### `global.UNION_PUBLIC_PORT` keeps a non-443 port on the OAuth callback ([#672](https://github.com/unionai/helm-charts/pull/672))
 
 flyteadmin builds the OAuth `redirect_uri` from the first `authorizedUris` entry
 whose hostname matches, ignoring the port. A control plane served on, say, `:8443`
