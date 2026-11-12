@@ -53,6 +53,7 @@ if not union_image_name_prefix:
 app_version = os.getenv("APP_VERSION")
 if not app_version:
     raise ValueError("APP_VERSION environment variable must be set")
+
 build_image_task = ContainerTask(
     name="build-image",
     # imagebuild writes its outputs to --remote-outputs-prefix itself: no CoPilot.
