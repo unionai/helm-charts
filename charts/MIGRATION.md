@@ -4,11 +4,11 @@ Tracking the migration story for the helm-charts cloud overlays. New entries at 
 
 ---
 
-## controlplane — the cache service runs `cloudcacheservice`
+## controlplane — the cache service runs `cloudtenantcacheservice`
 
 ### What changed
 
-The `cacheservice` Deployment runs `cloudcacheservice` (`migrate` in the init container, then
+The `cacheservice` Deployment runs `cloudtenantcacheservice` (`migrate` in the init container, then
 `serve`) instead of the old `cacheservice` binary, against the same `cacheservice` database. Its
 names, labels, ports and `flyte.cacheservice.*` values are unchanged. It also serves
 `flyteidl2.cacheservice.v2.CacheService`, which the ingress and `GRPCRoute` now route.
@@ -21,9 +21,9 @@ names, labels, ports and `flyte.cacheservice.*` values are unchanged. It also se
 
 ### Who needs to act
 
-`flyte.cacheservice.image.tag` must name a `services` image that ships `cloudcacheservice`
-(built from `unionai/cloud` after #19192). On an older image the pod fails with
-`exec: "cloudcacheservice": executable file not found`. On a fresh install the image's `migrate`
+`flyte.cacheservice.image.tag` must name a `services` image that ships `cloudtenantcacheservice`
+(built from `unionai/cloud` after #19997). On an older image the pod fails with
+`exec: "cloudtenantcacheservice": executable file not found`. On a fresh install the image's `migrate`
 must also create the missing `cacheservice` database, as the old binary did.
 
 ### Rollback
