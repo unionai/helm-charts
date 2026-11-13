@@ -18,11 +18,15 @@ generate-expected: $(GEN_DIR) vendor-crds
 	./tests/run.sh generate
 
 .PHONY: test
-test: check-vendored-crds helm-test kubeconform-test check-image-paths check-image-prewarm check-values-schema python-test
+test: check-vendored-crds helm-test kubeconform-test check-image-paths check-image-prewarm check-values-schema python-test rbac-guard-test
 
 .PHONY: snapshot-generator-test
 snapshot-generator-test:
 	bash ./tests/test-atomic-render.sh
+
+.PHONY: rbac-guard-test
+rbac-guard-test: requirements
+	bash ./tests/test-rbac-guards.sh
 
 # Gate on fully qualified image references. Reads the checked-in
 # tests/generated/ corpus, so it needs neither network nor helm — but that
@@ -87,7 +91,7 @@ check-vendored-crds:
 	exit $${fail}
 
 .PHONY: helm-test
-helm-test: $(TMP_DIR) snapshot-generator-test k3d-storage-test billing-test buildkit-arm-test workload-labels-test
+helm-test: $(TMP_DIR) snapshot-generator-test k3d-storage-test billing-test buildkit-arm-test workload-labels-test rbac-guard-test build-image-task-test
 	./tests/run.sh helm
 
 # Every Union workload the dataplane chart renders carries the component label the
@@ -109,6 +113,13 @@ billing-test: requirements
 buildkit-arm-test: requirements
 	helm dependency update $(CHART_DIR)
 	uv run python tests/test-buildkit-arm.py
+
+# Keep in sync with the flyte pin in the cloud repo's imagebuild/build-image-bootstrap/Dockerfile.
+BUILD_IMAGE_TASK_FLYTE_VERSION ?= 2.13.3
+
+.PHONY: build-image-task-test
+build-image-task-test:
+	uv run --no-project --with flyte==$(BUILD_IMAGE_TASK_FLYTE_VERSION) --with kubernetes python tests/test-build-image-task.py
 
 .PHONY: kubeconform-test
 kubeconform-test:

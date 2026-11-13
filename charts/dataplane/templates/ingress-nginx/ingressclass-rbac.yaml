@@ -1,0 +1,45 @@
+{{- $nginx := index .Values "ingress-nginx" }}
+{{- $rbac := ($nginx.rbac) | default dict }}
+{{- $rbacCreate := or (not (hasKey $rbac "create")) $rbac.create }}
+{{- if and $nginx.enabled $rbacCreate $rbac.scope }}
+
+{{- $fullname := "" }}
+{{- if $nginx.fullnameOverride }}
+{{- $fullname = $nginx.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- $n := default "ingress-nginx" $nginx.nameOverride }}
+{{- $fullname = ternary (.Release.Name | trunc 63 | trimSuffix "-") (printf "%s-%s" .Release.Name $n | trunc 63 | trimSuffix "-") (contains $n .Release.Name) }}
+{{- end }}
+{{- $saVals := ($nginx.serviceAccount) | default dict }}
+{{- $saCreate := or (not (hasKey $saVals "create")) $saVals.create }}
+{{- $sa := ternary (default $fullname $saVals.name) (default "default" $saVals.name) $saCreate }}
+{{- $ns := default .Release.Namespace $nginx.namespaceOverride | trunc 63 | trimSuffix "-" }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ printf "%s-ingressclass" $fullname | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
+    release: {{ .Release.Name }}
+rules:
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingressclasses"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ printf "%s-ingressclass" $fullname | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
+    release: {{ .Release.Name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ $ns }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ printf "%s-ingressclass" $fullname | trunc 63 | trimSuffix "-" }}
+{{- end }}
