@@ -85,6 +85,15 @@ data:
         "client_secret_file" "/etc/prometheus/secrets/app_secret"
         "scopes" (list "all"))) }}
 {{- end }}
+{{- /* Scale's series (scale_*: the operator proxy's Ask Scale, watcher and store metrics, scraped
+       by the union-services job) stay in the data plane. Every queue drops them, the zero-trust
+       one and every one in the values, appended after the queue's own rules so an empty or
+       keeping write_relabel_configs cannot ship them. Same rule as the operator chart in
+       unionai/cloud. Checked by tests/test-metrics-drop.sh. */ -}}
+{{- $scaleDrop := dict "source_labels" (list "__name__") "regex" "scale_.*" "action" "drop" }}
+{{- range $rw := $remoteWrites }}
+{{- $_ := set $rw "write_relabel_configs" (append ($rw.write_relabel_configs | default list) $scaleDrop) }}
+{{- end }}
 {{- if $remoteWrites }}
     remote_write:
 {{ toYaml $remoteWrites | indent 4 }}
