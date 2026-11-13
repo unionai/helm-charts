@@ -148,7 +148,9 @@ additionalPodSpec: { }
 
 # -- Service account settings for task pods in single-namespace mode.
 serviceAccount:
-  # -- Image pull secrets to assign to the task pod service account.
+  # -- Image pull secrets to assign to the task pod service account. With
+  # imageBuilder.authenticationType "dockerconfig", the chart also appends
+  # `union-registry-credentials` here.
   imagePullSecrets: []
 
 # -- Define additional serviceAccountAnnotations to be added to all system-created service accounts
@@ -2851,12 +2853,22 @@ imageBuilder:
   registryName: "union-dataplane"
 
   # -- How build-image task and operator proxy will attempt to authenticate
-  # -- Supported values are "noop", "google", "aws", "azure"
+  # -- Supported values are "noop", "google", "aws", "azure", "dockerconfig"
   # -- "noop" no authentication is attempted
   # -- "google" uses docker-credential-gcr to authenticate to the default registry
   # -- "aws" uses docker-credential-ecr-login to authenticate to the default registry
   # -- "azure" uses az acr login to authenticate to the default registry. Requires Azure Workload Identity to be enabled.
-  # -- "basic" uses basic docker username/password auth to authenticate to the registry.
+  # -- "dockerconfig" uses static registry credentials from a Kubernetes Secret, for
+  # -- dataplanes without a cloud workload identity (on-prem / metal). Create a Secret
+  # -- of type kubernetes.io/dockerconfigjson named `union-registry-credentials` in the
+  # -- release namespace (the name is fixed). The build-image task mounts it to push
+  # -- and pull base images; the chart mounts it read-only into the operator proxy
+  # -- (/var/run/secrets/union/registry-credentials/) for image-existence checks and,
+  # -- in single-namespace mode, adds it to the imagePullSecrets of the task
+  # -- ServiceAccount `union` so task pods can pull the built images. The chart
+  # -- never creates or reads the Secret, so no credentials appear in any manifest.
+  # -- "basic" is accepted by the operator proxy only; the build-image task does not
+  # -- implement it. Use "dockerconfig" instead.
   authenticationType: "noop"
 
   # -- Basic auth credentials for registry authentication (e.g. Depot, GHCR).
