@@ -1,5 +1,21 @@
 # onebox — Release Notes
 
+## 2026.11.7
+
+`version` and `appVersion` move `2026.11.6` → `2026.11.7`, picking up the new
+images, which always enforce the license ([cloud#20075](https://github.com/unionai/cloud/pull/20075), [cloud#20094](https://github.com/unionai/cloud/pull/20094)).
+
+### The license is always enforced; `license.enforce` and `license.trustedKeys` are removed ([#686](https://github.com/unionai/helm-charts/pull/686))
+
+onebox now enforces its license unconditionally: without a valid key the install
+is read-only (reads work, changes are refused, runs in flight finish). Add a key
+in the console, or give one with `license.existingSecret`. `license.enforce` is
+gone, and so is `license.trustedKeys`: with enforcement mandatory, an
+operator-added issuer would let anyone sign their own key, so only Union's issuer,
+built into each release, signs keys onebox accepts. `license.issueURL` defaults to
+Union's sign-up; setting it still points Get a key at another issuer. The license
+block renders only for a key Secret or a custom `issueURL`.
+
 ## 2026.11.6
 
 `version` moves `2026.11.5` → `2026.11.6` and `appVersion` moves `2026.11.4` →

@@ -1,5 +1,39 @@
 # controlplane — Release Notes
 
+## 2026.11.7
+
+`version` and `appVersion` move `2026.11.6` → `2026.11.7`, picking up the new
+images. Lockstep release with the `dataplane` chart.
+
+Notable image changes (unionai/cloud `release/2026.11.6..14d75bf0f4`, tagged
+`release/2026.11.7`):
+
+- **Image builder:** the `build-image-bootstrap` image pins `flyte==2.13.3`
+  instead of installing the latest release ([cloud#20073](https://github.com/unionai/cloud/pull/20073)).
+- **shared_service:** `migrate` creates a missing database instead of failing
+  with `SQLSTATE 3D000`, which blocked fresh self-managed installs once the chart
+  runs `cloudcacheservice migrate` ([cloud#19667](https://github.com/unionai/cloud/pull/19667)).
+- **console:** server-side connects get 2.5s per resolved address, fixing
+  intermittent "couldn't complete the login" errors ([cloud#20087](https://github.com/unionai/cloud/pull/20087)).
+- **flyte:** the secrets webhook copies the primary task container's
+  `securityContext` to the secrets init container ([cloud#20086](https://github.com/unionai/cloud/pull/20086)).
+- **dataproxy:** a session route and WebSocket-capable port forward reach servers
+  inside session microVMs ([cloud#20059](https://github.com/unionai/cloud/pull/20059)).
+
+### build-image is registered without CoPilot data loading ([#685](https://github.com/unionai/helm-charts/pull/685))
+
+The `imageBuilder.bootstrap` hook registers `build-image` with whatever `flyte`
+the bootstrap image installs. Since flyte-sdk 2.12.3 that sends a data loading
+config, so the backend added CoPilot containers to the build pod and the uploader
+failed with `file not found at path [/var/outputs/fully_qualified_image]`: the
+`imagebuild` binary writes its outputs to the remote prefix itself. The chart task
+now sets `ContainerTask(data_loading=False)`, which needs flyte >= 2.13.3; the
+`2026.11.7` bootstrap image pins it. A custom or mirrored bootstrap image must ship
+flyte >= 2.13.3.
+
+The hook registers with `--version <appVersion>` and `flyte deploy` skips a
+version that already exists, so the fix lands with this new appVersion.
+
 ## 2026.11.6
 
 `version` moves `2026.11.5` → `2026.11.6` and `appVersion` moves `2026.11.4` →
