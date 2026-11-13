@@ -1,5 +1,21 @@
 # dataplane — Release Notes
 
+## 2026.11.7
+
+`version` and `appVersion` move `2026.11.6` → `2026.11.7`, picking up the new
+images. No dataplane template or values changes; lockstep release with the
+`controlplane` chart.
+
+Notable image changes (unionai/cloud `release/2026.11.6..14d75bf0f4`, tagged
+`release/2026.11.7`):
+
+- **flyte:** the secrets webhook copies the primary task container's
+  `securityContext` to the secrets init container ([cloud#20086](https://github.com/unionai/cloud/pull/20086)).
+- **dataproxy:** a session route and WebSocket-capable port forward reach servers
+  inside session microVMs ([cloud#20059](https://github.com/unionai/cloud/pull/20059)).
+- **sandbox-agent:** microVM snapshots go to a bounded tmpfs with a disk fallback,
+  and memory is pre-copied ([cloud#20082](https://github.com/unionai/cloud/pull/20082)).
+
 ## 2026.11.6
 
 `version` moves `2026.11.5` → `2026.11.6` and `appVersion` moves `2026.11.4` →
