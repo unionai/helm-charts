@@ -6,6 +6,11 @@
 # also when its write_relabel_configs is empty. Mirrors T29 in unionai/cloud
 # operator/deploy/helm/ci/check-scale-guards.sh.
 #
+# Two remote_writes the chart cannot add the drop to: kube-prometheus-stack's
+# (monitoring.prometheus.prometheusSpec.remoteWrite) and the upstream prometheus ConfigMap's when
+# prometheus.server.configMapOverrideName is emptied. For those, NOTES.txt names each queue that
+# has no scale_.* drop (owner decision 2026-11-13 18:08 IST: warn, never fail the render).
+#
 #   tests/test-metrics-drop.sh
 set -euo pipefail
 
@@ -77,8 +82,65 @@ if [ "$(grep -cx '        regex: scale_.\*' "$tmp/out")" != 1 ]; then
   echo "FAIL: the drop rule is not there exactly once"; failures=$((failures + 1))
 fi
 
+# notes NAME WANT HELM_ARGS...: renders NOTES.txt (helm install --dry-run=client, no cluster). WANT is
+# "none" (no Scale warning), or the text each warning line must hold. The render must not fail.
+notes() {
+  local name=$1 want=$2
+  shift 2
+  if ! KUBECONFIG=/dev/null helm install t "$chart" -f "$values" --dry-run=client "$@" >"$tmp/out" 2>"$tmp/err"; then
+    echo "FAIL [notes: $name]: render failed"; cat "$tmp/err"; failures=$((failures + 1)); return
+  fi
+  sed -n '/^NOTES:$/,$p' "$tmp/out" >"$tmp/notes"
+  if [ "$want" = none ]; then
+    if grep -q "scale_" "$tmp/notes"; then
+      echo "FAIL [notes: $name]: warns about scale_ metrics"; cat "$tmp/notes"; failures=$((failures + 1))
+    fi
+    return
+  fi
+  if ! grep -q "^WARNING: .*scale_\* metrics" "$tmp/notes"; then
+    echo "FAIL [notes: $name]: no scale_* warning in NOTES"; failures=$((failures + 1)); return
+  fi
+  local w
+  while IFS= read -r w; do
+    if ! grep -qF -- "$w" "$tmp/notes"; then
+      echo "FAIL [notes: $name]: NOTES does not name '$w'"; failures=$((failures + 1))
+    fi
+  done <<<"$want"
+}
+
+kps=prometheus.server.configMapOverrideName=
+kp_own='{"url":"https://kp.example/push"}'
+kp_dropped='{"url":"https://kp-dropped.example/push","writeRelabelConfigs":[{"sourceLabels":["__name__"],"regex":"scale_.*","action":"drop"}]}'
+kp_keep='{"url":"https://kp-keep.example/push","writeRelabelConfigs":[{"sourceLabels":["__name__"],"regex":"scale_.*","action":"keep"}]}'
+own_dropped='{"url":"https://amp-dropped.example/push","write_relabel_configs":[{"source_labels":["__name__"],"regex":"scale_.*","action":"drop"}]}'
+
+notes "defaults" none
+notes "zero trust on, own queue (the chart adds the drop)" none --set zero_trust.enabled=true --set-json "prometheus.server.remoteWrite=[$own]"
+notes "kube-prometheus-stack off, queue set" none --set monitoring.enabled=false --set-json "monitoring.prometheus.prometheusSpec.remoteWrite=[$kp_own]"
+notes "kube-prometheus-stack queue without the drop" "monitoring.prometheus.prometheusSpec.remoteWrite[0] https://kp.example/push" \
+  --set monitoring.enabled=true --set-json "monitoring.prometheus.prometheusSpec.remoteWrite=[$kp_own]"
+notes "kube-prometheus-stack queue with the drop" none \
+  --set monitoring.enabled=true --set-json "monitoring.prometheus.prometheusSpec.remoteWrite=[$kp_dropped]"
+notes "kube-prometheus-stack: one with, two without (one keeps scale_)" "$(printf '%s\n%s' \
+  "monitoring.prometheus.prometheusSpec.remoteWrite[0] https://kp.example/push" \
+  "monitoring.prometheus.prometheusSpec.remoteWrite[2] https://kp-keep.example/push")" \
+  --set monitoring.enabled=true --set-json "monitoring.prometheus.prometheusSpec.remoteWrite=[$kp_own,$kp_dropped,$kp_keep]"
+# Of those three, the queue that has the drop is not named.
+if grep -qF "kp-dropped.example" "$tmp/notes"; then
+  echo "FAIL [notes]: a queue with the drop is named"; failures=$((failures + 1))
+fi
+notes "emptied override, own queue without the drop" "prometheus.server.remoteWrite[0] https://amp.example/api/v1/remote_write" \
+  --set "$kps" --set-json "prometheus.server.remoteWrite=[$own]"
+notes "emptied override, own queue with the drop" none --set "$kps" --set-json "prometheus.server.remoteWrite=[$own_dropped]"
+notes "emptied override, no queues" none --set "$kps"
+notes "both at once" "$(printf '%s\n%s' \
+  "monitoring.prometheus.prometheusSpec.remoteWrite[0] https://kp.example/push" \
+  "prometheus.server.remoteWrite[0] https://amp.example/api/v1/remote_write")" \
+  --set monitoring.enabled=true --set-json "monitoring.prometheus.prometheusSpec.remoteWrite=[$kp_own]" \
+  --set "$kps" --set-json "prometheus.server.remoteWrite=[$own]"
+
 if [ "$failures" -ne 0 ]; then
   echo "$failures failure(s)"
   exit 1
 fi
-echo "OK: every remote_write drops scale_.*"
+echo "OK: every remote_write drops scale_.*, and NOTES names the ones the chart cannot change"

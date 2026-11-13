@@ -101,7 +101,7 @@ workload-labels-test: requirements
 	uv run python tests/test-workload-labels.py
 
 # Every remote_write the dataplane chart renders (zero trust or not) drops Scale's scale_* series,
-# which stay in the data plane.
+# which stay in the data plane; NOTES names the subcharts' remote_writes that lack the drop.
 .PHONY: metrics-drop-test
 metrics-drop-test:
 	helm dependency update $(CHART_DIR)
