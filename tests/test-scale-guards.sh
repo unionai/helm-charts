@@ -423,5 +423,30 @@ expect proxyconfig 'anthropicOnly: false'
 must_render -f "$tmp/agent-base.yaml"
 expect proxyconfig 'anthropicOnly: false'
 
+# S-B2: the agent counts a run as Scale's by the same development domain the runtime uses
+# (scale.config.fix.developmentDomain, "development" when unset or empty, as FixConfig.DevDomain),
+# and refuses another spelling of that key, which the runtime would read and the agent would not.
+must_render -f "$tmp/agent-base.yaml" -f "$tmp/anthropic.yaml"
+expect service '- name: SCALE_AGENT_DEV_DOMAIN'
+expect service 'value: "development"'
+must_render -f "$tmp/agent-base.yaml" -f "$tmp/anthropic.yaml" --set scale.config.fix.developmentDomain=
+expect service 'value: "development"'
+must_render -f "$tmp/agent-base.yaml" -f "$tmp/anthropic.yaml" --set scale.config.fix.developmentDomain=sandbox
+expect service '- name: SCALE_AGENT_DEV_DOMAIN'
+expect service 'value: "sandbox"'
+expect_not service 'value: "development"'
+# The runtime's config.yaml goes through tpl, so the agent's value does too.
+cat > "$tmp/devdomain-tpl.yaml" <<'YAML'
+orgName: acme
+scale:
+  config:
+    fix:
+      developmentDomain: '{{ .Values.orgName }}-dev'
+YAML
+must_render -f "$tmp/agent-base.yaml" -f "$tmp/anthropic.yaml" -f "$tmp/devdomain-tpl.yaml"
+expect service 'value: "acme-dev"'
+must_fail "write scale.config.fix.developmentdomain as scale.config.fix.developmentDomain" \
+  -f "$tmp/agent-base.yaml" -f "$tmp/anthropic.yaml" --set scale.config.fix.developmentdomain=sandbox
+
 if [ "$failures" -gt 0 ]; then echo "$failures Scale guard check(s) failed"; exit 1; fi
 echo "Scale guards OK"

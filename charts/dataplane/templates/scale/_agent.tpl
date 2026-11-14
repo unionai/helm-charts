@@ -95,3 +95,22 @@ person cannot save one the agent could not reach.
 true
 {{- end -}}
 {{- end -}}
+
+{{/*
+The development domain, the only domain Scale starts runs in: scale.config.fix.developmentDomain, or
+"development" when it is unset or empty, as the runtime's FixConfig.DevDomain (scale/config/fix.go
+in unionai/cloud) reads it, after the same tpl the runtime's config.yaml gets (configmap.yaml). The
+agent gets it as SCALE_AGENT_DEV_DOMAIN (scale_agent/config.py, same default),
+so Ask counts a run as Scale's in the same domain the runtime does. The runtime's config loader
+matches keys case-insensitively, so another spelling would move the runtime and not the agent:
+refuse it.
+*/}}
+{{- define "scale.agent.devDomain" -}}
+{{- $fix := dig "fix" dict (.Values.scale.config | default dict) }}
+{{- range $k, $v := $fix }}
+{{- if and (eq (lower $k) "developmentdomain") (ne $k "developmentDomain") }}
+{{- fail (printf "scale: write scale.config.fix.%s as scale.config.fix.developmentDomain; the chart only reads that spelling" $k) }}
+{{- end }}
+{{- end }}
+{{- tpl (dig "developmentDomain" "" $fix | toString) . | trim | default "development" -}}
+{{- end }}
