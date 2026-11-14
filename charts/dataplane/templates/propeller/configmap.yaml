@@ -21,12 +21,16 @@ data:
 {{- if include "singleNamespace" $ }}
 {{- $_ := set (index $core "propeller") "limit-namespace" .Release.Namespace }}
 {{- end }}
-{{- if or .Values.low_privilege (and .Values.flytepropellerwebhook.enabled .Values.flytepropellerwebhook.managedConfig) }}
+{{- if or (include "singleNamespace" .) (and .Values.flytepropellerwebhook.enabled .Values.flytepropellerwebhook.managedConfig) }}
 {{- if not (hasKey $core "webhook") }}
 {{- $_ := set $core "webhook" (dict "disableCreateMutatingWebhookConfig" true) }}
 {{- else }}
 {{- $_ := set (index $core "webhook") "disableCreateMutatingWebhookConfig" true }}
 {{- end }}
+{{- end }}
+{{- /* Route task-pod images through the image mirror, after the configured rules. */}}
+{{- with $core.webhook }}
+{{- include "dataplane.webhook.withImageMirrorRules" (dict "root" $ "webhook" .) }}
 {{- end }}
 {{- with $core }}
   core.yaml: | {{ tpl (toYaml .) $ | nindent 4 }}

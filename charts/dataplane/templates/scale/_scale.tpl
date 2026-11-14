@@ -217,12 +217,12 @@ for (unionai/cloud scale/README.md, Security).
 {{- /* Tasks never share a namespace with Scale's signing, caller and model keys, Scale's app
        secrets and service account, or the operator proxy: a task pod can mount any Secret and
        name any service account of its own namespace, and every pod there passes a policy that
-       admits the namespace. In single-namespace mode (namespaces.enabled false, or low_privilege)
-       tasks run in the release namespace, so Scale stays off; so does a namespace template that
+       admits the namespace. In single-namespace mode (singleNamespace, or its older name low_privilege,
+       true or unset) tasks run in the release namespace, so Scale stays off; so does a namespace template that
        sends every task to the release namespace or to the proxy's secret store namespace, where
        the console saves the agent's model key. */}}
 {{- if include "singleNamespace" . }}
-{{- fail (printf "scale: Scale needs tasks in namespaces of their own (namespaces.enabled: true and low_privilege: false). In single-namespace mode tasks run in %s beside Scale's signing, caller and model keys and the operator proxy, and a task could read them. Leave scale.enabled off" .Release.Namespace) }}
+{{- fail (printf "scale: Scale needs tasks in namespaces of their own (singleNamespace: false; low_privilege is its older name). In single-namespace mode tasks run in %s beside Scale's signing, caller and model keys and the operator proxy, and a task could read them. Leave scale.enabled off" .Release.Namespace) }}
 {{- end }}
 {{- $taskNamespace := tpl (include "dataplane.namespaceTemplate" . | toString) . | trim }}
 {{- if and $taskNamespace (not (contains "{{" $taskNamespace)) (has $taskNamespace (list .Release.Namespace (include "proxy.secretsNamespace" . | trim))) }}

@@ -34,9 +34,7 @@ secrets:
     clientSecret: test-not-real-secret
 # Scale needs tasks in namespaces of their own (H2); single-namespace mode is checked on its own
 # below.
-namespaces:
-  enabled: true
-low_privilege: false
+singleNamespace: false
 # Scale needs a caller key or the proxy NetworkPolicy before it serves anything; checked on its own
 # below.
 scale:
@@ -274,15 +272,23 @@ expect_not scaleconfig "http://other.example"
 expect scaleconfig "timeout: 600s"
 
 # H2: tasks never share a namespace with Scale's keys and the operator proxy. In single-namespace
-# mode (namespaces.enabled false or low_privilege, the chart's defaults) tasks run in the release
+# mode (singleNamespace or its older name low_privilege true, or both unset: the chart's default)
+# tasks run in the release
 # namespace, so Scale fails the render, read-only or writing; so does a namespace template that
 # puts every task in the release namespace or in the proxy's secret store namespace. Scale off still
 # renders in that mode.
 single="tasks in namespaces of their own"
-must_fail "$single" --set scale.enabled=true --set namespaces.enabled=false
-must_fail "$single" --set scale.enabled=true --set low_privilege=true
-must_fail "$single" -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true --set namespaces.enabled=false
-must_fail "$single" -f "$tmp/agent.yaml" --set low_privilege=true
+must_fail "$single" --set scale.enabled=true --set singleNamespace=true
+must_fail "$single" --set scale.enabled=true --set singleNamespace=null
+must_fail "$single" --set scale.enabled=true --set singleNamespace=null --set low_privilege=true
+must_fail "$single" -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true --set singleNamespace=true
+must_fail "$single" -f "$tmp/agent.yaml" --set singleNamespace=null --set low_privilege=true
+# The message names the key to set.
+must_fail "singleNamespace: false" --set scale.enabled=true --set singleNamespace=true
+# Pre-creating namespaces is not what sets the scope: Scale renders with singleNamespace false
+# whether this chart creates the work namespaces or not.
+must_render --set scale.enabled=true --set namespaces.enabled=false
+must_render --set scale.enabled=true --set namespaces.enabled=true
 must_fail "$single" --set scale.enabled=true --set namespace_mapping.template=union
 must_fail "$single" -f "$tmp/agent.yaml" --set namespace_mapping.template=union-secrets --set proxy.secretManager.namespace=union-secrets
 cat > "$tmp/ns-template.yaml" <<'YAML'
@@ -291,8 +297,8 @@ namespace_mapping:
 YAML
 must_render --set scale.enabled=true -f "$tmp/ns-template.yaml"
 must_render --set scale.enabled=true --set namespace_mapping.template=shared-tasks
-must_render --set namespaces.enabled=false --set low_privilege=true
-must_render --set scale.enabled=false --set namespaces.enabled=false
+must_render --set singleNamespace=true
+must_render --set scale.enabled=false --set singleNamespace=null
 
 # useRuntimeCredentials stands in for the writer only in the dogfood org.
 must_fail "dogfood org only" -f "$tmp/secure.yaml" --set scale.fixWriter.secretName= --set scale.config.fix.enabled=true \

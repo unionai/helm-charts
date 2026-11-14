@@ -1,6 +1,27 @@
 # Base defaults for every dataplane deployment. Cloud-specific overrides
 # live in values.{aws,gcp,azure}.yaml — start there for new deployments.
+#
+# `# @schema` blocks declare keys that Union Fleet sets but this file does not
+# default, so Fleet admission and Helm accept them with the declared type.
+# scripts/values_schema.py turns them into values.schema.json; run
+# `make values-schema` after editing one.
 
+# @schema.root
+# properties:
+#   provider:
+#     type: string
+#     description: Cloud the cluster runs on (aws, gcp, azure, oci, metal or custom). Set by the cloud overlay or by Fleet.
+#   low_privilege:
+#     type: boolean
+#     description: Older name for singleNamespace, still honored. Set by Fleet.
+# @schema.root
+
+# @schema
+# type: object
+# properties:
+#   AWS_ACCOUNT_ID: {type: string, description: AWS account that owns the dataplane. Set by values.aws.yaml or Fleet.}
+#   AWS_REGION: {type: string, description: AWS region of the dataplane. Set by values.aws.yaml or Fleet.}
+# @schema
 global:
   # --- Control plane (configure first) ---
   # The single control-plane host. Everything derives from it: the DP->CP gRPC
@@ -28,6 +49,23 @@ global:
   # --- Dataplane to Controlplane Auth ---
   AUTH_CLIENT_ID: ""            # client_credentials client ID
   OIDC_S2S_SCOPE: ""            # Okta: leave empty. Entra ID: "api://my-app/.default"
+
+  # --- Image mirrors (pull-through caches) ---
+  # Upstream registry => the mirror that serves it, as a prefix to put the
+  # image's path after. Union's images and the chart's other images, the
+  # task-pod images the webhook rewrites (flytepropellerwebhook.imageMirrorPaths)
+  # and the secrets init container are pulled through it; an upstream with no
+  # entry is pulled directly. Setting it also turns on the image pre-warm hook
+  # (imagePrewarm). Third-party subcharts are routed through their own image
+  # values; see the README. For example:
+  #   public.ecr.aws: 123456789012.dkr.ecr.us-east-1.amazonaws.com/ecr-public
+  #   registry-1.docker.io: us-central1-docker.pkg.dev/my-project/docker
+  #   ghcr.io: us-central1-docker.pkg.dev/my-project/ghcr
+  #   us-docker.pkg.dev: us-central1-docker.pkg.dev/my-project/gar
+  # Union's images are also served from a public Artifact Registry copy, at
+  # us-docker.pkg.dev/union-public-images/unionai; a us-docker.pkg.dev mirror
+  # is preferred for them over the public.ecr.aws one.
+  imageMirrors: {}
 
 # -- Override the chart name.
 nameOverride: ""
@@ -155,44 +193,29 @@ userRoleAnnotationValue: "arn:aws:iam::ACCOUNT_ID:role/flyte_project_role"
 
 # -- clusterresourcesync contains the configuration information for the syncresources service.
 clusterresourcesync:
-  # -- Enable or disable the syncresources service. Required in multi-namespace
-  # mode (namespaces.enabled=true and low_privilege=false) to provision the
-  # per-domain namespaces + RBAC that task pods land in; its namespace_mapping.yaml
-  # is driven by the top-level namespace_mapping. Its configmap is gated off under
-  # singleNamespace, where task pods run in the release namespace and no per-domain
-  # namespaces are needed.
+  # -- Run the syncresources service. As projects are registered, it creates a
+  # namespace per project and domain, applies `templates` there, and binds Union's
+  # work-namespace role in each one. Required at `singleNamespace: false` unless
+  # your own tooling creates those namespaces and bindings. Rendered only at
+  # `singleNamespace: false`.
   enabled: false
   # -- Override service account values for the syncresources service
   serviceAccount:
-    # -- Override the service account name for the syncresources service
+    # -- Override the dedicated account's name, union-<name>. Ignored when
+    # commonServiceAccount.enabled is true, where the service runs on the common account.
     name: ""
-    # -- Additional annotations for the syncresources service account
+    # -- Additional annotations for the dedicated account. Ignored when
+    # commonServiceAccount.enabled is true; set commonServiceAccount.annotations instead.
     annotations: {}
-  # -- ClusterRole rules granted to the syncresources ServiceAccount. Override or extend
-  # this list to grant access to additional resources (for example, custom resources or
-  # extra core resources) that the cluster resource manager should be able to sync into
-  # project namespaces.
-  clusterRoleRules:
-    - apiGroups:
-        - ""
-        - rbac.authorization.k8s.io
-      resources:
-        - clusterrolebindings
-        - configmaps
-        - limitranges
-        - namespaces
-        - persistentvolumeclaims
-        - persistentvolumes
-        - podtemplates
-        - pods
-        - resourcequotas
-        - rolebindings
-        - roles
-        - secrets
-        - serviceaccounts
-        - services
-      verbs:
-        - '*'
+  # -- Extra cluster-wide rules for the syncresources service. The chart already
+  # grants get/create/patch on every kind `templates` and `additionalTemplates`
+  # create, except Secrets and RBAC objects, which you grant here. Verbs must be
+  # from get, list, watch, create, update, patch, delete, deletecollection.
+  # These rules apply cluster-wide. Wildcard verbs and `apiGroups: ["*"]` fail the
+  # render, but a resource wildcard inside a named group does not. For example,
+  # `apiGroups: [""], resources: ["*"], verbs: [get]` reads every Secret on the
+  # cluster.
+  clusterRoleRules: []
   # -- Additional pod labels for the syncresources service
   podLabels: { }
   # -- Additional pod annotations for the syncresources service
@@ -358,7 +381,7 @@ clusterresourcesync:
   # the default namespace, service account, and resource quota templates.
   # Each entry has a `key` (filename stem) and `value` (Kubernetes manifest).
   # syncresources renders each `value` once per project namespace ({{ namespace }} is
-  # substituted), so this is the non-low_privilege / multi-namespace injection point for a
+  # substituted), so this is the multi-namespace injection point for a
   # per-namespace read-only model volume. Example — a gcsfuse (GKE Cloud Storage FUSE) PV +
   # RO PVC per namespace (provisioning tooling substitutes the real bucket name).
   # The PV is cluster-scoped, so name it per-namespace to avoid collisions:
@@ -478,7 +501,7 @@ config:
         # -- Structure documented [here](https://pkg.go.dev/github.com/lyft/flyteplugins@v0.5.28/go/tasks/pluginmachinery/flytek8s/config#FlyteCoPilotConfig)
         co-pilot:
           name: flyte-copilot-
-          image: "{{ .Values.image.flytecopilot.repository }}:{{ .Values.image.flytecopilot.tag }}"
+          image: "{{ tpl .Values.image.flytecopilot.repository . }}:{{ .Values.image.flytecopilot.tag }}"
           start-timeout: 30s
   # -- Core propeller configuration
   core:
@@ -530,7 +553,7 @@ config:
       # -- confinement, so a cluster that does not need it must not get it.
       # -- An empty nodeOSImageSubstrings applies it wherever it is enabled
       # -- instead of only on the distributions that need it: the webhook's
-      # -- role cannot read nodes (it is namespaced under low_privilege), so
+      # -- role cannot read nodes (it is namespaced under singleNamespace), so
       # -- auto-detection would fail closed here and mutate nothing.
       selinuxTaskPods:
         enabled: false
@@ -540,6 +563,20 @@ config:
       secretManagerTypes:
       - Embedded
       - K8s
+      # @schema
+      # type: object
+      # properties:
+      #   azureConfig:
+      #     type: object
+      #     description: Azure Key Vault backend for embedded secrets. Set by Fleet on Azure.
+      #     properties:
+      #       vaultURI: {type: string}
+      #   gcpConfig:
+      #     type: object
+      #     description: GCP Secret Manager backend for embedded secrets. Set by Fleet on GCP.
+      #     properties:
+      #       project: {type: string}
+      # @schema
       embeddedSecretManagerConfig:
         type: "{{ .Values.proxy.secretManager.type }}"
         # -- Cluster identifier used to qualify per-cluster secret storage names
@@ -551,12 +588,26 @@ config:
         imagePullSecrets:
           enabled: true
         # -- Init container used to mount embedded secrets as files into task pods.
-        # -- Uncomment and override `image` to repoint the default upstream busybox
-        # -- image (public.ecr.aws/docker/library/busybox:latest) at a private or
-        # -- mirrored registry — required for air-gapped clusters that cannot reach
-        # -- public.ecr.aws. Maps to webhook.embeddedSecretManagerConfig.fileMountInitContainer.
-        # fileMountInitContainer:
-        #   image: <your-registry>/busybox:latest
+        # -- It is pulled as often as a task pod starts. Same image the webhook
+        # -- defaults to, through the public.ecr.aws mirror in global.imageMirrors
+        # -- when the cluster has one. Override `image` to repoint it at a private
+        # -- registry — required for air-gapped clusters that cannot reach
+        # -- public.ecr.aws.
+        fileMountInitContainer:
+          image: '{{ include "dataplane.mirror" (dict "root" . "upstream" "public.ecr.aws") }}/docker/library/busybox:latest'
+      # -- Managed-image rewrites the webhook applies to task pods. The chart
+      # -- appends rules for global.imageMirrors (see
+      # -- flytepropellerwebhook.imageMirrorPaths) and enables it when there are any.
+      images:
+        enabled: false
+        labelSelector:
+          matchExpressions:
+            - key: organization
+              operator: Exists
+            - key: project
+              operator: Exists
+            - key: domain
+              operator: Exists
   # -- Domains configuration for Union projects. This enables the specified number of domains across all projects in Union.
   domain:
     domains:
@@ -595,6 +646,47 @@ config:
   k8s:
     plugins:
       # -- Configuration section for all K8s specific plugins [Configuration structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/flytek8s/config)
+      # @schema
+      # type: object
+      # properties:
+      #   default-labels:
+      #     type: array
+      #     description: Labels added to every task pod. Set by values.azure.yaml or Fleet.
+      #   interruptible-tolerations:
+      #     type: array
+      #     description: Tolerations added to interruptible task pods. Set by values.azure.yaml or Fleet.
+      #   interruptible-node-selector-requirement:
+      #     type: object
+      #     description: Node selector requirement for interruptible task pods. Set by the cloud overlay or Fleet.
+      #     properties:
+      #       key: {type: string}
+      #       operator: {type: string}
+      #       values: {type: array}
+      #   non-interruptible-node-selector-requirement:
+      #     type: object
+      #     description: Node selector requirement for non-interruptible task pods. Set by the cloud overlay or Fleet.
+      #     properties:
+      #       key: {type: string}
+      #       operator: {type: string}
+      #       values: {type: array}
+      #   gpu-device-node-label:
+      #     type: string
+      #     description: Node label that names the GPU accelerator. Set by values.gcp.yaml, values.azure.yaml or Fleet.
+      #   gpu-partition-size-node-label:
+      #     type: string
+      #     description: Node label that names the GPU partition size. Set by values.gcp.yaml, values.azure.yaml or Fleet.
+      #   accelerator-device-classes:
+      #     type: [object, array]
+      #     description: >-
+      #       Per accelerator device class (GPU, AMD_GPU, ...) overrides of the resource name and node labels,
+      #       e.g. AMD_GPU.device-node-label for clusters whose AMD nodes carry their own label. A mapping,
+      #       or a list of one-key mappings as in examples/values.aws.eks-automode.yaml. Set by Fleet.
+      #   accelerator-devices:
+      #     type: [object, array]
+      #     description: >-
+      #       Maps accelerator device names (e.g. MI355X) to the node label value their nodes carry,
+      #       overriding the built-in table entry by entry. A mapping, or a list of one-key mappings. Set by Fleet.
+      # @schema
       k8s:
         default-pod-template-name: "task-template"
         default-env-vars: [ ]
@@ -604,8 +696,28 @@ config:
   operator:
     # -- Restrict operator to a single namespace. Auto-set in singleNamespace mode.
     limitNamespace: ""
-    # -- Disable cluster-wide permissions. Auto-set when low_privilege is true.
+    # -- Stop the operator's node informer, and with it node-based billing,
+    # serverless usage aggregation and GPU attribution by node label. Drops the
+    # operator's cluster-wide `nodes` read. Independent of `singleNamespace`.
     disableClusterPermissions: false
+    # -- Cluster-health snapshot reporting. The snapshot push itself is on by
+    # default in the operator; these values tune what it collects.
+    clusterHealth:
+      # -- Requires an operator image at 2026.10.2 or later. The operator decodes its
+      # config strictly, so an older image rejects clusterHealth.nodeCapacity as an
+      # unknown key and exits on startup. The operator image tag defaults to the
+      # chart appVersion; when that is older, set image.union.tag before enabling this.
+      nodeCapacity:
+        # -- Report the cluster's capacity from its Nodes, instead of the namespace
+        # ResourceQuota ceilings. Grants the operator a cluster-wide `nodes` read,
+        # in either scope mode and regardless of `disableClusterPermissions`.
+        enabled: false
+        # -- Read pods cluster-wide for per-pool usage, and add pods to the
+        # operator's cluster-read ClusterRole. Required for usage on a singleNamespace install,
+        # which is always namespace-limited. Without it the operator reports capacity
+        # only (node allocatable and counts) and omits usage and accelerators. Ignored
+        # when the operator is not namespace-limited.
+        clusterWidePods: false
     # -- Eager API key bootstrap. When enabled, the operator mints the
     # EAGER_API_KEY on the control plane and writes it to the task-pod secret
     # store so eager/actions (v2) tasks can call back to the control plane.
@@ -653,8 +765,8 @@ config:
       gcpProjectId: "{{ tpl .Values.storage.gcp.projectId . }}"
       # -- Cloud provider the cluster runs on (aws, gcp, azure, oci, or metal). Selects the GPU
       # accelerator node label used for usage attribution and tags billable usage. Defaults to the
-      # top-level `provider`. When empty, if the operator isn't running in low privilege mode then the operator
-      # falls back to detecting it from node labels.
+      # top-level `provider`. When empty, the operator falls back to detecting it from node
+      # labels, which needs its node informer (disableClusterPermissions: false).
       cloudProvider: '{{ tpl (.Values.provider | default "" | toString) . }}'
     # -- Configuration for the usage reporting service.
     collectUsages:
@@ -676,7 +788,7 @@ config:
       # -- Define the operator proxy health check endpoint.
       proxy:
         endpoint: '{{ include "proxy.health.url" . }}'
-      # -- Define the prometheus health check endpoint.
+      # -- Define the prometheus health check endpoint. Dropped when prometheus is disabled.
       prometheus:
         endpoint: '{{ include "prometheus.health.url" . }}'
     # -- Configuration for the secrets watcher, which triggers rolling restarts when secrets change.
@@ -688,6 +800,26 @@ config:
   # -- Configuration for the operator proxy service.
   proxy:
     # -- Secret manager configuration
+    # @schema
+    # type: object
+    # properties:
+    #   awsConfig:
+    #     type: object
+    #     description: AWS Secrets Manager backend. Set by values.aws.yaml or Fleet when type is AWS.
+    #     properties:
+    #       account: {type: string}
+    #       region: {type: string}
+    #   azureConfig:
+    #     type: object
+    #     description: Azure Key Vault backend. Set by values.azure.yaml or Fleet when type is Azure.
+    #     properties:
+    #       vaultURI: {type: string}
+    #   gcpConfig:
+    #     type: object
+    #     description: GCP Secret Manager backend. Set by values.gcp.yaml or Fleet when type is GCP.
+    #     properties:
+    #       project: {type: string}
+    # @schema
     smConfig:
       # -- Enable or disable secret manager support for the Union dataplane.
       enabled: "{{ .Values.proxy.secretManager.enabled }}"
@@ -698,6 +830,23 @@ config:
       # -- Kubernetes specific secret manager configuration.
       k8sConfig:
         namespace: '{{ include "proxy.secretsNamespace" . }}'
+    # @schema
+    # type: object
+    # properties:
+    #   azureLogAnalytics:
+    #     type: object
+    #     description: Azure Log Analytics source, used when sourceType is AzureLogAnalytics. Set by values.azure.yaml or Fleet.
+    #     properties:
+    #       logAnalyticsWorkspaceResourceIdTemplate: {type: string}
+    #   gcpLogging:
+    #     type: object
+    #     description: Cloud Logging source, used when sourceType is GCPStackdriver. Set by values.gcp.yaml or Fleet.
+    #     properties:
+    #       gcp:
+    #         type: object
+    #         properties:
+    #           project: {type: string}
+    # @schema
     persistedLogs:
       sourceType: ObjectStore
       objectStore:
@@ -709,7 +858,7 @@ config:
     # enable/disable the image builder (the build/push path is configured separately).
     imageBuilderConfig:
       authenticationType: "{{ .Values.imageBuilder.authenticationType }}"
-      defaultRepository: "{{ .Values.imageBuilder.defaultRepository }}"
+      defaultRepository: '{{ include "imagebuilder.defaultRepository" . }}'
       # basicAuth is only for basic-auth registries; cloud registries (google/aws/azure)
       # authenticate via workload identity. Left commented (intended usage TBD).
       # basicAuth:
@@ -854,6 +1003,15 @@ dcgm-exporter:
   # -- Enable or disable the dcgm exporter
   enabled: false
 
+  # At these defaults dcgm-exporter maps GPUs to pods through the kubelet's
+  # podresources socket, not the Kubernetes API, so the chart gives it no RBAC.
+  # kubernetes.enablePodLabels, kubernetes.enablePodUID and kubernetesDRA.enabled
+  # each grant cluster-wide read on pods and resourceslices. kubernetes.rbac.create:
+  # false withholds the grant for the first two, but kubernetesDRA.enabled grants
+  # it regardless. Prometheus scrapes dcgm-exporter only in the release namespace,
+  # so an instance managed elsewhere, such as by the NVIDIA GPU operator, is not
+  # scraped.
+
   # -- It's common practice to taint and label  to not run dcgm exporter on all nodes, so we can use node selectors and
   #    tolerations to ensure it only runs on GPU nodes.
   # affinity: {}
@@ -866,9 +1024,6 @@ dcgm-exporter:
   # Support a very high memory usage as dcgm-exporter can spike
   # depending on GPU count.
   resources: {}
-  # -- Namespace where dcgm-exporter is deployed. Used by Prometheus scrape config.
-  # Override if dcgm-exporter runs outside kube-system (e.g. gpu-operator namespace).
-  namespace: "kube-system"
 
   extraEnv:
     # Required to map GPUs to the actual Kubernetes pods that used them.
@@ -968,7 +1123,9 @@ dcgm-exporter:
     DCGM_FI_PROF_PCIE_RX_BYTES,      counter, The number of bytes of active pcie rx data including both header and payload.
 
 opencost:
-  # -- Enable or disable the opencost installation.
+  # -- Enable or disable the opencost installation. opencost prices the whole
+  # cluster, so it holds cluster-wide read in either scope mode, and the subchart
+  # offers no key to narrow it.
   enabled: false
 
   opencost:
@@ -1022,6 +1179,11 @@ fluentbit:
     platform.union.ai/component: logging
   podLabels:
     platform.union.ai/component: logging
+  # With this chart's config, Fluent Bit only tails container log files on the
+  # node, so the chart gives it no RBAC. If you add a `kubernetes` filter, or
+  # rbac.nodeAccess or rbac.eventsAccess, set create: true as well.
+  rbac:
+    create: false
   # Upstream defaults this to a bare `busybox`, which resolves against the
   # implicit docker.io/library/ default and fails on clusters that pin an
   # allowed-registry policy. Only rendered by `helm test`, but the policy
@@ -1098,6 +1260,16 @@ leaseworker:
   # key, if set by an overlay, takes precedence — see templates/leaseworker/configmap.yaml.
   task_logs:
     plugins:
+      # @schema
+      # type: object
+      # properties:
+      #   azure-log-templates:
+      #     type: array
+      #     description: Azure log link templates. Set by Fleet on Azure.
+      #   stackdriver-enabled:
+      #     type: boolean
+      #     description: Link task logs to Cloud Logging. Set by Fleet on Azure and GCP.
+      # @schema
       logs:
         kubernetes-enabled: false
         # -- One option is to enable cloudwatch logging for EKS, update the region and log group accordingly
@@ -1179,14 +1351,11 @@ leaseworker:
   # below. To bring your own existing class, set this to its name and
   # priorityClass.create: false. Set to "" to run without one. Do NOT use a reserved
   # system class (e.g. system-cluster-critical): GKE's gcp-critical-pods
-  # ResourceQuota restricts those to kube-system. The pod still references this class
-  # under low_privilege when it is externally managed (priorityClass.create: false) —
-  # referencing needs no cluster RBAC; only creation does (see priorityClass.create).
+  # ResourceQuota restricts those to kube-system.
   priorityClassName: union-leaseworker
   # -- Whether the chart creates the (cluster-scoped) PriorityClass named by
-  # priorityClassName above. Skipped under low_privilege (namespace-only installs
-  # can't create cluster resources) — pair with a class you create out-of-band. Set
-  # create: false to bring your own class, or in multi-dataplane-per-cluster setups
+  # priorityClassName above, in either scope mode. Set create: false to bring your
+  # own class, or in multi-dataplane-per-cluster setups
   # (the PriorityClass would otherwise be created once per dataplane). value is used
   # only when create: true.
   priorityClass:
@@ -1209,13 +1378,10 @@ flytepropeller:
   # -- PriorityClass the flytepropeller pod runs under. Defaults to the chart-managed
   # class below. Set to your own existing class to bring your own, or "" for none. Do
   # NOT use a reserved system class (e.g. system-cluster-critical): GKE's
-  # gcp-critical-pods ResourceQuota restricts those to kube-system. The pod still
-  # references this class under low_privilege when it is externally managed
-  # (priorityClass.create: false) — referencing needs no cluster RBAC; only creation does.
+  # gcp-critical-pods ResourceQuota restricts those to kube-system.
   priorityClassName: "union-flytepropeller"
-  # -- Whether the chart creates the (cluster-scoped) PriorityClass named above. Only
-  # rendered when flytepropeller.enabled. Skipped under low_privilege (namespace-only
-  # installs can't create cluster resources). Set create: false to bring your own class,
+  # -- Whether the chart creates the (cluster-scoped) PriorityClass named above, in
+  # either scope mode. Only rendered when flytepropeller.enabled. Set create: false to bring your own class,
   # or in multi-dataplane-per-cluster setups. value is used only when create: true.
   priorityClass:
     create: true
@@ -1237,10 +1403,13 @@ flytepropeller:
   configPath: /etc/flyte/config/*.yaml
 
   # -- Configuration for service accounts for FlytePropeller
+  # FlytePropeller runs on the common account when commonServiceAccount.enabled is
+  # true, and these settings are then ignored: set commonServiceAccount.annotations and
+  # commonServiceAccount.imagePullSecrets instead.
   serviceAccount:
-    # -- Annotations for ServiceAccount attached to FlytePropeller pods
+    # -- Annotations for the dedicated flytepropeller-system ServiceAccount.
     annotations: { }
-    # -- ImapgePullSecrets to automatically assign to the service account
+    # -- ImagePullSecrets for the dedicated flytepropeller-system ServiceAccount.
     imagePullSecrets: [ ]
   # -- Security context for the Flytepropeller container.
   securityContext: {}
@@ -1287,18 +1456,29 @@ flytepropellerwebhook:
   # -- Cleanup job to remove the legacy flyte-pod-webhook MutatingWebhookConfiguration
   # left behind when upgrading from versions that used the old webhook name.
   legacyWebhookCleanup:
-    # -- Enable the pre-upgrade hook that deletes the stale flyte-pod-webhook resource. 
+    # -- Enable the pre-upgrade hook that deletes the stale flyte-pod-webhook resource.
     # THIS IS MOSTLY NEEDED FOR UPGRADES FROM PRE 2026.24.7 VERSIONS.  IT DOESN'T ACT ON NEW INSTALLS.
     enabled: true
     image:
       # Registry host spelled out — an unqualified repository resolves against
       # the implicit docker.io default and fails on clusters that pin an
       # allowed-registry policy.
-      repository: docker.io/alpine/k8s
+      repository: '{{ include "dataplane.mirror" (dict "root" . "upstream" "docker.io") }}/alpine/k8s'
       tag: "1.32.3"
       pullPolicy: IfNotPresent
     # -- ImagePullSecrets for the cleanup job (use if kubectl image is in a private registry)
     imagePullSecrets: []
+  # -- Task-pod images the webhook rewrites through the image mirror in
+  # -- global.imageMirrors (upstream host => mirror prefix): upstream host =>
+  # -- repository namespaces, "*" for the whole registry. List only namespaces
+  # -- whose images are all public: the mirror pulls with its own credentials, so
+  # -- a private image rewritten through it fails to pull. docker.io also matches
+  # -- registry-1.docker.io. A namespace may be a nested path, e.g.
+  # -- us-docker.pkg.dev: [union-public-images/unionai].
+  imageMirrorPaths:
+    public.ecr.aws: ["*"]
+    ghcr.io: [flyteorg, unionai-oss]
+    docker.io: [library, unionai-oss]
   # -- Replicas
   replicaCount: 1
   # -- Sets priorityClassName for webhook pod
@@ -1431,7 +1611,12 @@ flytepropellerwebhook:
             volumes.union.ai/channel: "true"
       # -- Managed image webhook configuration (requires Union operator support)
       managedImage:
-        enabled: false
+        # -- Register the managed-image path. Unset by default: it is then
+        # -- registered only when global.imageMirrors yields task-pod rewrite
+        # -- rules (flytepropellerwebhook.imageMirrorPaths). true always
+        # -- registers it; false never does, and also keeps those rules out of
+        # -- the webhook's config.
+        # enabled: true
         # -- Name of the webhook
         name: managed-image-webhook.union.ai
         # -- Path for the webhook
@@ -1479,9 +1664,7 @@ flytepropellerwebhook:
       tlsCrt: ""
       # -- Base64-encoded TLS private key (PEM format)
       tlsKey: ""
-#
 # FLYTE_CONNECTOR SETTINGS
-#
 
 flyteconnector:
   enabled: true
@@ -1489,8 +1672,8 @@ flyteconnector:
   replicaCount: 2
   image:
     # -- Docker image for flyteconnector deployment
-    repository: ghcr.io/flyteorg/flyte-connectors
-    tag: py3.13-2.0.0b50.dev3-g695bb1db3.d20260122
+    repository: '{{ include "dataplane.mirror" (dict "root" . "upstream" "ghcr.io") }}/flyteorg/flyte-connectors'
+    tag: py3.13-v2.12.1
     # -- Docker image pull policy
     pullPolicy: IfNotPresent
   ports:
@@ -1555,7 +1738,7 @@ flyteconnector:
 image:
     # -- Image repository for the operator and union services
   union:
-    repository: public.ecr.aws/p0i0a9q8/unionoperator
+    repository: '{{ include "dataplane.unionImages" (dict "root" .) }}/unionoperator'
     tag: ""
     pullPolicy: IfNotPresent
   # -- Kubectl image configuration for Helm hook cleanup jobs.
@@ -1566,7 +1749,7 @@ image:
   # `latest` — nothing pinnable. Matches flytepropellerwebhook.legacyWebhookCleanup.
   kubectl:
     # -- Kubectl image repository used by dataplane Helm hook cleanup jobs.
-    repository: docker.io/alpine/k8s
+    repository: '{{ include "dataplane.mirror" (dict "root" . "upstream" "docker.io") }}/alpine/k8s'
     # -- Kubectl image tag used by dataplane Helm hook cleanup jobs.
     tag: "1.32.3"
     # -- Optional imagePullPolicy for dataplane Helm hook cleanup jobs. Omit when empty.
@@ -1580,17 +1763,54 @@ image:
     pullPolicy: IfNotPresent
   # -- flytecopilot repository and tag.
   flytecopilot:
-    repository: "cr.flyte.org/flyteorg/flyte-binary-v2"
+    repository: '{{ include "dataplane.mirror" (dict "root" . "upstream" "cr.flyte.org") }}/flyteorg/flyte-binary-v2'
     tag: "v2.0.45"
     pullPolicy: IfNotPresent
   # -- Union envoy build for the zero-trust gateway.
   envoy:
-    repository: public.ecr.aws/p0i0a9q8/envoy
+    repository: '{{ include "dataplane.unionImages" (dict "root" .) }}/envoy'
     tag: ""
     pullPolicy: IfNotPresent
 
 metrics-server:
+  # metrics-server is cluster-scoped by design. Its subchart writes an APIService, a
+  # system:auth-delegator binding and a RoleBinding in kube-system, so an install
+  # identity confined to the release namespace cannot deploy it.
   enabled: false
+
+# -- Pre-warm the image mirror before an install or upgrade: a pre-install/
+# -- pre-upgrade hook (ArgoCD PreSync) pulls each of the chart's images, for every
+# -- platform it's built for, through the mirror with crane, so the rollout finds
+# -- them cached instead of missing together and being throttled upstream. Only
+# -- rendered when global.imageMirrors is set, and only for images served from
+# -- one of those mirrors. See templates/image-prewarm/job.yaml.
+imagePrewarm:
+  enabled: true
+  # -- Bounds the whole run; the Job stops pulling a minute before it, so the
+  # -- deadline itself doesn't fail the hook.
+  activeDeadlineSeconds: 900
+  # -- Fail the Job, and so the hook and the install or upgrade, if any image
+  # -- couldn't be warmed after its retries. False makes pre-warming best effort:
+  # -- failures are logged as warnings and the hook succeeds.
+  failOnError: true
+  serviceAccount:
+    # -- Annotations (run through tpl) binding the Job's service account to a
+    # -- cloud identity that can read from the mirror: eks.amazonaws.com/role-arn
+    # -- (ECR: ecr:GetAuthorizationToken plus pull-through read),
+    # -- iam.gke.io/gcp-service-account (Artifact Registry reader) or
+    # -- azure.workload.identity/client-id (AcrPull).
+    annotations: {}
+  # -- crane with a busybox shell (the :debug variant), pinned by digest.
+  crane:
+    image: gcr.io/go-containerregistry/crane:debug@sha256:e78770b31258a3846f878036d9c1f63fbe4c871f9f56990bf77fd95c013e3c1b
+  # -- ECR mirrors only: fetches an ECR token for crane as the service account's role.
+  # -- Pulled from ECR Public, not through the mirror: the node pulls it with its
+  # -- own credentials before the pod's role applies, and on a cold pull-through
+  # -- cache those may not be allowed to import it, which would leave the hook in
+  # -- ImagePullBackOff.
+  awsCli:
+    repository: public.ecr.aws/aws-cli/aws-cli
+    tag: 2.36.49
 
 # -- nodeobserver contains the configuration information for the node observer service.
 uvolMountBroker:
@@ -1650,11 +1870,13 @@ uvolMountBroker:
     # namespace. Fields are glob patterns: `*` matches anything and `team-*` a
     # prefix, so `[{namespace: "*"}]` is the blanket opt-in for every pod on the
     # cluster. A rule that sets neither field is rejected at broker start.
-    # Unset (the default): `[{namespace: "*"}]` when `low_privilege` is false,
-    # and disabled when it is true. Any list you set is used as given, and `[]`
-    # disables block mode. Attaching makes the node kernel parse filesystem bytes
-    # the task controls, so on a cluster running untrusted workloads set an
-    # explicit list. Example:
+    # Unset (the default): the release namespace under `singleNamespace`, where
+    # every Union task runs, and `[{namespace: "*"}]` outside it, where tasks run
+    # in per-project namespaces. Any list you set is used as given and rendered
+    # through `tpl`, so `{namespace: "{{ .Release.Namespace }}"}` works; `[]`
+    # disables block mode. Attaching makes the node kernel parse filesystem
+    # bytes the task controls, so on a cluster running untrusted workloads set
+    # an explicit list. Example:
     # `[{namespace: builders}, {namespace: ci, serviceAccount: buildkit}]`
     allow: null
     # -- Thaw a block mount the client froze (around a Volume commit) after this
@@ -1711,6 +1933,51 @@ uvolMountBroker:
       memory: 32Mi
     limits:
       memory: 256Mi
+
+# -- Node bootstrap: installs the Nydus snapshotter on each node so pods lazily
+# pull images the image builder exported in Nydus format (see
+# imageBuilder.enableImageOptimization). Privileged, hostPID, writes to the
+# host's /etc and /home/kubernetes and starts systemd units. Supports aws, gcp
+# and azure node images with systemd and a writable /etc (EKS AL2023, GKE COS,
+# AKS Ubuntu); not Bottlerocket.
+nodeBootstrap:
+  # -- Enable the node-bootstrap DaemonSet.
+  enabled: false
+  # -- aws, gcp or azure. Empty uses the top-level `provider`.
+  cloudProvider: ""
+  image:
+    repository: '{{ include "dataplane.unionImages" (dict "root" .) }}/node-bootstrap'
+    # -- Defaults to the chart appVersion.
+    tag: ""
+    pullPolicy: IfNotPresent
+  # -- Startup taint union-node-readiness removes once the snapshotter runs.
+  # Add it to the worker nodepools as a startup taint so nothing schedules onto
+  # a node that cannot pull Nydus images yet. Empty: no taint handling, and the
+  # ServiceAccount gets no API access.
+  startupTaintKey: startup-taint.cluster-autoscaler.kubernetes.io/unionai-node-not-ready
+  # -- Restrict to the nodes that run task pods; empty means every node.
+  nodeSelector: {}
+  # -- Must tolerate the startup taint above and any worker taints.
+  tolerations:
+    - operator: Exists
+  affinity: {}
+  priorityClassName: system-node-critical
+  # -- A ResourceQuota scoped to that priority class. GKE rejects
+  # system-*-critical pods outside kube-system without one; elsewhere the
+  # quota never binds. Turn off if the namespace already has one.
+  priorityClassQuota:
+    create: true
+    pods: "5000"
+  podLabels: {}
+  podAnnotations: {}
+  resources: {}
+  # -- Sidecar that streams the snapshotter's journal to the pod log.
+  fluentBit:
+    image:
+      repository: '{{ include "dataplane.mirror" (dict "root" . "upstream" "cr.fluentbit.io") }}/fluent/fluent-bit'
+      tag: "3.2.8"
+      pullPolicy: IfNotPresent
+    resources: {}
 
 nodeobserver:
   # -- Enable or disable nodeobserver
@@ -1877,21 +2144,25 @@ ingress:
 # to avoid creating ServiceMonitor CRDs.
 prometheus:
   enabled: true
+  # To run the Prometheus server on the chart's common service account, disable
+  # the subchart-managed account and set this name to commonServiceAccount.name:
+  # serviceAccounts:
+  #   server:
+  #     create: false
+  #     name: union-system
   # The label the operator's cluster snapshot discovers Union workloads by; the
   # subchart puts commonMetaLabels on every resource it renders, pods included.
   commonMetaLabels:
     platform.union.ai/component: prometheus
-  # Disable the chart's own RBAC (which creates ClusterRoles).
-  # A namespace-scoped Role + RoleBinding is created by the dataplane chart instead.
+  # This must stay false; true fails the render. The chart writes Prometheus's RBAC
+  # itself (templates/prometheus/rbac.yaml), granting only what its scrape jobs
+  # discover. The subchart's own grants cluster-wide reads its jobs don't use.
   rbac:
     create: false
-  
-  # Match the same service name as kube-prometheus-stack mode so that
-  # health checks, opencost, and ingress work without changes.
-  # clusterRoleNameOverride avoids naming collisions with the kube-prometheus-stack ClusterRole.
-  # In low-privilege mode, set rbac.create=false and useExistingClusterRoleName to skip
-  # ClusterRole/ClusterRoleBinding creation; a namespace-scoped Role is created instead.
+
   server:
+    # Health checks, opencost and ingress address the server by this fixed name,
+    # and the chart's RBAC binds its ServiceAccount by it.
     fullnameOverride: "union-operator-prometheus"
     clusterRoleNameOverride: "union-operator-prometheus"
     useExistingClusterRoleName: ""
@@ -1964,8 +2235,29 @@ prometheus:
         cpu: "1"
         memory: "1Gi"
 
+  # The complete scrape_configs list, since Helm replaces lists wholesale. It
+  # replaces the subchart's default jobs, which discover every pod, service and
+  # endpoint in the cluster. Add jobs under extraScrapeConfigs; a job that
+  # discovers outside the release namespace needs its own Role there.
+  serverFiles:
+    prometheus.yml:
+      scrape_configs:
+        # The server serves under server.prefixURL, so its own metrics are there too.
+        # serverFiles isn't rendered through tpl; change this path with prefixURL.
+        - job_name: prometheus
+          metrics_path: /prometheus/metrics
+          static_configs:
+            - targets:
+                - localhost:9090
+
   # Scrape configs to replace ServiceMonitor CRDs.
   # NOTE: This is a top-level key in the community prometheus chart, not nested under server.
+  # The chart's RBAC covers discovery in the release namespace, plus endpoints in
+  # `default` for the API server. A job you add that discovers anywhere else gets
+  # no grant: Helm can't parse the job to work out what it needs, so grant its
+  # discovery reads yourself, in that namespace. To filter kube-state-metrics
+  # series, use metric_relabel_configs here. Nothing reads a metricRelabelings key
+  # on the subchart.
   extraScrapeConfigs: |
     - job_name: 'kube-state-metrics'
       metrics_path: /metrics
@@ -1984,7 +2276,7 @@ prometheus:
           action: keep
       metric_relabel_configs:
         - source_labels: [__name__]
-          regex: "kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total"
+          regex: "kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_spec_replicas|kube_deployment_status_replicas_(available|unavailable)|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total"
           action: keep
         - source_labels: [__name__, phase]
           separator: ";"
@@ -2040,8 +2332,37 @@ prometheus:
         - source_labels: [__meta_kubernetes_endpoint_port_name]
           regex: debug
           action: keep
-    # cAdvisor container metrics for CPU and memory tracking (Infrastructure panels).
-    # Scrapes the kubelet cadvisor endpoint via the API server proxy.
+    # API server metrics, as the managed dataplanes scrape them: object counts and
+    # request rates for the resources Union drives. Discovers each API server endpoint
+    # behind the default/kubernetes Service, so counters from different API servers
+    # stay separate series.
+    - job_name: 'kubernetes-apiservers'
+      scrape_interval: 30s
+      scheme: https
+      kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names: [default]
+      bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecure_skip_verify: false
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+          regex: default;kubernetes;https
+          action: keep
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: workqueue_.*
+          target_label: resource
+          replacement: union_cloud_replacement
+          action: replace
+        - source_labels: [__name__, resource]
+          regex: "((apiserver_request_.*|apiserver_response_.*|workqueue_.*);(flyteworkflows(\\.flyte\\.lyft\\.com)?|nodes|pods|events|union_cloud_replacement))|((apiserver_storage_size_bytes|apiserver_storage_objects|apiserver_storage_events_received_total);.*)"
+          action: keep
+    # cAdvisor container metrics for CPU and memory tracking (Infrastructure panels and
+    # task-level monitoring). Scrapes the kubelet cadvisor endpoint through the API server
+    # proxy, so Prometheus needs no network path to the kubelet, in either scope mode.
     - job_name: 'kubernetes-cadvisor'
       metrics_path: /metrics
       scheme: https
@@ -2115,12 +2436,13 @@ prometheus:
           target_label: pod
     # DCGM GPU metrics.
     # No-op when dcgm-exporter is not deployed (no pods match the label selector).
+    # Only finds dcgm-exporter in the release namespace, where the subchart deploys it;
+    # one managed elsewhere (e.g. by the NVIDIA GPU operator) is not scraped.
     - job_name: 'gpu-metrics'
       kubernetes_sd_configs:
         - role: pod
           namespaces:
-            names:
-              - {{ with index .Values "dcgm-exporter" }}{{ .namespace | default "kube-system" }}{{ else }}kube-system{{ end }}
+            own_namespace: true
           selectors:
             - role: pod
               label: app.kubernetes.io/name=dcgm-exporter
@@ -2147,60 +2469,91 @@ prometheus:
   alertmanager:
     enabled: false
   # kube-state-metrics subchart of the community prometheus chart.
-  # Uses namespace-scoped Role (not ClusterRole) and only watches the release namespace.
-  # This provides pod-level metrics (kube_pod_*, kube_pod_container_*) but NOT node-level metrics
-  # (kube_node_*) since nodes are cluster-scoped resources.
   # When monitoring.enabled=true, the kube-prometheus-stack deploys its own KSM instance
-  # (monitoring-kube-state-metrics) with cluster-wide scope — both can coexist.
+  # (monitoring-kube-state-metrics) — both can coexist.
   kube-state-metrics:
     enabled: true
+    # This must stay false; true fails the render. The chart writes this RBAC itself
+    # from `collectors` and the namespaces collected.
     rbac:
       create: false
+    # The whole list, since Helm replaces lists wholesale. The chart grants each
+    # collector what it reads; a collector outside the chart's rule set fails the
+    # render.
+    # `nodes` and `namespaces` are cluster-scoped and read cluster-wide in either
+    # scope mode.
+    collectors:
+      - namespaces
+      - nodes
+      - pods
+      - deployments
+      - daemonsets
+      - resourcequotas
+    # When true, kube-state-metrics collects namespaced resources from the release
+    # namespace only. This key is independent of singleNamespace: at
+    # `singleNamespace: false`, layer examples/values.full-privilege.yaml to collect
+    # from the namespaces tasks run in.
     releaseNamespace: true
-    metricRelabelings:
-      - sourceLabels: [ "__name__" ]
-        separator: ";"
-        regex: "kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total"
-        action: keep
-      - sourceLabels: [ "__name__", "phase" ]
-        separator: ";"
-        regex: "kube_pod_status_phase;(Succeeded|Failed)"
-        action: drop
-      - sourceLabels: [ "node" ]
-        targetLabel: "nodename"
-        regex: "(.*)"
-        action: replace
-      - sourceLabels: [ "label_node_group_name" ]
-        action: replace
-        regex: "(.+)"
-        targetLabel: "label_node_pool_name"
   prometheus-node-exporter:
     enabled: false
   prometheus-pushgateway:
     enabled: false
 
-# -- Scopes the deployment, permissions and actions created into a single namespace and avoids any deployments that would
-#  require additional permissions on the cluster. This limits the functionality though.
+# -- Run Union in the release namespace (true) or across a namespace per project
+# and domain (false). Unset means true. `low_privilege` is the older name for this
+# key and still works as an alias; set one of the two, or both to the same value.
+# Write it as an unquoted boolean: a quoted string fails the render.
 #
-# Known tradeoffs when low_privilege is enabled:
-# - Task-Level Monitoring (TLM) metrics are unavailable: cadvisor scraping requires
-#   cluster-scoped node discovery, and kube-state-metrics is limited to the release
-#   namespace (no cross-namespace pod resource metrics for task execution pods).
-#   Console CPU/memory charts for task executions will show "no data."
-# - Node-level metrics (kube_node_*, node_*) are not collected by the namespace-scoped
-#   kube-state-metrics instance.
-# - Cost calculation accuracy is reduced without node-level resource and pricing metrics.
-# - There are likely additional features that require cluster-scoped permissions and
-#   will not function in low_privilege mode. This list will be expanded as they are
-#   identified.
-low_privilege: true
+# `singleNamespace: true` does not mean no cluster-scoped permissions. It reduces
+# the permission set to what the chart's features need while keeping them working:
+# - Union's workloads, tasks and apps included, run in the release namespace, and
+#   every grant that can be namespaced is.
+# - Cluster-scoped reads come only from a fixed allowlist, each entry tied to the
+#   code that needs it: node reads, node and API server metrics, and Knative's
+#   informers while app serving is on, among others. SCOPE_ALLOWLIST in
+#   tests/test-rbac-guards.sh is the list; docs/rbac/README.md covers the rest.
+# - Cluster-scoped writes are pinned to named objects. nodeobserver and
+#   node-bootstrap, both off by default, are the exceptions: each removes a
+#   startup taint from its own node.
+#
+# At `singleNamespace: false`, Union's components reach each work namespace through
+# a RoleBinding there to the `<release-ns>-work-ns` ClusterRole. clusterresourcesync
+# creates that binding in the namespaces it creates. This chart creates it in
+# `namespaces.static` when `namespaces.enabled` is true. If you provision work
+# namespaces yourself, create the binding too, with `roleRef` to that ClusterRole
+# and one ServiceAccount subject per Union identity in the release namespace. If
+# the binding is missing, the install renders clean and tasks fail with Forbidden
+# on their first run.
+singleNamespace: null
 
-# -- Zero-trust dataplane mode (the default). Installs the Kourier+Envoy
-# gateway (replaces the knative-operator path), the dataproxy backend, and
-# the tunnel-service dataplane ingress. `knative-operator.enabled` must stay
-# false (its default) because Helm evaluates that subchart condition at parse
-# time and can't derive it from this flag. Set false for deployments with
-# self-hosted control planes.
+# -- Cluster-wide list/watch for the CRDs your task plugins use, at
+# `singleNamespace: false`. A CRD-backed plugin (Spark, Ray, Dask, Kubeflow and
+# so on) watches its resource in every namespace, and only a ClusterRole can
+# authorize that watch. The plugin's writes inside work namespaces are already
+# granted. Each entry names `apiGroups` and `resources`; `verbs` defaults to
+# [list, watch] and may name only get, list and watch. Wildcards and built-in API
+# groups fail the render.
+# Entries for the stock plugins:
+#
+#   taskPluginClusterReadRules:
+#     - apiGroups: [sparkoperator.k8s.io]
+#       resources: [sparkapplications]
+#     - apiGroups: [ray.io]
+#       resources: [rayjobs, rayclusters]
+#     - apiGroups: [kubernetes.dask.org]
+#       resources: [daskjobs]
+#     - apiGroups: [kubeflow.org]
+#       resources: [pytorchjobs, tfjobs, mpijobs]
+#     - apiGroups: [jobset.x-k8s.io]
+#       resources: [jobsets]
+taskPluginClusterReadRules: []
+
+# -- Zero-trust dataplane mode, on by default. Installs the Envoy gateway, the
+# dataproxy backend and the tunnel-service dataplane ingress, and has Prometheus
+# remote-write to the control plane. Requires `gateway.enabled`.
+# `knative-operator.enabled` must stay false, because Helm evaluates that subchart
+# condition at parse time and can't derive it from this flag. Set false for
+# deployments with self-hosted control planes.
 zero_trust:
   enabled: true
 
@@ -2208,9 +2561,13 @@ zero_trust:
 # When set and secretsWatcher is enabled, RBAC roles are created in this namespace for cross-namespace access.
 controlplaneNamespace: ""
 
-# -- When enabled, creates a single shared ServiceAccount for all components
-# (operator, leaseworker, proxy, webhook, fluentbit) instead of individual ones.
-# Automatically enabled when singleNamespace mode is active.
+# -- Run every component under one ServiceAccount, `name`. Set false to give each
+# component its own; each new account then needs its own workload-identity binding
+# in your cloud (an IRSA trust subject on AWS, a Workload Identity member on GCP, a
+# federated credential on Azure) before it can authenticate. fluentbit keeps the
+# shared account unless you also set `fluentbit.serviceAccount.name`. This
+# separates cloud identities; the RBAC rules are the same either way. Honored in
+# both scope modes.
 commonServiceAccount:
   enabled: true
   name: union-system
@@ -2390,21 +2747,13 @@ tunnelService:
 
 # -- Union app serving (Knative Serving). Supersedes the deprecated
 # `serving.enabled`; when both are set this one wins. Left unset (null) so the
-# deprecated flag can still take effect — the effective default is `true`.
-#
-# Does NOT gate the Envoy gateway, which serves the static dataplane routes
-# zero trust depends on, nor the `knative-operator` subchart, which has its own
-# `knative-operator.enabled` condition evaluated by Helm at parse time — turn
-# that off too on the non-zero-trust path.
+# deprecated flag can still take effect. The effective default is on.
 apps:
   enabled: null
 
 # -- Configure app serving and knative.
 serving:
-  # -- DEPRECATED: use `apps.enabled`. Honored only when `apps.enabled` is
-  # unset. Left unset (null) so an explicit value is distinguishable from the
-  # default. Installs Knative Serving — knative-operator must be running in the
-  # cluster for the non-zero-trust path to work.
+  # -- DEPRECATED: use `apps.enabled`. Honored only when `apps.enabled` is unset.
   enabled: null
   # -- The number of replicas to create for all components for high availability.
   replicas: 2
@@ -2479,6 +2828,16 @@ imageBuilder:
   # -- Mutually exclusive with imageBuilder.buildkit.arm.enabled.
   buildkitUriArm: ""
 
+  # -- Build every image in Nydus format, for lazy pulls. Applies to EVERY image
+  # the dataplane builds, not only some: they become Nydus-only, so they run
+  # only on nodes with the snapshotter. Requires nodeBootstrap.enabled, and
+  # every node a task pod can land on must be covered by
+  # nodeBootstrap.nodeSelector. Images pulled anywhere else (CI, a laptop, a
+  # cluster without nodeBootstrap) will not run. Switches the in-chart BuildKit
+  # (and its ARM builder) to imageBuilder.buildkit.nydus.image; an external
+  # buildkitUri / buildkitUriArm must already bundle nydus-image.
+  enableImageOptimization: false
+
   # -- The default container image repository for user-built images.
   # -- When empty, auto-generated from storage.provider, storage.region, storage.gcp.projectId,
   # -- and imageBuilder.registryName:
@@ -2513,6 +2872,13 @@ imageBuilder:
   buildkit:
 
     # -- Enable buildkit service within this release.
+    # -- Depot mode: imageBuilder.enabled true, this false and imageBuilder.buildkitUri empty.
+    # -- Images are then built on Depot, and task pods pull with the `depot-token` Secret,
+    # -- which the chart does not create. Create it in the release namespace as type
+    # -- kubernetes.io/dockerconfigjson with a .dockerconfigjson holding a registry.depot.dev
+    # -- auth entry (username "x-token", password the Depot token), plus the keys
+    # -- DEPOT_TOKEN (the Depot token) and DEPOT_PROJECT_ID (the Depot project ID), which the
+    # -- build task reads. See RELEASE.md for an example.
     enabled: true
 
     arm:
@@ -2565,12 +2931,23 @@ imageBuilder:
 
     image:
       # -- Image name
-      repository: docker.io/moby/buildkit
+      repository: '{{ include "dataplane.mirror" (dict "root" . "upstream" "docker.io") }}/moby/buildkit'
       # -- Pull policy
       pullPolicy: IfNotPresent
       # -- Image tag. When rootless mode is enabled, "-rootless" is appended automatically
       # -- (e.g. "buildx-stable-1" becomes "buildx-stable-1-rootless") unless the tag already contains "rootless".
       tag: "buildx-stable-1"
+
+    # -- Run Union's BuildKit image, which bundles nydus-image, instead of
+    # buildkit.image. imageBuilder.enableImageOptimization turns this on by
+    # itself; set it alone to roll the builder image out first.
+    nydus:
+      enabled: false
+      image:
+        repository: '{{ include "dataplane.unionImages" (dict "root" .) }}/buildkit'
+        # -- Defaults to the chart appVersion. "-rootless" is appended in
+        # rootless mode, as for buildkit.image.
+        tag: ""
 
     # -- Run buildkit in rootless mode (non-privileged). Uses the moby/buildkit rootless
     # -- image variant which bundles RootlessKit to set up user namespaces. Requires
@@ -2655,7 +3032,21 @@ ingress-nginx:
   enabled: false
   fullnameOverride: "dataplane-nginx"
 
+  # Confine the controller to the release namespace, where every Ingress this chart
+  # renders lives, instead of reading Secrets, ConfigMaps, pods, endpoints and nodes
+  # cluster-wide. To reconcile Ingresses in other namespaces, set this and
+  # controller.scope.enabled below to false together. The controller ignores an
+  # Ingress outside its scope without logging anything. To change the namespace,
+  # use controller.scope.namespace, which the chart checks. Don't use
+  # controller.extraArgs.watch-namespace: it overrides the scope flag unchecked. At
+  # rbac.create: false the scope of whatever RBAC you supply is yours to keep
+  # consistent.
+  rbac:
+    scope: true
+
   controller:
+    scope:
+      enabled: true
     service:
       # ClusterIP for intra-cluster (selfhosted); terraform overrides the type +
       # annotations per DP lb_mode (e.g. InternalLoadBalancer) when it enables this.
@@ -2684,7 +3075,7 @@ ingress-nginx:
       controllerValue: union.ai/dataplane
 
 ## -- Extra Kubernetes objects to deploy with the helm chart.
-## In low_privilege / single-namespace mode this is the injection point for a read-only
+## In single-namespace mode this is the injection point for a read-only
 ## model volume. Example — a gcsfuse (GKE Cloud Storage FUSE) PV + RO PVC mounting a GCS
 ## bucket at its ROOT, so serving pods can stream a Flyte-produced Model artifact in place read-only
 ## (provisioning tooling substitutes the real per-dataplane bucket name):
@@ -2714,18 +3105,47 @@ ingress-nginx:
 ##       resources: { requests: { storage: 1Gi } }
 ##
 ## The mounting pod also needs the annotation `gke-gcsfuse/volumes: "true"` for the GKE
-## sidecar-injector to mount it. For non-low_privilege (multi-namespace) clusters, prefer
+## sidecar-injector to mount it. For multi-namespace clusters, prefer
 ## `clusterresourcesync.additionalTemplates` so the volume is created per project namespace.
 extraObjects: []
 
-## -- Automatically create namespaces to deploy into
 namespaces:
+  # -- Pre-create the work namespaces listed in `static`, and bind Union's
+  # work-namespace role in each. It creates nothing else: not the `default`
+  # ServiceAccount annotation, quota or label clusterresourcesync's templates add.
+  # Scope is set by `singleNamespace` alone, and this key applies only at
+  # `singleNamespace: false`, where something must create every work namespace:
+  # this key, clusterresourcesync, or your own tooling. Both this key and
+  # `clusterresourcesync.enabled` default to false, so neither runs unless you set
+  # it. Leave this false when the namespaces are managed outside this chart. See
+  # docs/rbac/work-namespaces.md.
   enabled: false
+  # -- Labels for every Namespace in `static`. Namespaces clusterresourcesync
+  # creates take theirs from its `templates`.
+  labels: {}
+  # -- Annotations for every Namespace in `static`. `helm.sh/resource-policy: keep`
+  # stops `helm uninstall` from deleting each namespace and everything in it. Only
+  # Helm honors it; a GitOps controller prunes a Namespace that leaves the manifest,
+  # so add its own retention key here, such as
+  # `argocd.argoproj.io/sync-options: Prune=false,Delete=false`. Set the key to null
+  # to let your tooling own the namespaces' lifecycle.
+  annotations:
+    helm.sh/resource-policy: keep
+  # -- Work namespaces to pre-create when `enabled` is true. List the names
+  # `namespace_mapping` produces. The defaults are work namespaces only under the
+  # `{{ project }}-{{ domain }}` mapping, and only for these two projects.
+  static:
+    - flytesnacks-development
+    - flytesnacks-staging
+    - flytesnacks-production
+    - union-health-monitoring-development
+    - union-health-monitoring-staging
+    - union-health-monitoring-production
 
 monitoring:
-  # kube-prometheus-stack subchart; disabled by default, as the monitoring stack
-  # is commonly managed outside this chart. Enable as needed.
-  # TODO: consider defaulting to true.
+  # -- kube-prometheus-stack subchart. Off by default, since the monitoring stack is
+  # commonly managed outside this chart. The chart's own Prometheus (`prometheus`
+  # above) is separate and on by default.
   enabled: false
 
   # The following flags control Union monitoring resources independently
@@ -2859,7 +3279,7 @@ monitoring:
   # Ref: https://prometheus.io/docs/introduction/faq/
   prometheus:
     enabled: true
-   
+
     # Ref: https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/platform/prometheus-agent.md
     agentMode: false
 
@@ -2881,8 +3301,7 @@ monitoring:
           cpu: "500m"
           memory: "1Gi"
 
-# -- Vendored Knative Serving + Kourier + Envoy gateway. Rendered when
-# `zero_trust.enabled: true`; the templates gate on that flag directly.
+# Vendored Knative Serving, Kourier and the Envoy gateway.
 gateway:
   # -- Deliver app serving via this chart's vendored Knative Serving + Kourier +
   # Envoy gateway (raw manifests under templates/gateway/*) instead of the
@@ -2966,7 +3385,7 @@ gateway:
       containers:
         envoy:
           image:
-            repository: '{{ .Values.image.envoy.repository }}'
+            repository: '{{ tpl .Values.image.envoy.repository . }}'
             tag: '{{ .Values.image.envoy.tag | default .Chart.AppVersion }}'
           resources:
             limits:
@@ -3009,7 +3428,7 @@ gateway:
       containers:
         controller:
           image:
-            repository: '{{ .Values.image.union.repository }}'
+            repository: '{{ tpl .Values.image.union.repository . }}'
             tag: '{{ .Values.image.union.tag | default .Chart.AppVersion }}'
           resources:
             limits:
@@ -3208,11 +3627,14 @@ gateway:
       # rejects the revision without this flag ("Volume Mount Propagation support is
       # disabled"). Pairs with podspec-volumes-csi for allow_volumes() serving.
       kubernetes.podspec-volumes-mount-propagation: "enabled"
-    network:
-      ingress-class: "kourier.ingress.networking.knative.dev"
+      # Off because it works in only one identity mode. Dry-run validation makes the
+      # Knative webhook create a throwaway pod in the app's namespace. The shared
+      # ServiceAccount may create pods there through the work-namespace role; the
+      # webhook's own account, at `commonServiceAccount.enabled: false`, is outside
+      # that role.
+      kubernetes.podspec-dryrun: "disabled"
     kourier: {}
     autoscaler: {}
-    certmanager: {}
     domain: {}
     gc: {}
     leader-election: {}
@@ -3446,8 +3868,8 @@ dataproxy:
 # cluster's bucket, and the control plane only relays requests to the operator proxy. The guards in
 # templates/scale/_scale.tpl fail the render for any unsafe combination. Mirrors the union-operator
 # chart in unionai/cloud (operator/deploy/helm/templates/scale), whose scale/README.md documents
-# each setting. Scale needs tasks in namespaces of their own (namespaces.enabled: true and
-# low_privilege: false): in single-namespace mode tasks would run beside Scale's keys and the
+# each setting. Scale needs tasks in namespaces of their own (singleNamespace: false, which
+# defaults to true): in single-namespace mode tasks would run beside Scale's keys and the
 # operator proxy, so the render fails. Jobs are not available in this chart (scale.jobs).
 scale:
   enabled: false

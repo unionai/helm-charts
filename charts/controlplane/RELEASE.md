@@ -1,5 +1,174 @@
 # controlplane — Release Notes
 
+## 2026.11.7
+
+`version` and `appVersion` move `2026.11.6` → `2026.11.7`, picking up the new
+images. Lockstep release with the `dataplane` chart.
+
+Notable image changes (unionai/cloud `release/2026.11.6..14d75bf0f4`, tagged
+`release/2026.11.7`):
+
+- **Image builder:** the `build-image-bootstrap` image pins `flyte==2.13.3`
+  instead of installing the latest release ([cloud#20073](https://github.com/unionai/cloud/pull/20073)).
+- **shared_service:** `migrate` creates a missing database instead of failing
+  with `SQLSTATE 3D000`, which blocked fresh self-managed installs once the chart
+  runs `cloudcacheservice migrate` ([cloud#19667](https://github.com/unionai/cloud/pull/19667)).
+- **console:** server-side connects get 2.5s per resolved address, fixing
+  intermittent "couldn't complete the login" errors ([cloud#20087](https://github.com/unionai/cloud/pull/20087)).
+- **flyte:** the secrets webhook copies the primary task container's
+  `securityContext` to the secrets init container ([cloud#20086](https://github.com/unionai/cloud/pull/20086)).
+- **dataproxy:** a session route and WebSocket-capable port forward reach servers
+  inside session microVMs ([cloud#20059](https://github.com/unionai/cloud/pull/20059)).
+
+### build-image is registered without CoPilot data loading ([#685](https://github.com/unionai/helm-charts/pull/685))
+
+The `imageBuilder.bootstrap` hook registers `build-image` with whatever `flyte`
+the bootstrap image installs. Since flyte-sdk 2.12.3 that sends a data loading
+config, so the backend added CoPilot containers to the build pod and the uploader
+failed with `file not found at path [/var/outputs/fully_qualified_image]`: the
+`imagebuild` binary writes its outputs to the remote prefix itself. The chart task
+now sets `ContainerTask(data_loading=False)`, which needs flyte >= 2.13.3; the
+`2026.11.7` bootstrap image pins it. A custom or mirrored bootstrap image must ship
+flyte >= 2.13.3.
+
+The hook registers with `--version <appVersion>` and `flyte deploy` skips a
+version that already exists, so the fix lands with this new appVersion.
+
+## 2026.11.6
+
+`version` moves `2026.11.5` → `2026.11.6` and `appVersion` moves `2026.11.4` →
+`2026.11.6`, picking up the new images. Lockstep release with the `dataplane`
+chart.
+
+Notable image changes (unionai/cloud `release/2026.11.4..fc8a27db50`, tagged
+`release/2026.11.6`):
+
+- **Union On-Demand:** shared queues, Modal GPU, per-org storage and managed
+  secrets. The operator proxy gains an `orgDepot` lookup: with
+  `imageBuilderConfig.orgDepot.enabled`, each org's images are looked up in its
+  own Depot project, read from the `depot-token` Secret in that org's task
+  namespace ([cloud#19890](https://github.com/unionai/cloud/pull/19890)).
+- **Image builder:** one registry lookup for ECR, Artifact Registry and ACR
+  (go-containerregistry), a new `basic` authentication type for registries that
+  speak docker basic auth (GHCR, Depot, private registries), and Depot tags
+  longer than 128 characters are shortened with a hash suffix so different
+  image specs no longer collide on one tag ([cloud#15338](https://github.com/unionai/cloud/pull/15338)). A failed build's error
+  leads with BuildKit's last lines ([cloud#19918](https://github.com/unionai/cloud/pull/19918)).
+- **leasor:** enforces org capability limits: max concurrent runs
+  ([cloud#19671](https://github.com/unionai/cloud/pull/19671)), max actions per run ([cloud#19704](https://github.com/unionai/cloud/pull/19704)), `max_queue_depth`
+  ([cloud#19961](https://github.com/unionai/cloud/pull/19961)) and `max_concurrent_actions` ([cloud#20021](https://github.com/unionai/cloud/pull/20021)). A lease is closed as
+  final when the actions service reports the action not found ([cloud#19931](https://github.com/unionai/cloud/pull/19931)),
+  and the actions service no longer enqueues an action the leasor already has
+  ([cloud#19993](https://github.com/unionai/cloud/pull/19993)).
+- **leaseworker:** inline leaseworker retries orchestrators the way flyte-sdk
+  retries tasks ([cloud#19928](https://github.com/unionai/cloud/pull/19928)).
+- **operator:** cluster health judges DaemonSet pods by their node's readiness
+  ([cloud#19965](https://github.com/unionai/cloud/pull/19965)); the operator reports secret names and checks the org's max
+  secrets before creating one ([cloud#19861](https://github.com/unionai/cloud/pull/19861)).
+- **dataproxy:** reads action data from the pool of the action's queue
+  ([cloud#19898](https://github.com/unionai/cloud/pull/19898)).
+- Go 1.27.4 ([cloud#20007](https://github.com/unionai/cloud/pull/20007)).
+
+### `global.UNION_PUBLIC_PORT` keeps a non-443 port on the OAuth callback ([#672](https://github.com/unionai/helm-charts/pull/672))
+
+flyteadmin builds the OAuth `redirect_uri` from the first `authorizedUris` entry
+whose hostname matches, ignoring the port. A control plane served on, say, `:8443`
+was redirected to `https://<host>/callback` and got a 404. Set
+`global.UNION_PUBLIC_PORT` and the chart's public `authorizedUris` entries (the host
+and the `*.apps.` wildcard) carry the port. Unset, rendering is unchanged.
+
+## 2026.11.5
+
+`version` moves `2026.11.4` → `2026.11.5`. `appVersion` stays `2026.11.4`: this is a
+chart-only lockstep release with the `dataplane` chart ([#679](https://github.com/unionai/helm-charts/pull/679)); no control-plane
+template, values or image changes.
+
+## 2026.11.4
+
+`version` moves `2026.11.3` → `2026.11.4` and `appVersion` moves `2026.11.2` →
+`2026.11.4`, picking up the new control-plane images. No control-plane template
+or values changes; lockstep release with the `dataplane` chart.
+
+Notable image changes (unionai/cloud `release/2026.11.2..release/2026.11.4`):
+
+- leaseworker stamps action identity labels on the finalize context, so pools
+  started by a cross-project launch scale down
+  ([cloud#19863](https://github.com/unionai/cloud/pull/19863)).
+- leasor looks up a queue created since its last sync instead of aborting its
+  actions ([cloud#19838](https://github.com/unionai/cloud/pull/19838)), and
+  backpressure throttles new runs rather than admitted ones
+  ([cloud#19876](https://github.com/unionai/cloud/pull/19876),
+  [cloud#19875](https://github.com/unionai/cloud/pull/19875)).
+- dataproxy reads `GetActionData` from the bucket in the action's URI
+  ([cloud#19832](https://github.com/unionai/cloud/pull/19832)).
+- List filters match `LIKE` wildcards literally
+  ([cloud#19840](https://github.com/unionai/cloud/pull/19840)).
+- node-bootstrap keeps the base CRI config in the containerd 1.x override
+  ([cloud#19847](https://github.com/unionai/cloud/pull/19847)).
+- GPU: MIG pools with partition labels and scale-from-zero, and unified fault
+  watching in the node agent
+  ([cloud#19105](https://github.com/unionai/cloud/pull/19105),
+  [cloud#19106](https://github.com/unionai/cloud/pull/19106),
+  [cloud#19099](https://github.com/unionai/cloud/pull/19099),
+  [cloud#18751](https://github.com/unionai/cloud/pull/18751)).
+
+## 2026.11.3
+
+`version` moves `2026.11.2` → `2026.11.3`. `appVersion` stays `2026.11.2`: this is a
+chart-only lockstep release with the `onebox` chart (#669); no control-plane template,
+values or image changes.
+
+## 2026.11.2
+
+- Images no longer trust the root CAs behind the compromised eMudhra intermediates (`CVE-2026-114406`): OS CA bundles, certifi, Node, Envoy and `uv` are updated. `uv` in v2 customer image builds moves from 0.9.5 to 0.13.6, which can change how dependencies resolve
+
+- `version` and `appVersion` move `2026.11.0` → `2026.11.2`. No template or values
+changes; lockstep release picking up the `2026.11.2` control-plane images.
+
+## 2026.11.0
+
+`version` moves `2026.10.1` → `2026.10.2`; `appVersion` moves `2026.10.0` → `2026.10.5`.
+
+### Executions migrations follow the control-plane deployment type
+
+From `2026.10.5`, executions picks its Postgres migrations from `controlPlane.deploymentType` instead
+of per-feature flags (unionai/cloud#19713). The chart now sets it explicitly for the executions
+service:
+
+```yaml
+services:
+  executions:
+    configMap:
+      controlPlane:
+        deploymentType: selfhosted
+```
+
+`selfhosted` (also the image default) applies only the migrations every deployment shares, so
+upgrading adds no indexes. `executions.postgresDashboards.enabled` no longer exists; nothing in this
+chart set it.
+
+## 2026.10.1
+
+`version` moves `2026.10.0` → `2026.10.1`. `appVersion` stays `2026.10.0`: this is
+a chart-only release, so the control-plane and console images are unchanged.
+
+### `WatchExecutionStatusUpdates` requires authentication
+
+With auth enabled, `/flyteidl.service.WatchService/WatchExecutionStatusUpdates`
+was reachable unauthenticated at the edge. It is removed from the unprotected
+`GRPCRoute` (the protected route already covers `flyteidl.service.WatchService`),
+and on NGINX Ingress the `-grpc-streaming` ingress now carries
+`ingress.protectedIngressAnnotationsGrpc` when auth is enabled. Authless installs
+(`useAuth` false) are unchanged. The `envoy-gateway-config` chart drops the same
+path from its `unprotectedRoutes` default.
+
+### `telemetry.enabled: false` opts the console out of telemetry
+
+New top-level value `telemetry.enabled` (default `true`). Setting it to `false`
+sets `DO_NOT_TRACK=1` ([donottrack.sh](https://donottrack.sh)) on the console,
+which then skips Google Tag Manager and Grafana Faro.
+`console.telemetry.externalEnabled` keeps working. Defaults render unchanged.
+
 ## 2026.10.0
 
 `version` and `appVersion` move `2026.9.7` → `2026.10.0`. Controlplane templates and
