@@ -3446,9 +3446,20 @@ dataproxy:
 # cluster's bucket, and the control plane only relays requests to the operator proxy. The guards in
 # templates/scale/_scale.tpl fail the render for any unsafe combination. Mirrors the union-operator
 # chart in unionai/cloud (operator/deploy/helm/templates/scale), whose scale/README.md documents
-# each setting.
+# each setting. Scale needs tasks in namespaces of their own (namespaces.enabled: true and
+# low_privilege: false): in single-namespace mode tasks would run beside Scale's keys and the
+# operator proxy, so the render fails. Jobs are not available in this chart (scale.jobs).
 scale:
   enabled: false
+  # -- The Go profiler on the Scale runtime's debug port, for a debugging session only. Only the
+  # chart's Prometheus and scale.runtimeNetworkPolicy.metricsFrom reach that port.
+  enablePprof: false
+  # -- A NetworkPolicy on the Scale runtime (templates/scale/networkpolicy-runtime.yaml): it serves
+  # no RPCs, so only the chart's Prometheus and metricsFrom reach it, on its debug port.
+  runtimeNetworkPolicy:
+    enabled: true
+    # -- Extra NetworkPolicyPeers allowed to scrape the runtime's debug port.
+    metricsFrom: []
   # -- Keys merged into the scale config section (unionai/cloud scale/config/config.go), e.g.
   # projects, shadow. Put notification settings under scale.notify and code change settings under
   # scale.git, not here. Fixes are under config.fix (scale/config/fix.go): off, and for no org,
@@ -3551,24 +3562,28 @@ scale:
     # this cluster (unionai/cloud scale/README.md, Who is calling).
     requireDigest: false
   # -- A NetworkPolicy on the operator proxy (templates/scale/networkpolicy-proxy.yaml), rendered
-  # only with scale.enabled: only pods in the release namespace, and the peers in from, reach it;
-  # its debug port (metrics and the profiler) only from the release namespace and metricsFrom. It
-  # covers the whole proxy, so list every other in-cluster caller (e.g. an ingress controller's
-  # namespace for zero-trust access). Traffic through the tunnel is not affected. On by default,
-  # so task pods cannot reach Scale's reads; required for fixes, pushes and jobs, and for Scale at
-  # all without callerAuth.
+  # only with scale.enabled. Its main port admits the proxy's own callers only: the operator, the
+  # dataproxy, the proxy (its tunnel), Scale's agent, the chart's ingress-nginx when ingress is on,
+  # and the peers in from. Its debug port (metrics and the profiler) admits the operator, the
+  # chart's Prometheus and metricsFrom. It covers the whole proxy, so list every other in-cluster
+  # caller in from (e.g. an ingress controller in another namespace: with ingress.enabled and no
+  # chart ingress-nginx the render fails until from names it). Traffic through the tunnel is not
+  # affected. On by default, so task pods and other pods of the release namespace cannot reach
+  # Scale's reads; required for fixes and pushes, and for Scale at all without callerAuth.
   proxyNetworkPolicy:
     enabled: true
     # -- Extra NetworkPolicyPeers allowed to reach the proxy.
     from: []
-    # -- NetworkPolicyPeers allowed to scrape the debug port besides the release namespace.
+    # -- NetworkPolicyPeers allowed to scrape the debug port besides the operator and the chart's
+    # Prometheus.
     metricsFrom:
       - namespaceSelector:
           matchLabels:
             kubernetes.io/metadata.name: monitoring
   # -- GCP and Azure only: the deny on Scale's bucket for every identity but Scale's and the
-  # operator proxy's is in place (scale/README.md, Scale's bucket, step 4). Fixes, pushes and jobs
-  # are refused there without it. AWS clusters get the deny from the scale module.
+  # operator proxy's is in place (scale/README.md, Scale's bucket, step 4). Fixes and pushes
+  # are refused there without it. The cloud comes from provider, else from the storage settings
+  # (GCS, Azure, custom stow storage of kind google or azure, or the metadata prefix's scheme). AWS clusters get the deny from the scale module.
   storageDenyConfigured: false
   # -- A bucket for Scale's objects that user task roles cannot reach (the metadata bucket is
   # writable from tasks). Empty keeps them in the metadata bucket: fine for shadow mode. Required
@@ -3675,7 +3690,9 @@ scale:
     # When the proxy has a secret store (proxy.secretManager.enabled, on by default) and neither
     # apiKeySecret nor headersSecret is set, people set the provider, model, base URL and key in
     # the console (Scale > Settings > Agent). The operator proxy saves them in this cluster's
-    # secret store as scale__<org>__agent-model, a name tasks cannot mount, and they replace
+    # secret store as scale__<org>__agent-model, a name tasks cannot mount (tasks run in namespaces
+    # of their own; Scale refuses single-namespace mode and a namespace template that puts tasks in
+    # the store's namespace), and they replace
     # provider, name, baseURL and the key here. Set apiKeySecret (or headersSecret) to decide here
     # instead; the console's settings are then not used.
     model:
@@ -3776,47 +3793,11 @@ scale:
       requests:
         cpu: 100m
         memory: 512Mi
-  # -- Scale's jobs: one run of Claude Code or Codex in a project's development domain, for work
-  # that needs the code or a shell (reproduce, fix in code, profile, find the version). A job runs
-  # as the Flyte task scale-job.scale_job, which the Scale runtime registers in
-  # <project>/development with this image. It never gets Scale's own model key, and it cannot
-  # push, deploy or touch production. See unionai/cloud scale/job/README.md. Off until
-  # image.repository is set. Jobs write like fixes, so they need everything fixes need, including
-  # fixWriter (templates/scale/_scale.tpl).
+  # -- Scale's jobs (one run of Claude Code or Codex in a project's development domain) are not
+  # available in this chart yet. A job needs a cloud credential made for it alone, the jobs network
+  # check and Scale's model relay, which only the union-operator chart in unionai/cloud has; a
+  # shared job identity on a service account any task can name would let a task read and change
+  # every project's jobs. Setting the image fails the render, and so does scale.config.jobs.
   jobs:
     image:
-      # -- public.ecr.aws/p0i0a9q8/scale-job turns jobs on. Empty: no job task is registered and no
-      # job can start.
       repository: ""
-      # -- Empty uses image.union.tag, so the job task ships with the operator.
-      tag: ""
-    # -- Let Scale start jobs by itself where a project admin listed a kind in auto_start. Off in
-    # phase 1: a person always clicks Start.
-    autoStart: false
-    # -- The scale-job service account job pods run as, in every task namespace. Annotate it with a
-    # cloud identity that reaches only scale-jobs/ in Scale's bucket and the job runs' Flyte files
-    # (unionai/cloud scale/README.md, Scale's bucket), e.g. eks.amazonaws.com/role-arn. Never the
-    # task role.
-    serviceAccount:
-      annotations: {}
-    # -- The NetworkPolicy on job pods (label union.ai/scale-job: "true"): no ingress; egress to
-    # dns on port 53 and to the rules in egress. A NetworkPolicy cannot name hosts; narrow egress
-    # to the model provider's, git host's and object store's addresses where they are known.
-    networkPolicy:
-      dns:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: kube-system
-      egress:
-        - to:
-            - ipBlock:
-                cidr: 0.0.0.0/0
-                except:
-                  - 10.0.0.0/8
-                  - 100.64.0.0/10
-                  - 169.254.0.0/16
-                  - 172.16.0.0/12
-                  - 192.168.0.0/16
-          ports:
-            - protocol: TCP
-              port: 443

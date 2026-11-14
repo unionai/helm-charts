@@ -24,32 +24,31 @@ data:
       notify:
         {{- toYaml $notify | nindent 8 }}
       {{- end }}
-      {{- if .Values.scale.agent.enabled }}
-      {{- /* Wake the agent to diagnose new and reopened issues. */}}
-      agent:
-        enabled: true
-        url: {{ include "scale-agent.url" . }}
-        {{- /* 0 in the values means no cap, as for the proxy's budgets; the runtime reads 0 as its
-               default and a negative number as no cap. */}}
-        {{- $daily := .Values.scale.agent.dailyDiagnoses | int }}
-        dailyDiagnoses: {{ if gt $daily 0 }}{{ $daily }}{{ else }}-1{{ end }}
-        timeout: {{ printf "%ds" (.Values.scale.agent.timeoutSeconds | int) }}
-      {{- end }}
-      {{- /* The image Scale's jobs run in (scale.jobs.image in the runtime), with the operator's tag. */}}
-      {{- $jobs := .Values.scale.jobs | default dict }}
-      {{- with ($jobs.image | default dict).repository }}
-      jobs:
-        image: {{ printf "%s:%s" . ($jobs.image.tag | default $.Values.image.union.tag | default $.Chart.AppVersion) | quote }}
-        {{- /* A job's evidence holds a log tail only where Scale's agent may read logs. */}}
-        readLogs: {{ dig "readLogs" true ($.Values.scale.agent | default dict) }}
-        {{- /* Phase 1: a person starts every job, so this stays false unless the values say so. */}}
-        autoStart: {{ $jobs.autoStart | default false }}
+      {{- if .Values.scale.enablePprof }}
+      {{- /* The Go profiler on the debug port, for a debugging session only (T-47). Only the chart's
+             Prometheus and metricsFrom reach that port (networkpolicy-runtime.yaml). */}}
+      enablePprof: true
       {{- end }}
       {{- /*
       The usage price table holds AWS prices only, and an empty detectors.cost.cloud means it
       applies, so a GCP or Azure cluster gets the cluster's cloud here unless the values set one.
       */}}
       {{- $config := deepCopy (.Values.scale.config | default dict) }}
+      {{- /* The chart's agent settings go in scale.config.agent's key, the chart's winning, so the
+             runtime config has one agent key: its loader refuses a key given twice. As the
+             union-operator chart (templates/scale/configmap.yaml). */}}
+      {{- if .Values.scale.agent.enabled }}
+      {{- $daily := .Values.scale.agent.dailyDiagnoses | int }}
+      {{- $agent := dict
+            "enabled" true
+            "url" (include "scale-agent.url" .)
+            "dailyDiagnoses" (ternary $daily -1 (gt $daily 0))
+            "timeout" (printf "%ds" (.Values.scale.agent.timeoutSeconds | int)) }}
+      {{- /* Wake the agent to diagnose new and reopened issues. 0 daily diagnoses in the values
+             means no cap, as for the proxy's budgets; the runtime reads 0 as its default and a
+             negative number as no cap. */}}
+      {{- $_ := set $config "agent" (mergeOverwrite (get $config "agent" | default dict) $agent) }}
+      {{- end }}
       {{- $detectors := get $config "detectors" | default dict }}
       {{- $cost := get $detectors "cost" | default dict }}
       {{- $cloud := include "scale.cloud" . }}

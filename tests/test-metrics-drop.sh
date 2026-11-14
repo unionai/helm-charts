@@ -8,8 +8,9 @@
 #
 # Two remote_writes the chart cannot add the drop to: kube-prometheus-stack's
 # (monitoring.prometheus.prometheusSpec.remoteWrite) and the upstream prometheus ConfigMap's when
-# prometheus.server.configMapOverrideName is emptied. For those, NOTES.txt names each queue that
-# has no scale_.* drop (owner decision 2026-11-13 18:08 IST: warn, never fail the render).
+# prometheus.server.configMapOverrideName is emptied. For those, NOTES.txt and a rendered ConfigMap
+# (union-scale-metrics-warning, so ArgoCD users see it too) name each queue that has no scale_.*
+# drop (owner decisions 2026-11-13 18:08 and 18:40 IST: warn, never fail the render).
 #
 #   tests/test-metrics-drop.sh
 set -euo pipefail
@@ -82,11 +83,43 @@ if [ "$(grep -cx '        regex: scale_.\*' "$tmp/out")" != 1 ]; then
   echo "FAIL: the drop rule is not there exactly once"; failures=$((failures + 1))
 fi
 
+# warning NAME WANT HELM_ARGS...: the same warning in the rendered manifests, which is all ArgoCD
+# (helm template) shows: a ConfigMap, union-scale-metrics-warning, whose union.ai/warning
+# annotation says what is wrong and whose data names each queue. WANT as for notes.
+warning() {
+  local name=$1 want=$2
+  shift 2
+  if ! helm template t "$chart" -f "$values" "$@" >"$tmp/manifests" 2>"$tmp/err"; then
+    echo "FAIL [warning: $name]: render failed"; cat "$tmp/err"; failures=$((failures + 1)); return
+  fi
+  awk '/^# Source: /{p=index($0, "templates/prometheus/scale-metrics-warning.yaml") > 0; next} /^---/{p=0} p' \
+    "$tmp/manifests" >"$tmp/warning"
+  if [ "$want" = none ]; then
+    if [ -s "$tmp/warning" ]; then
+      echo "FAIL [warning: $name]: renders the warning ConfigMap"; cat "$tmp/warning"; failures=$((failures + 1))
+    fi
+    return
+  fi
+  for text in "name: union-scale-metrics-warning" "union.ai/warning: " "scale_* metrics"; do
+    if ! grep -qF -- "$text" "$tmp/warning"; then
+      echo "FAIL [warning: $name]: the warning ConfigMap lacks '$text'"; cat "$tmp/warning"; failures=$((failures + 1)); return
+    fi
+  done
+  local w
+  while IFS= read -r w; do
+    if ! grep -qF -- "$w" "$tmp/warning"; then
+      echo "FAIL [warning: $name]: the warning ConfigMap does not name '$w'"; failures=$((failures + 1))
+    fi
+  done <<<"$want"
+}
+
 # notes NAME WANT HELM_ARGS...: renders NOTES.txt (helm install --dry-run=client, no cluster). WANT is
 # "none" (no Scale warning), or the text each warning line must hold. The render must not fail.
+# Every case is checked in the rendered manifests too (warning).
 notes() {
   local name=$1 want=$2
   shift 2
+  warning "$name" "$want" "$@"
   if ! KUBECONFIG=/dev/null helm install t "$chart" -f "$values" --dry-run=client "$@" >"$tmp/out" 2>"$tmp/err"; then
     echo "FAIL [notes: $name]: render failed"; cat "$tmp/err"; failures=$((failures + 1)); return
   fi
@@ -138,6 +171,17 @@ notes "both at once" "$(printf '%s\n%s' \
   "prometheus.server.remoteWrite[0] https://amp.example/api/v1/remote_write")" \
   --set monitoring.enabled=true --set-json "monitoring.prometheus.prometheusSpec.remoteWrite=[$kp_own]" \
   --set "$kps" --set-json "prometheus.server.remoteWrite=[$own]"
+
+# A queue's URL is named without the user, password or query it may carry (in NOTES and in the
+# ConfigMap, which anyone who reads ConfigMaps in the namespace sees).
+kp_creds='{"url":"https://scrape-user:not-a-real-password@kp-creds.example/push?token=not-a-real-token"}'
+notes "kube-prometheus-stack queue with credentials in the URL" "monitoring.prometheus.prometheusSpec.remoteWrite[0] https://kp-creds.example/push" \
+  --set monitoring.enabled=true --set-json "monitoring.prometheus.prometheusSpec.remoteWrite=[$kp_creds]"
+for f in "$tmp/notes" "$tmp/warning"; do
+  for secret in scrape-user not-a-real-password not-a-real-token; do
+    if grep -qF -- "$secret" "$f"; then echo "FAIL [credentials]: $(basename "$f") holds '$secret'"; failures=$((failures + 1)); fi
+  done
+done
 
 if [ "$failures" -ne 0 ]; then
   echo "$failures failure(s)"

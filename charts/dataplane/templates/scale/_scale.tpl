@@ -90,16 +90,30 @@ agent:
 {{- end -}}
 
 {{/*
-The cloud Scale prices issues for (scale.config.detectors.cost.cloud): provider, else gcp for a
-cluster that stores data in GCS. Empty when neither says, which the Scale runtime takes as the
-usage price table's own cloud (AWS).
+The cluster's cloud: what Scale prices issues for (scale.config.detectors.cost.cloud) and what the
+write guard checks (scale.guards). provider, else the cloud of the cluster's storage: gcp for GCS,
+custom stow storage of kind azure or google as the union-operator
+chart reads it (operator/deploy/helm/templates/_helpers.tpl, scale.cloud), and a metadata prefix
+on Azure Blob storage (abfs, abfss, azblob, wasb, wasbs) or GCS (gs). Empty when none says, which
+the Scale runtime takes as the usage price table's own cloud (AWS).
 */}}
 {{- define "scale.cloud" -}}
 {{- $provider := tpl (.Values.provider | default "" | toString) . -}}
 {{- $storage := tpl (.Values.storage.provider | default "" | toString) . -}}
+{{- $custom := .Values.storage.custom | default dict -}}
+{{- $stowKind := lower (tpl (dig "stow" "kind" "" $custom | toString) .) -}}
+{{- $scheme := lower (regexFind "^[A-Za-z0-9+.-]+://" (tpl (.Values.storage.metadataPrefix | default "" | toString) .)) | trimSuffix "://" -}}
 {{- if $provider -}}
 {{- lower $provider -}}
 {{- else if has $storage (list "gcs" "gcp") -}}
+gcp
+{{- else if and (eq $storage "custom") (eq $stowKind "azure") -}}
+azure
+{{- else if and (eq $storage "custom") (eq $stowKind "google") -}}
+gcp
+{{- else if has $scheme (list "abfs" "abfss" "azblob" "wasb" "wasbs") -}}
+azure
+{{- else if eq $scheme "gs" -}}
 gcp
 {{- end -}}
 {{- end -}}
@@ -139,8 +153,9 @@ vendored path and Kourier's 3scale-kourier-gateway on the knative-operator path.
 {{- end -}}
 
 {{/*
-"true" when jobs are on: the chart sets the job task's image (scale.jobs.image.repository), and the
-runtime turns jobs on whenever it has one.
+"true" when the values ask for jobs: the job task's image (scale.jobs.image.repository), which the
+runtime turns jobs on with. Jobs are not available in this chart, so the guards fail the render
+then (see scale.guards).
 */}}
 {{- define "scale.jobs" -}}
 {{- if dig "jobs" "image" "repository" "" (.Values.scale | default dict) -}}
@@ -199,13 +214,45 @@ for (unionai/cloud scale/README.md, Security).
 {{- if include "scale.serverless" . }}
 {{- fail "scale: Scale cannot run on a serverless (multi-org) cluster yet: caller keys are per cluster, not per org. Leave scale.enabled off" }}
 {{- end }}
+{{- /* Tasks never share a namespace with Scale's signing, caller and model keys, Scale's app
+       secrets and service account, or the operator proxy: a task pod can mount any Secret and
+       name any service account of its own namespace, and every pod there passes a policy that
+       admits the namespace. In single-namespace mode (namespaces.enabled false, or low_privilege)
+       tasks run in the release namespace, so Scale stays off; so does a namespace template that
+       sends every task to the release namespace or to the proxy's secret store namespace, where
+       the console saves the agent's model key. */}}
+{{- if include "singleNamespace" . }}
+{{- fail (printf "scale: Scale needs tasks in namespaces of their own (namespaces.enabled: true and low_privilege: false). In single-namespace mode tasks run in %s beside Scale's signing, caller and model keys and the operator proxy, and a task could read them. Leave scale.enabled off" .Release.Namespace) }}
+{{- end }}
+{{- $taskNamespace := tpl (include "dataplane.namespaceTemplate" . | toString) . | trim }}
+{{- if and $taskNamespace (not (contains "{{" $taskNamespace)) (has $taskNamespace (list .Release.Namespace (include "proxy.secretsNamespace" . | trim))) }}
+{{- fail (printf "scale: Scale needs tasks in namespaces of their own, but namespace_mapping.template puts every task in %s, beside Scale's keys or the operator proxy's secret store. Use a template per project and domain, or leave scale.enabled off" $taskNamespace) }}
+{{- end }}
 {{- /* The runtime's config loader matches keys case-insensitively, so Fix.Enabled would turn fixes
        on while every check below, which reads fix.enabled, saw nothing. Refuse any other spelling. */}}
 {{- $config := .Values.scale.config | default dict }}
 {{- range $k, $v := $config }}
-{{- if and (has (lower $k) (list "fix" "git")) (ne $k (lower $k)) }}
+{{- if and (has (lower $k) (list "fix" "git" "jobs" "agent")) (ne $k (lower $k)) }}
 {{- fail (printf "scale: write scale.config.%s as scale.config.%s; the guards only read lowercase" $k (lower $k)) }}
 {{- end }}
+{{- end }}
+{{- /* Jobs are not available in this chart. A job needs a cloud credential made for it alone, the
+       jobs network check and Scale's model relay, which only the union-operator chart in
+       unionai/cloud has. A shared job identity on a service account any task can name (the design
+       the union-operator chart removed) would let a task read and change every project's jobs. The
+       runtime turns jobs on whenever it has a job image, so scale.config.jobs, which would reach
+       the runtime around these guards, is refused too. */}}
+{{- if include "scale.jobs" . }}
+{{- fail "scale: jobs are not available in this chart yet: each job needs its own cloud credential, the jobs network check and Scale's model relay, which only the union-operator chart (unionai/cloud) has. Leave scale.jobs.image.repository empty" }}
+{{- end }}
+{{- if hasKey $config "jobs" }}
+{{- fail "scale: remove scale.config.jobs: jobs are not available in this chart yet, and the runtime would turn them on around the chart's guards" }}
+{{- end }}
+{{- /* The proxy NetworkPolicy admits named pods only. The chart's ingress routes to the proxy, so
+       its controller must be admitted: the chart's own ingress-nginx is, any other is listed in
+       scale.proxyNetworkPolicy.from. */}}
+{{- if and (include "scale.proxyNetworkPolicy.rendered" .) .Values.ingress.enabled (not (index .Values "ingress-nginx").enabled) (not .Values.scale.proxyNetworkPolicy.from) }}
+{{- fail "scale: the proxy NetworkPolicy admits named pods only, and ingress.enabled routes to the operator proxy: list the ingress controller in scale.proxyNetworkPolicy.from (e.g. its namespace), or turn on the chart's ingress-nginx" }}
 {{- end }}
 {{- range $section := list (dig "fix" dict $config) (dig "git" dict $config) (.Values.scale.git | default dict) }}
 {{- range $k, $v := $section }}
@@ -225,19 +272,10 @@ for (unionai/cloud scale/README.md, Security).
 {{- end }}
 {{- /* Without a caller key the operator proxy refuses every call but its agent's, so Scale's pages
        show it as not set up; a cluster whose key comes on a later sync still renders. The proxy
-       NetworkPolicy keeps out pods outside the release namespace. Scale needs one of the two,
-       whatever else is on. */}}
+       NetworkPolicy admits only the proxy's own callers. Scale needs one of the two, whatever
+       else is on. */}}
 {{- if and (not .Values.scale.callerAuth.secretName) (not (include "scale.proxyNetworkPolicy.rendered" .)) }}
 {{- fail "scale: Scale needs scale.callerAuth.secretName or scale.proxyNetworkPolicy.enabled, so a pod that reaches the operator proxy cannot read every project's issues" }}
-{{- end }}
-{{- /* Job pods run as the scale-job service account, which the cluster resource sync puts in
-       every task namespace (templates/clusterresourcesync/configmap.yaml), or this chart in the
-       release namespace when tasks run there. */}}
-{{- if and (include "scale.jobs" .) (not (include "singleNamespace" .)) (not .Values.clusterresourcesync.enabled) }}
-{{- fail "scale: jobs need clusterresourcesync.enabled, which gives every task namespace the scale-job service account and NetworkPolicy" }}
-{{- end }}
-{{- if and (include "scale.jobs" .) (not .Values.scale.jobs.networkPolicy.egress) }}
-{{- fail "scale: jobs need scale.jobs.networkPolicy.egress, the places a job pod may reach" }}
 {{- end }}
 {{- if include "scale.writes" . }}
 {{- /* Only AWS has a deny on Scale's bucket for every other identity and a role of its own for
@@ -246,25 +284,25 @@ for (unionai/cloud scale/README.md, Security).
        step 4) is in place. */}}
 {{- $cloud := include "scale.cloud" . }}
 {{- if and (has $cloud (list "gcp" "azure")) (not .Values.scale.storageDenyConfigured) }}
-{{- fail (printf "scale: fixes, pushes and jobs are not available on %s yet: Scale's bucket has no deny for other identities. Set the deny in scale/README.md (Scale's bucket) and scale.storageDenyConfigured, or leave them off" $cloud) }}
+{{- fail (printf "scale: fixes and pushes are not available on %s yet: Scale's bucket has no deny for other identities. Set the deny in scale/README.md (Scale's bucket) and scale.storageDenyConfigured, or leave them off" $cloud) }}
 {{- end }}
 {{- if not .Values.scale.auth.appId }}
-{{- fail "scale: fixes, pushes and jobs need scale.auth.appId (the cluster's Scale app), not the operator's app" }}
+{{- fail "scale: fixes and pushes need scale.auth.appId (the cluster's Scale app), not the operator's app" }}
 {{- end }}
 {{- if not .Values.scale.signing.secretName }}
-{{- fail "scale: fixes, pushes and jobs need scale.signing.secretName, so a task pod cannot forge approvals" }}
+{{- fail "scale: fixes and pushes need scale.signing.secretName, so a task pod cannot forge approvals" }}
 {{- end }}
 {{- if .Values.scale.signing.acceptUnsignedUntil }}
-{{- fail "scale: fixes, pushes and jobs stay off while scale.signing.acceptUnsignedUntil keeps unsigned objects readable" }}
+{{- fail "scale: fixes and pushes stay off while scale.signing.acceptUnsignedUntil keeps unsigned objects readable" }}
 {{- end }}
 {{- if not .Values.scale.callerAuth.secretName }}
-{{- fail "scale: fixes, pushes and jobs need scale.callerAuth.secretName, so the operator proxy can check who the dataproxy says is calling" }}
+{{- fail "scale: fixes and pushes need scale.callerAuth.secretName, so the operator proxy can check who the dataproxy says is calling" }}
 {{- end }}
 {{- if not .Values.scale.storageContainer }}
-{{- fail "scale: fixes, pushes and jobs need scale.storageContainer, a bucket user task roles cannot reach" }}
+{{- fail "scale: fixes and pushes need scale.storageContainer, a bucket user task roles cannot reach" }}
 {{- end }}
 {{- if not .Values.scale.serviceAccount.create }}
-{{- fail "scale: fixes, pushes and jobs need scale.serviceAccount.create, so Scale does not run as the operator" }}
+{{- fail "scale: fixes and pushes need scale.serviceAccount.create, so Scale does not run as the operator" }}
 {{- end }}
 {{- $fix := dig "fix" dict $config }}
 {{- $runtimeCredentials := dig "writer" "useRuntimeCredentials" false $fix }}
@@ -273,11 +311,11 @@ for (unionai/cloud scale/README.md, Security).
 {{- if and $runtimeCredentials (ne (include "scale.org" .) "dogfood") }}
 {{- fail "scale: scale.config.fix.writer.useRuntimeCredentials is for the dogfood org only; set scale.fixWriter.secretName" }}
 {{- end }}
-{{- if and (or (dig "enabled" false $fix) (include "scale.jobs" .)) (not .Values.scale.fixWriter.secretName) (not $runtimeCredentials) }}
-{{- fail "scale: fixes and jobs need scale.fixWriter.secretName, the development-only writer app (provisionctl create scalefixwriter)" }}
+{{- if and (dig "enabled" false $fix) (not .Values.scale.fixWriter.secretName) (not $runtimeCredentials) }}
+{{- fail "scale: fixes need scale.fixWriter.secretName, the development-only writer app (provisionctl create scalefixwriter)" }}
 {{- end }}
 {{- if not (include "scale.proxyNetworkPolicy.rendered" .) }}
-{{- fail "scale: fixes, pushes and jobs need scale.proxyNetworkPolicy.enabled, so pods outside the release namespace cannot reach the operator proxy" }}
+{{- fail "scale: fixes and pushes need scale.proxyNetworkPolicy.enabled, so only the operator proxy's own callers reach it" }}
 {{- end }}
 {{- end }}
 {{- if .Values.scale.agent.enabled }}
@@ -298,53 +336,10 @@ for (unionai/cloud scale/README.md, Security).
 {{- end -}}
 
 {{/*
-The service account Scale's job pods run as (the job task's pod template names it), in one task
-namespace. It holds the job identity from scale.jobs.serviceAccount.annotations, never the task
-role, and mounts no token unless a pod asks; the job pod asks for none. Arguments: root, namespace
-(a name, or "{{ namespace }}" for the cluster-resource templates).
+The pods of the chart's Prometheus, in the release namespace: the prometheus subchart's server and
+kube-prometheus-stack's Prometheus (monitoring) both carry this label. The union-services job
+scrapes the operator proxy's debug port.
 */}}
-{{- define "scale.jobs.serviceAccount" -}}
-{{- $root := .root -}}
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: scale-job
-  namespace: {{ .namespace }}
-  {{- with $root.Values.scale.jobs.serviceAccount.annotations }}
-  annotations:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
-automountServiceAccountToken: false
-{{- end -}}
-
-{{/*
-The NetworkPolicy on Scale's job pods (the label the job task's pod template sets) in one task
-namespace: no ingress, and egress to DNS and scale.jobs.networkPolicy.egress only (by default
-public addresses on 443: the model provider, the git host, object storage and the control plane;
-never cluster or private addresses or the instance metadata service). Arguments as above.
-*/}}
-{{- define "scale.jobs.networkPolicy" -}}
-{{- $np := .root.Values.scale.jobs.networkPolicy -}}
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: scale-job
-  namespace: {{ .namespace }}
-spec:
-  podSelector:
-    matchLabels:
-      union.ai/scale-job: "true"
-  policyTypes:
-    - Ingress
-    - Egress
-  ingress: []
-  egress:
-    - to:
-        {{- toYaml $np.dns | nindent 8 }}
-      ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
-    {{- toYaml $np.egress | nindent 4 }}
+{{- define "scale.prometheusSelectorLabels" -}}
+app.kubernetes.io/name: prometheus
 {{- end -}}

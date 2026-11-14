@@ -1,9 +1,12 @@
 {{- if include "scale.proxyNetworkPolicy.rendered" . }}
 {{- /* Defense in depth for the operator proxy, which serves Scale's IssueService with no
-       authorizer of its own: the dataproxy's signed caller assertion is the check, and this
-       keeps task pods (in other namespaces) from reaching the proxy at all. The tunnel runs in the
-       proxy pod, so traffic through it is not affected. It covers the whole proxy pod, not only
-       Scale: list every other in-cluster caller in scale.proxyNetworkPolicy.from. */}}
+       authorizer of its own: the dataproxy's signed caller assertion is the check, and this keeps
+       every pod but the proxy's own callers off it. Tasks run in namespaces of their own (Scale
+       fails the render otherwise, templates/scale/_scale.tpl), and other pods of the release
+       namespace (the image builder runs build steps there) get nothing either: the proxy holds
+       Scale's signing key and the caller key in memory. It covers the whole proxy pod, not only
+       Scale: list every other in-cluster caller in scale.proxyNetworkPolicy.from. As the
+       union-operator chart (operator/deploy/helm/templates/scale/networkpolicy-proxy.yaml). */}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -18,20 +21,48 @@ spec:
   policyTypes:
     - Ingress
   ingress:
+    {{- /* The main port, from the chart's callers: the operator (API keys), the dataproxy (Scale
+           and the other routes it proxies), the proxy itself (its tunnel dials the proxy's
+           Service, which may pick another replica), Scale's agent, and the chart's ingress-nginx
+           when the chart's ingress routes to the proxy. */}}
     - from:
-        - namespaceSelector:
+        - podSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+              {{- include "operator.selectorLabels" . | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "dataproxy.selectorLabels" . | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "proxy.selectorLabels" . | nindent 14 }}
+        {{- if .Values.scale.agent.enabled }}
+        - podSelector:
+            matchLabels:
+              app: scale-agent
+        {{- end }}
+        {{- if and .Values.ingress.enabled (index .Values "ingress-nginx").enabled }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+              app.kubernetes.io/component: controller
+              app.kubernetes.io/instance: {{ .Release.Name }}
+        {{- end }}
         {{- with .Values.scale.proxyNetworkPolicy.from }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-    {{- /* The debug port serves metrics and the profiler: the release namespace (the operator's
-           health check, the chart's Prometheus) and the peers in metricsFrom (a Prometheus in
-           another namespace) only, never task namespaces. */}}
+      ports:
+        - port: http
+          protocol: TCP
+    {{- /* The debug port serves metrics, the health check and the profiler: the operator's health
+           check, the chart's Prometheus and the peers in metricsFrom (a Prometheus in another
+           namespace) only. */}}
     - from:
-        - namespaceSelector:
+        - podSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+              {{- include "operator.selectorLabels" . | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "scale.prometheusSelectorLabels" . | nindent 14 }}
         {{- with .Values.scale.proxyNetworkPolicy.metricsFrom }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

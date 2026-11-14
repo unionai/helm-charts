@@ -6,8 +6,12 @@
 # when it is off. The agent's model guards (templates/scale/_agent.tpl): each provider renders with
 # what it needs and fails with a plain message without it, the console's settings are used only
 # when the values set no key and the proxy has a secret store, the agent's egress policy allows
-# only what the provider needs, and the replica bounds (minScale, maxScale) stay in order. Mirrors
-# operator/deploy/helm/ci/check-scale-guards.sh and check-scale-agent-guards.sh in unionai/cloud.
+# only what the provider needs, and the replica bounds (minScale, maxScale) stay in order. The
+# security audit of 2026-11-13 (H1, H2, M1 to M5): jobs are refused with the reason and no shared
+# job identity renders; Scale is refused where tasks share the release namespace; the proxy and
+# runtime NetworkPolicies admit named pods on named ports; scale.config.jobs is refused; the cloud
+# comes from the storage settings too. Mirrors operator/deploy/helm/ci/check-scale-guards.sh and
+# check-scale-agent-guards.sh in unionai/cloud.
 #
 #   tests/test-scale-guards.sh
 set -euo pipefail
@@ -28,6 +32,11 @@ global:
 secrets:
   admin:
     clientSecret: test-not-real-secret
+# Scale needs tasks in namespaces of their own (H2); single-namespace mode is checked on its own
+# below.
+namespaces:
+  enabled: true
+low_privilege: false
 # Scale needs a caller key or the proxy NetworkPolicy before it serves anything; checked on its own
 # below.
 scale:
@@ -150,15 +159,68 @@ must_render -f "$tmp/secure.yaml" --set scale.git.enabled=true --set scale.git.g
 
 # Scale needs a caller key or the proxy NetworkPolicy, whatever else is on.
 must_fail "callerAuth.secretName or scale.proxyNetworkPolicy.enabled" --set scale.enabled=true --set scale.callerAuth.secretName= --set scale.proxyNetworkPolicy.enabled=false
-# The proxy NetworkPolicy is on by default, so Scale with defaults keeps task pods off the proxy,
-# and its debug port (the profiler) is open only to the release namespace and metricsFrom: both
-# ingress rules name who may connect.
+# The proxy NetworkPolicy is on by default, so Scale with defaults keeps task pods off the proxy:
+# both ingress rules name who may connect.
 proxypolicy() { source_of templates/scale/networkpolicy-proxy.yaml; }
 must_render --set scale.enabled=true --set scale.callerAuth.secretName=
 expect proxypolicy "kind: NetworkPolicy"
 expect proxypolicy "kubernetes.io/metadata.name: monitoring"
 froms=$(proxypolicy | grep -c -- "- from:" || true)
 if [ "$froms" != 2 ]; then echo "FAIL: the proxy NetworkPolicy has $froms from rules, want 2"; failures=$((failures + 1)); fi
+# M1: as the union-operator chart, the policy admits named pods only, never the whole release
+# namespace (where the image builder runs build steps): the main port from the operator, the
+# dataproxy, the proxy itself (its tunnel) and Scale's agent; the debug port (metrics and the
+# profiler) from the operator, the chart's Prometheus and metricsFrom. Each rule names its port.
+expect_not proxypolicy "kubernetes.io/metadata.name: union"
+expect proxypolicy "app.kubernetes.io/name: union-operator"
+expect proxypolicy "app.kubernetes.io/name: union-dataproxy"
+expect proxypolicy "app.kubernetes.io/name: operator-proxy"
+expect proxypolicy "app.kubernetes.io/name: prometheus"
+expect proxypolicy "port: http"
+expect proxypolicy "port: debug"
+expect_not proxypolicy "app: scale-agent"
+expect_not proxypolicy "ingress-nginx"
+portlists=$(proxypolicy | grep -c -- "ports:" || true)
+if [ "$portlists" != 2 ]; then echo "FAIL: the proxy NetworkPolicy has $portlists port lists, want 2 (one per rule)"; failures=$((failures + 1)); fi
+# The http rule holds no Prometheus, and the debug rule no dataproxy or agent.
+httprule() { proxypolicy | awk '/- from:/{n++} n==1'; }
+debugrule() { proxypolicy | awk '/- from:/{n++} n==2'; }
+expect_not httprule "app.kubernetes.io/name: prometheus"
+expect_not debugrule "union-dataproxy"
+must_render -f "$tmp/agent.yaml"
+expect proxypolicy "app: scale-agent"
+expect_not debugrule "scale-agent"
+# The chart's ingress routes to the proxy: its own ingress-nginx is admitted, and another
+# controller must be listed in scale.proxyNetworkPolicy.from.
+must_render --set scale.enabled=true --set ingress.enabled=true --set ingress-nginx.enabled=true
+expect httprule "app.kubernetes.io/name: ingress-nginx"
+must_fail "list the ingress controller in scale.proxyNetworkPolicy.from" --set scale.enabled=true --set ingress.enabled=true
+must_render --set scale.enabled=true --set ingress.enabled=true \
+  --set-json 'scale.proxyNetworkPolicy.from=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"ingress"}}}]'
+expect httprule "kubernetes.io/metadata.name: ingress"
+
+# M2: a NetworkPolicy on the Scale runtime, on by default: only the chart's Prometheus and
+# metricsFrom, on the debug port the deployment names; the profiler only with scale.enablePprof.
+runtimepolicy() { source_of templates/scale/networkpolicy-runtime.yaml; }
+runtimedeploy() { source_of templates/scale/deployment.yaml; }
+must_render --set scale.enabled=true
+expect runtimepolicy "kind: NetworkPolicy"
+expect runtimepolicy "app: scale"
+expect runtimepolicy "- Ingress"
+expect runtimepolicy "app.kubernetes.io/name: prometheus"
+expect runtimepolicy "port: debug"
+expect_not runtimepolicy "namespaceSelector"
+expect runtimedeploy "name: debug"
+expect runtimedeploy "containerPort: 10254"
+expect_not scaleconfig "enablePprof"
+must_render --set scale.enabled=true --set scale.enablePprof=true
+expect scaleconfig "enablePprof: true"
+must_render --set scale.enabled=true \
+  --set-json 'scale.runtimeNetworkPolicy.metricsFrom=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}}}]'
+expect runtimepolicy "kubernetes.io/metadata.name: monitoring"
+must_render --set scale.enabled=true --set scale.runtimeNetworkPolicy.enabled=false
+expect_not runtimepolicy "NetworkPolicy"
+must_not_contain "name: scale-runtime" --set scale.enabled=false
 must_render --set scale.enabled=true --set scale.callerAuth.secretName= --set scale.proxyNetworkPolicy.enabled=true
 must_fail "callerAuth.secretName or scale.proxyNetworkPolicy.enabled" -f "$tmp/secure.yaml" \
   --set scale.callerAuth.secretName= --set scale.proxyNetworkPolicy.enabled=false
@@ -175,50 +237,62 @@ must_render --set "$crm.clusterResourcesPrivate.app.isServerless=true" --set "$c
 for on in scale.config.fix.enabled scale.git.enabled; do
   must_fail "scale.auth.appId" --set scale.enabled=true --set "$on=true"
 done
-# Jobs are off by default, and setting their image turns them on like a write: with only caller
-# auth the render fails; with everything fixes need it renders.
+# H1, M4: jobs are not available in this chart. A job needs its own cloud credential, the jobs
+# network check and the model relay, which only the union-operator chart in unionai/cloud has, so
+# setting the job image fails the render with the reason, whatever else is set. No scale-job service
+# account (and so no shared job identity) and no job NetworkPolicy render anywhere.
 must_render --set scale.enabled=true
 expect_not scaleconfig "jobs:"
-must_fail "scale.auth.appId" --set scale.enabled=true --set scale.jobs.image.repository=scale-job
-must_fail "fixWriter" -f "$tmp/secure.yaml" --set scale.jobs.image.repository=scale-job --set scale.fixWriter.secretName=
-must_fail "proxyNetworkPolicy" -f "$tmp/secure.yaml" --set scale.jobs.image.repository=scale-job --set scale.proxyNetworkPolicy.enabled=false
-must_fail "serviceAccount.create" -f "$tmp/secure.yaml" --set scale.jobs.image.repository=scale-job --set scale.serviceAccount.create=false
-# Scale never starts a job by itself unless the values say so, and a job's evidence holds a log
-# tail only where the agent may read logs.
-must_render -f "$tmp/secure.yaml" --set scale.jobs.image.repository=scale-job
-expect scaleconfig "autoStart: false"
-expect scaleconfig "readLogs: true"
-must_render -f "$tmp/secure.yaml" --set scale.jobs.image.repository=scale-job --set scale.jobs.autoStart=true --set scale.agent.readLogs=false
-expect scaleconfig "autoStart: true"
-expect scaleconfig "readLogs: false"
-# Job pods run as the scale-job service account with the job identity, never the task role, and
-# behind the scale-job NetworkPolicy: in the release namespace when tasks run there, else in every
-# task namespace through the cluster resource sync.
-jobs=(-f "$tmp/secure.yaml" --set scale.jobs.image.repository=scale-job
-  --set-string 'scale.jobs.serviceAccount.annotations.eks\.amazonaws\.com/role-arn=arn:aws:iam::1:role/job')
+must_fail "jobs are not available in this chart" --set scale.enabled=true --set scale.jobs.image.repository=scale-job
+must_fail "jobs are not available in this chart" -f "$tmp/secure.yaml" --set scale.jobs.image.repository=scale-job
+must_fail "jobs are not available in this chart" -f "$tmp/secure.yaml" --set scale.jobs.image.repository=scale-job \
+  --set clusterresourcesync.enabled=true \
+  --set-string 'scale.jobs.serviceAccount.annotations.eks\.amazonaws\.com/role-arn=arn:aws:iam::1:role/job'
 jobresources() { source_of templates/scale/job-resources.yaml; }
 crsconfig() { source_of templates/clusterresourcesync/configmap.yaml; }
 crsrole() { source_of templates/clusterresourcesync/serviceaccount.yaml; }
-must_render "${jobs[@]}" --set namespaces.enabled=false
-expect jobresources "name: scale-job"
-expect jobresources "namespace: union"
-expect jobresources "eks.amazonaws.com/role-arn: arn:aws:iam::1:role/job"
-expect jobresources "automountServiceAccountToken: false"
-expect jobresources 'union.ai/scale-job: "true"'
-expect jobresources "169.254.0.0/16"
-expect jobresources "port: 443"
-multi=(--set namespaces.enabled=true --set low_privilege=false)
-must_fail "jobs need clusterresourcesync.enabled" "${jobs[@]}" "${multi[@]}" --set clusterresourcesync.enabled=false
-must_render "${jobs[@]}" "${multi[@]}" --set clusterresourcesync.enabled=true
-expect crsconfig "d_scale_job_service_account.yaml"
-expect crsconfig "namespace: {{ namespace }}"
-expect crsconfig "e_scale_job_network_policy.yaml"
-expect crsrole "networkpolicies"
-expect_not jobresources "scale-job"
-must_render -f "$tmp/secure.yaml" "${multi[@]}" --set clusterresourcesync.enabled=true
-expect_not crsconfig "scale_job"
+must_render -f "$tmp/secure.yaml" -f "$tmp/agent.yaml" --set clusterresourcesync.enabled=true \
+  --set-string 'scale.jobs.serviceAccount.annotations.eks\.amazonaws\.com/role-arn=arn:aws:iam::1:role/job'
+for text in "scale-job" "scale_job" "arn:aws:iam::1:role/job"; do
+  if grep -qF -- "$text" "$tmp/out"; then echo "FAIL: rendered \"$text\" with jobs off"; failures=$((failures + 1)); fi
+done
 expect_not crsrole "networkpolicies"
-must_fail "networkPolicy.egress" "${jobs[@]}" --set namespaces.enabled=false --set scale.jobs.networkPolicy.egress=null
+
+# M3: scale.config.jobs cannot turn jobs on around the guards, in any spelling, and the runtime
+# config has one agent key: the chart's agent settings are merged over scale.config.agent's.
+must_fail "scale.config.jobs" --set scale.enabled=true --set scale.config.jobs.image=x/scale-job:1
+must_fail "scale.config.jobs" -f "$tmp/secure.yaml" --set scale.config.jobs.image=x/scale-job:1
+must_fail "scale.config.jobs" -f "$tmp/secure.yaml" --set scale.config.jobs.maxHours=2
+for spelling in scale.config.Jobs.image scale.config.JOBS.image scale.config.Agent.enabled scale.config.AGENT.url; do
+  must_fail "only read lowercase" -f "$tmp/secure.yaml" --set "$spelling=x"
+done
+must_render -f "$tmp/agent.yaml" --set scale.config.agent.timeout=30s --set scale.config.agent.url=http://other.example
+agents=$(scaleconfig | grep -c "^      agent:" || true)
+if [ "$agents" != 1 ]; then echo "FAIL: the runtime config has $agents agent keys, want 1"; failures=$((failures + 1)); fi
+expect scaleconfig "url: http://scale-agent.union.svc.cluster.local"
+expect_not scaleconfig "http://other.example"
+expect scaleconfig "timeout: 600s"
+
+# H2: tasks never share a namespace with Scale's keys and the operator proxy. In single-namespace
+# mode (namespaces.enabled false or low_privilege, the chart's defaults) tasks run in the release
+# namespace, so Scale fails the render, read-only or writing; so does a namespace template that
+# puts every task in the release namespace or in the proxy's secret store namespace. Scale off still
+# renders in that mode.
+single="tasks in namespaces of their own"
+must_fail "$single" --set scale.enabled=true --set namespaces.enabled=false
+must_fail "$single" --set scale.enabled=true --set low_privilege=true
+must_fail "$single" -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true --set namespaces.enabled=false
+must_fail "$single" -f "$tmp/agent.yaml" --set low_privilege=true
+must_fail "$single" --set scale.enabled=true --set namespace_mapping.template=union
+must_fail "$single" -f "$tmp/agent.yaml" --set namespace_mapping.template=union-secrets --set proxy.secretManager.namespace=union-secrets
+cat > "$tmp/ns-template.yaml" <<'YAML'
+namespace_mapping:
+  template: '{{`{{ project }}`}}-{{`{{ domain }}`}}'
+YAML
+must_render --set scale.enabled=true -f "$tmp/ns-template.yaml"
+must_render --set scale.enabled=true --set namespace_mapping.template=shared-tasks
+must_render --set namespaces.enabled=false --set low_privilege=true
+must_render --set scale.enabled=false --set namespaces.enabled=false
 
 # useRuntimeCredentials stands in for the writer only in the dogfood org.
 must_fail "dogfood org only" -f "$tmp/secure.yaml" --set scale.fixWriter.secretName= --set scale.config.fix.enabled=true \
@@ -249,11 +323,28 @@ done
 
 # Writes stay off on GCP and Azure unless the values say the bucket deny is in place.
 for cloud in gcp azure; do
-  for on in scale.config.fix.enabled=true scale.jobs.image.repository=scale-job; do
-    must_fail "not available on $cloud yet" -f "$tmp/secure.yaml" --set "$on" --set provider=$cloud
-    must_render -f "$tmp/secure.yaml" --set "$on" --set provider=$cloud --set scale.storageDenyConfigured=true
-  done
+  must_fail "not available on $cloud yet" -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true --set provider=$cloud
+  must_render -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true --set provider=$cloud --set scale.storageDenyConfigured=true
 done
+# M5: the cloud also comes from the storage settings: custom stow storage of kind azure or google
+# (the chart takes Azure as storage.provider=custom; storage.provider=azure fails "invalid provider"), and a metadata prefix on Azure Blob storage or GCS.
+azure_custom=(--set storage.provider=custom --set storage.custom.type=stow --set storage.custom.stow.kind=azure \
+  --set storage.custom.stow.config.account=acct)
+google_custom=(--set storage.provider=custom --set storage.custom.type=stow --set storage.custom.stow.kind=google)
+must_fail "not available on azure yet" -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true "${azure_custom[@]}"
+must_fail "not available on gcp yet" -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true "${google_custom[@]}"
+must_fail "not available on azure yet" -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true \
+  --set storage.metadataPrefix=abfs://c@acct.dfs.core.windows.net
+must_fail "not available on gcp yet" -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true --set storage.metadataPrefix=gs://bucket
+must_render -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true "${azure_custom[@]}" --set scale.storageDenyConfigured=true
+must_render -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true "${google_custom[@]}" --set scale.storageDenyConfigured=true
+must_render -f "$tmp/secure.yaml" "${azure_custom[@]}"
+expect scaleconfig "cloud: azure"
+must_render -f "$tmp/secure.yaml" "${google_custom[@]}"
+expect scaleconfig "cloud: gcp"
+must_render -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true --set storage.provider=custom --set storage.custom.type=stow \
+  --set storage.custom.stow.kind=s3
+expect_not scaleconfig "cloud:"
 must_fail "not available on gcp yet" -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true --set storage.provider=gcs --set storage.gcp.projectId=p
 must_render -f "$tmp/secure.yaml" --set provider=gcp
 must_render -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true --set provider=aws
