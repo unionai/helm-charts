@@ -22,6 +22,14 @@ cm=templates/prometheus/configmap.yaml
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/metrics-drop.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 failures=0
+# The warning is about Scale's series, so it renders only with Scale on (review 64 item 4). The
+# NOTES and warning cases run with Scale on unless they say otherwise.
+cat > "$tmp/scale.yaml" <<'YAML'
+singleNamespace: false
+scale:
+  enabled: true
+  callerAuth: {secretName: scale-caller}
+YAML
 
 # check NAME WANT_QUEUES HELM_ARGS...: renders the ConfigMap and checks that it has WANT_QUEUES
 # remote_write queues and that each one has the drop rule for scale_.* in its write_relabel_configs.
@@ -89,7 +97,7 @@ fi
 warning() {
   local name=$1 want=$2
   shift 2
-  if ! helm template t "$chart" -f "$values" "$@" >"$tmp/manifests" 2>"$tmp/err"; then
+  if ! helm template t "$chart" -f "$values" -f "$tmp/scale.yaml" "$@" >"$tmp/manifests" 2>"$tmp/err"; then
     echo "FAIL [warning: $name]: render failed"; cat "$tmp/err"; failures=$((failures + 1)); return
   fi
   awk '/^# Source: /{p=index($0, "templates/prometheus/scale-metrics-warning.yaml") > 0; next} /^---/{p=0} p' \
@@ -120,7 +128,7 @@ notes() {
   local name=$1 want=$2
   shift 2
   warning "$name" "$want" "$@"
-  if ! KUBECONFIG=/dev/null helm install t "$chart" -f "$values" --dry-run=client "$@" >"$tmp/out" 2>"$tmp/err"; then
+  if ! KUBECONFIG=/dev/null helm install t "$chart" -f "$values" -f "$tmp/scale.yaml" --dry-run=client "$@" >"$tmp/out" 2>"$tmp/err"; then
     echo "FAIL [notes: $name]: render failed"; cat "$tmp/err"; failures=$((failures + 1)); return
   fi
   sed -n '/^NOTES:$/,$p' "$tmp/out" >"$tmp/notes"
@@ -170,6 +178,12 @@ notes "both at once" "$(printf '%s\n%s' \
   "monitoring.prometheus.prometheusSpec.remoteWrite[0] https://kp.example/push" \
   "prometheus.server.remoteWrite[0] https://amp.example/api/v1/remote_write")" \
   --set monitoring.enabled=true --set-json "monitoring.prometheus.prometheusSpec.remoteWrite=[$kp_own]" \
+  --set "$kps" --set-json "prometheus.server.remoteWrite=[$own]"
+
+# Scale off: no Scale series exist, so no warning in NOTES or the manifests, whatever the queues.
+notes "Scale off, kube-prometheus-stack queue without the drop" none --set scale.enabled=false \
+  --set monitoring.enabled=true --set-json "monitoring.prometheus.prometheusSpec.remoteWrite=[$kp_own]"
+notes "Scale off, emptied override, own queue without the drop" none --set scale.enabled=false \
   --set "$kps" --set-json "prometheus.server.remoteWrite=[$own]"
 
 # A queue's URL is named without the user, password or query it may carry (in NOTES and in the

@@ -3880,8 +3880,15 @@ scale:
   # no RPCs, so only the chart's Prometheus and metricsFrom reach it, on its debug port.
   runtimeNetworkPolicy:
     enabled: true
-    # -- Extra NetworkPolicyPeers allowed to scrape the runtime's debug port.
-    metricsFrom: []
+    # -- NetworkPolicyPeers allowed to scrape the runtime's debug port besides the chart's
+    # Prometheus. The default admits only the Prometheus pods of the monitoring namespace.
+    metricsFrom:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: monitoring
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: prometheus
   # -- Keys merged into the scale config section (unionai/cloud scale/config/config.go), e.g.
   # projects, shadow. Put notification settings under scale.notify and code change settings under
   # scale.git, not here. Fixes are under config.fix (scale/config/fix.go): off, and for no org,
@@ -3997,11 +4004,15 @@ scale:
     # -- Extra NetworkPolicyPeers allowed to reach the proxy.
     from: []
     # -- NetworkPolicyPeers allowed to scrape the debug port besides the operator and the chart's
-    # Prometheus.
+    # Prometheus. The debug port serves the profiler, whose heap profile holds the proxy's keys, so
+    # the default admits only the Prometheus pods of the monitoring namespace, not every pod there.
     metricsFrom:
       - namespaceSelector:
           matchLabels:
             kubernetes.io/metadata.name: monitoring
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: prometheus
   # -- GCP and Azure only: the deny on Scale's bucket for every identity but Scale's and the
   # operator proxy's is in place (scale/README.md, Scale's bucket, step 4). Fixes and pushes
   # are refused there without it. The cloud comes from provider, else from the storage settings

@@ -39,8 +39,10 @@ and never shows NOTES. It warns and never fails the render (owner decisions 2026
 {{- regexReplaceAll "[?#].*$" $url "" }}
 {{- end -}}
 
-{{- /* One line per remote_write that would ship scale_* metrics: "<values path>[i] <url>". */ -}}
+{{- /* One line per remote_write that would ship scale_* metrics: "<values path>[i] <url>".
+       Nothing with Scale off: no scale_* series exist then. */ -}}
 {{- define "dataplane.scaleMetrics.leaks" -}}
+{{- if (.Values.scale | default dict).enabled }}
 {{- $mon := .Values.monitoring | default dict }}
 {{- if and $mon.enabled (dig "prometheus" "enabled" true $mon) }}
 {{- $kpQueues := dig "prometheus" "prometheusSpec" "remoteWrite" list $mon }}
@@ -61,6 +63,7 @@ and never shows NOTES. It warns and never fails the render (owner decisions 2026
 {{- if not (kindIs "map" $rw) }}{{ $rw = dict }}{{ end }}
 {{- if not (include "dataplane.scaleMetrics.hasDrop" (dict "rules" (get $rw "write_relabel_configs") "key" "source_labels")) }}
 - prometheus.server.remoteWrite[{{ $i }}] {{ include "dataplane.scaleMetrics.safeUrl" (get $rw "url") }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

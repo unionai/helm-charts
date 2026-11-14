@@ -146,6 +146,15 @@ expect_not() {
   local where="$1" want="$2"
   if "$where" | grep -F -- "$want" >/dev/null; then echo "FAIL: $where has \"$want\""; failures=$((failures + 1)); fi
 }
+# expect_monitoring_peer <where>: the part holds the monitoring namespace as one peer together with
+# Prometheus's pod selector (review 64 item 2), not the whole namespace. Indentation is stripped
+# and lines joined with "|", so a "- " starts a new peer.
+monitoring_peer='- namespaceSelector:|matchLabels:|kubernetes.io/metadata.name: monitoring|podSelector:|matchLabels:|app.kubernetes.io/name: prometheus|'
+expect_monitoring_peer() {
+  if ! "$1" | sed 's/^ *//' | tr '\n' '|' | grep -F -- "$monitoring_peer" >/dev/null; then
+    echo "FAIL: $1 lacks the monitoring namespace's peer with Prometheus's pod selector"; failures=$((failures + 1))
+  fi
+}
 
 # Off by default: nothing of Scale renders.
 for text in "app: scale" "/etc/union/scale-" "SCALE_"; do
@@ -185,6 +194,12 @@ httprule() { proxypolicy | awk '/- from:/{n++} n==1'; }
 debugrule() { proxypolicy | awk '/- from:/{n++} n==2'; }
 expect_not httprule "app.kubernetes.io/name: prometheus"
 expect_not debugrule "union-dataproxy"
+# Review 64 item 2: the debug port serves the profiler, whose heap profile holds the proxy's keys,
+# so of the monitoring namespace only its Prometheus is admitted, not Grafana or exporters.
+expect_monitoring_peer debugrule
+if [ "$(debugrule | grep -c "namespaceSelector" || true)" != 1 ]; then
+  echo "FAIL: the proxy's debug rule has a namespaceSelector peer besides the monitoring one"; failures=$((failures + 1))
+fi
 must_render -f "$tmp/agent.yaml"
 expect proxypolicy "app: scale-agent"
 expect_not debugrule "scale-agent"
@@ -196,6 +211,18 @@ must_fail "list the ingress controller in scale.proxyNetworkPolicy.from" --set s
 must_render --set scale.enabled=true --set ingress.enabled=true \
   --set-json 'scale.proxyNetworkPolicy.from=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"ingress"}}}]'
 expect httprule "kubernetes.io/metadata.name: ingress"
+# Review 64 item 6: the chart's ingress-nginx is admitted by its name label in the release
+# namespace, so another name or namespace for it needs scale.proxyNetworkPolicy.from too.
+must_fail "list the ingress controller in scale.proxyNetworkPolicy.from" --set scale.enabled=true --set ingress.enabled=true \
+  --set ingress-nginx.enabled=true --set ingress-nginx.namespaceOverride=ingress
+must_fail "list the ingress controller in scale.proxyNetworkPolicy.from" --set scale.enabled=true --set ingress.enabled=true \
+  --set ingress-nginx.enabled=true --set ingress-nginx.nameOverride=nginx
+must_render --set scale.enabled=true --set ingress.enabled=true --set ingress-nginx.enabled=true --set ingress-nginx.namespaceOverride=ingress \
+  --set-json 'scale.proxyNetworkPolicy.from=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"ingress"}}}]'
+# The defaults, written out, still match the labels the policy admits.
+must_render --set scale.enabled=true --set ingress.enabled=true --set ingress-nginx.enabled=true \
+  --set ingress-nginx.namespaceOverride=union --set ingress-nginx.nameOverride=ingress-nginx
+expect httprule "app.kubernetes.io/name: ingress-nginx"
 
 # M2: a NetworkPolicy on the Scale runtime, on by default: only the chart's Prometheus and
 # metricsFrom, on the debug port the deployment names; the profiler only with scale.enablePprof.
@@ -207,7 +234,13 @@ expect runtimepolicy "app: scale"
 expect runtimepolicy "- Ingress"
 expect runtimepolicy "app.kubernetes.io/name: prometheus"
 expect runtimepolicy "port: debug"
-expect_not runtimepolicy "namespaceSelector"
+# Review 64 item 2: a Prometheus in the monitoring namespace scrapes the runtime too, as one peer
+# with its pod selector; never the release namespace.
+expect_monitoring_peer runtimepolicy
+expect_not runtimepolicy "kubernetes.io/metadata.name: union"
+if [ "$(runtimepolicy | grep -c "namespaceSelector" || true)" != 1 ]; then
+  echo "FAIL: the runtime policy has a namespaceSelector peer besides the monitoring one"; failures=$((failures + 1))
+fi
 expect runtimedeploy "name: debug"
 expect runtimedeploy "containerPort: 10254"
 expect_not scaleconfig "enablePprof"
@@ -297,6 +330,31 @@ namespace_mapping:
 YAML
 must_render --set scale.enabled=true -f "$tmp/ns-template.yaml"
 must_render --set scale.enabled=true --set namespace_mapping.template=shared-tasks
+# Review 64 item 3: a template per project or domain fails too when some project or domain makes it
+# the release namespace or the secret store namespace; each placeholder stands for any name. An
+# empty template is the operator's default, {{ project }}-{{ domain }}.
+cat > "$tmp/ns-project.yaml" <<'YAML'
+namespace_mapping:
+  template: '{{`{{ project }}`}}'
+YAML
+cat > "$tmp/ns-tight.yaml" <<'YAML'
+namespace_mapping:
+  template: '{{`{{project}}`}}-{{`{{domain}}`}}'
+YAML
+cat > "$tmp/ns-prefix.yaml" <<'YAML'
+namespace_mapping:
+  template: 'tasks-{{`{{ project }}`}}-{{`{{ domain }}`}}'
+YAML
+must_fail "$single" --set scale.enabled=true -f "$tmp/ns-project.yaml"
+must_fail "$single" --set scale.enabled=true -f "$tmp/ns-template.yaml" --namespace union-production
+must_fail "$single" --set scale.enabled=true -f "$tmp/ns-tight.yaml" --namespace union-production
+must_fail "$single" --set scale.enabled=true --namespace union-production
+must_fail "$single" --set scale.enabled=true -f "$tmp/ns-template.yaml" --set proxy.secretManager.namespace=union-secrets
+must_fail "$single" --set scale.enabled=true --set proxy.secretManager.namespace=union-secrets
+must_render --set scale.enabled=true -f "$tmp/ns-prefix.yaml" --namespace union-production --set proxy.secretManager.namespace=union-secrets
+must_fail "$single" --set scale.enabled=true -f "$tmp/ns-project.yaml" --namespace union-production
+# The message names the template and the namespace it can produce.
+must_fail "template {{ project }}-{{ domain }} puts a project's tasks in union-production" --set scale.enabled=true --namespace union-production
 must_render --set singleNamespace=true
 must_render --set scale.enabled=false --set singleNamespace=null
 
@@ -323,6 +381,13 @@ expect scaleconfig "dailyDiagnoses: -1"
 must_render -f "$tmp/agent.yaml"
 expect scaleconfig "dailyDiagnoses: 20"
 must_fail "not scale.config.git" --set scale.enabled=true --set scale.config.git.enabled=true
+# Review 64 item 8: the runtime's agent section turns the agent on only with scale.agent, whose
+# guards (signing key, view-only app, app serving, model) then apply. Any spelling of enabled.
+must_fail "scale.config.agent.enabled needs scale.agent.enabled" --set scale.enabled=true --set scale.config.agent.enabled=true
+must_fail "scale.config.agent.enabled needs scale.agent.enabled" --set scale.enabled=true --set scale.config.agent.Enabled=true \
+  --set scale.config.agent.url=http://example
+must_render --set scale.enabled=true --set scale.config.agent.enabled=false
+must_render -f "$tmp/agent.yaml" --set scale.config.agent.enabled=true
 for spelling in scale.config.Fix.enabled scale.config.FIX.enabled scale.config.fix.Enabled scale.config.Git.enabled scale.git.Enabled; do
   must_fail "only read lowercase" -f "$tmp/secure.yaml" --set "$spelling=true"
 done
@@ -354,6 +419,20 @@ expect_not scaleconfig "cloud:"
 must_fail "not available on gcp yet" -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true --set storage.provider=gcs --set storage.gcp.projectId=p
 must_render -f "$tmp/secure.yaml" --set provider=gcp
 must_render -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true --set provider=aws
+# Review 64 item 7: provider and the storage settings must name the same cloud, or fixes would run
+# on Azure or GCP storage as if on AWS, with no deny on Scale's bucket; and the stow keys are read
+# in any case, as the storage config's loader does.
+must_fail "provider is aws but the storage settings name azure" -f "$tmp/secure.yaml" --set provider=aws "${azure_custom[@]}"
+must_fail "provider is aws but the storage settings name gcp" -f "$tmp/secure.yaml" --set provider=aws "${google_custom[@]}"
+must_fail "provider is aws but the storage settings name gcp" -f "$tmp/secure.yaml" --set provider=aws --set storage.metadataPrefix=gs://bucket
+must_render -f "$tmp/secure.yaml" --set provider=azure "${azure_custom[@]}"
+expect scaleconfig "cloud: azure"
+must_render -f "$tmp/secure.yaml" --set provider=gcp "${google_custom[@]}"
+expect scaleconfig "cloud: gcp"
+azure_custom_kind=(--set storage.provider=custom --set storage.custom.type=stow --set storage.custom.stow.Kind=azure \
+  --set storage.custom.stow.config.account=acct)
+must_fail "not available on azure yet" -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true "${azure_custom_kind[@]}"
+must_fail "provider is aws but the storage settings name azure" -f "$tmp/secure.yaml" --set provider=aws "${azure_custom_kind[@]}"
 
 # Each requirement on its own.
 must_fail "proxyNetworkPolicy" -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true --set scale.proxyNetworkPolicy.enabled=false

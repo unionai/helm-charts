@@ -98,24 +98,37 @@ on Azure Blob storage (abfs, abfss, azblob, wasb, wasbs) or GCS (gs). Empty when
 the Scale runtime takes as the usage price table's own cloud (AWS).
 */}}
 {{- define "scale.cloud" -}}
-{{- $provider := tpl (.Values.provider | default "" | toString) . -}}
+{{- $provider := lower (tpl (.Values.provider | default "" | toString) .) -}}
 {{- $storage := tpl (.Values.storage.provider | default "" | toString) . -}}
-{{- $custom := .Values.storage.custom | default dict -}}
-{{- $stowKind := lower (tpl (dig "stow" "kind" "" $custom | toString) .) -}}
-{{- $scheme := lower (regexFind "^[A-Za-z0-9+.-]+://" (tpl (.Values.storage.metadataPrefix | default "" | toString) .)) | trimSuffix "://" -}}
-{{- if $provider -}}
-{{- lower $provider -}}
-{{- else if has $storage (list "gcs" "gcp") -}}
-gcp
-{{- else if and (eq $storage "custom") (eq $stowKind "azure") -}}
-azure
-{{- else if and (eq $storage "custom") (eq $stowKind "google") -}}
-gcp
-{{- else if has $scheme (list "abfs" "abfss" "azblob" "wasb" "wasbs") -}}
-azure
-{{- else if eq $scheme "gs" -}}
-gcp
+{{- /* The stow keys in any case: the storage config's loader matches keys case-insensitively, so
+       Kind: azure is Azure storage too. */ -}}
+{{- $stow := dict -}}
+{{- range $k, $v := (.Values.storage.custom | default dict) -}}
+{{- if and (eq (lower $k) "stow") (kindIs "map" $v) }}{{ $stow = $v }}{{ end -}}
 {{- end -}}
+{{- $stowKind := "" -}}
+{{- range $k, $v := $stow -}}
+{{- if eq (lower $k) "kind" }}{{ $stowKind = lower (tpl (toString $v) $) }}{{ end -}}
+{{- end -}}
+{{- $scheme := lower (regexFind "^[A-Za-z0-9+.-]+://" (tpl (.Values.storage.metadataPrefix | default "" | toString) .)) | trimSuffix "://" -}}
+{{- $fromStorage := "" -}}
+{{- if has $storage (list "gcs" "gcp") -}}
+{{- $fromStorage = "gcp" -}}
+{{- else if and (eq $storage "custom") (eq $stowKind "azure") -}}
+{{- $fromStorage = "azure" -}}
+{{- else if and (eq $storage "custom") (eq $stowKind "google") -}}
+{{- $fromStorage = "gcp" -}}
+{{- else if has $scheme (list "abfs" "abfss" "azblob" "wasb" "wasbs") -}}
+{{- $fromStorage = "azure" -}}
+{{- else if eq $scheme "gs" -}}
+{{- $fromStorage = "gcp" -}}
+{{- end -}}
+{{- /* provider wins over the storage settings, so a provider that names another cloud than the
+       storage would price issues for the wrong cloud and skip the write guard on GCP and Azure. */ -}}
+{{- if and $provider $fromStorage (ne $provider $fromStorage) -}}
+{{- fail (printf "scale: provider is %s but the storage settings name %s: Scale prices issues and checks the bucket deny for one cloud. Correct provider or the storage settings" $provider $fromStorage) -}}
+{{- end -}}
+{{- $provider | default $fromStorage -}}
 {{- end -}}
 
 {{/*
@@ -224,9 +237,27 @@ for (unionai/cloud scale/README.md, Security).
 {{- if include "singleNamespace" . }}
 {{- fail (printf "scale: Scale needs tasks in namespaces of their own (singleNamespace: false; low_privilege is its older name). In single-namespace mode tasks run in %s beside Scale's signing, caller and model keys and the operator proxy, and a task could read them. Leave scale.enabled off" .Release.Namespace) }}
 {{- end }}
+{{- /* Each placeholder ({{ project }}, {{ domain }}) stands for any project or domain name, so the
+       template fails when some project or domain makes it the release namespace or the secret
+       store namespace (project union, domain production gives union-production). An empty
+       template is the operator's default, {{ project }}-{{ domain }}. */}}
 {{- $taskNamespace := tpl (include "dataplane.namespaceTemplate" . | toString) . | trim }}
-{{- if and $taskNamespace (not (contains "{{" $taskNamespace)) (has $taskNamespace (list .Release.Namespace (include "proxy.secretsNamespace" . | trim))) }}
-{{- fail (printf "scale: Scale needs tasks in namespaces of their own, but namespace_mapping.template puts every task in %s, beside Scale's keys or the operator proxy's secret store. Use a template per project and domain, or leave scale.enabled off" $taskNamespace) }}
+{{- $placeholder := "\\{\\{[^}]*\\}\\}" }}
+{{- if not $taskNamespace }}
+{{- $taskNamespace = "{{ project }}-{{ domain }}" }}
+{{- end }}
+{{- $literals := list }}
+{{- range (regexSplit $placeholder $taskNamespace -1) }}
+{{- $literals = append $literals (regexQuoteMeta .) }}
+{{- end }}
+{{- $pattern := printf "^%s$" (join "[a-z0-9-]+" $literals) }}
+{{- range $ns := uniq (list .Release.Namespace (include "proxy.secretsNamespace" . | trim)) }}
+{{- if regexMatch $pattern $ns }}
+{{- if regexMatch $placeholder $taskNamespace }}
+{{- fail (printf "scale: Scale needs tasks in namespaces of their own, but namespace_mapping.template %s puts a project's tasks in %s for some project or domain name, beside Scale's keys or the operator proxy's secret store. Use a template no project or domain can turn into %s (a fixed prefix such as tasks-{{ project }}-{{ domain }}), or leave scale.enabled off" $taskNamespace $ns $ns) }}
+{{- end }}
+{{- fail (printf "scale: Scale needs tasks in namespaces of their own, but namespace_mapping.template puts every task in %s, beside Scale's keys or the operator proxy's secret store. Use a template per project and domain, or leave scale.enabled off" $ns) }}
+{{- end }}
 {{- end }}
 {{- /* The runtime's config loader matches keys case-insensitively, so Fix.Enabled would turn fixes
        on while every check below, which reads fix.enabled, saw nothing. Refuse any other spelling. */}}
@@ -249,10 +280,15 @@ for (unionai/cloud scale/README.md, Security).
 {{- fail "scale: remove scale.config.jobs: jobs are not available in this chart yet, and the runtime would turn them on around the chart's guards" }}
 {{- end }}
 {{- /* The proxy NetworkPolicy admits named pods only. The chart's ingress routes to the proxy, so
-       its controller must be admitted: the chart's own ingress-nginx is, any other is listed in
+       its controller must be admitted: the chart's own ingress-nginx is, by its name label in the
+       release namespace; any other, or the chart's under another name or namespace, is listed in
        scale.proxyNetworkPolicy.from. */}}
-{{- if and (include "scale.proxyNetworkPolicy.rendered" .) .Values.ingress.enabled (not (index .Values "ingress-nginx").enabled) (not .Values.scale.proxyNetworkPolicy.from) }}
-{{- fail "scale: the proxy NetworkPolicy admits named pods only, and ingress.enabled routes to the operator proxy: list the ingress controller in scale.proxyNetworkPolicy.from (e.g. its namespace), or turn on the chart's ingress-nginx" }}
+{{- $nginx := index .Values "ingress-nginx" | default dict }}
+{{- $nginxNamespace := tpl (toString ($nginx.namespaceOverride | default "")) . }}
+{{- $nginxName := tpl (toString ($nginx.nameOverride | default "")) . }}
+{{- $nginxAdmitted := and $nginx.enabled (has $nginxNamespace (list "" .Release.Namespace)) (has $nginxName (list "" "ingress-nginx")) }}
+{{- if and (include "scale.proxyNetworkPolicy.rendered" .) .Values.ingress.enabled (not $nginxAdmitted) (not .Values.scale.proxyNetworkPolicy.from) }}
+{{- fail "scale: the proxy NetworkPolicy admits named pods only, and ingress.enabled routes to the operator proxy: list the ingress controller in scale.proxyNetworkPolicy.from (e.g. its namespace), or turn on the chart's ingress-nginx without ingress-nginx.nameOverride or ingress-nginx.namespaceOverride" }}
 {{- end }}
 {{- range $section := list (dig "fix" dict $config) (dig "git" dict $config) (.Values.scale.git | default dict) }}
 {{- range $k, $v := $section }}
