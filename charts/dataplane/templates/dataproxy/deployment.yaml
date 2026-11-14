@@ -31,8 +31,13 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "dataproxy.serviceAccountName" . }}
+      {{- $podSecurityContext := deepCopy (.Values.dataproxy.podSecurityContext | default dict) }}
+      {{- if and .Values.scale.enabled .Values.scale.callerAuth.secretName (not (hasKey $podSecurityContext "fsGroup")) }}
+      {{- /* The caller key is mounted 0440 and root-owned; fsGroup lets the dataproxy read it. */}}
+      {{- $_ := set $podSecurityContext "fsGroup" 65532 }}
+      {{- end }}
       securityContext:
-        {{- toYaml .Values.dataproxy.podSecurityContext | nindent 8 }}
+        {{- toYaml $podSecurityContext | nindent 8 }}
       volumes:
         - name: config-volume
           configMap:
@@ -41,6 +46,16 @@ spec:
         - name: secret-volume
           secret:
             secretName: {{ .Values.operator.secretName }}
+        {{- end }}
+        {{- if and .Values.scale.enabled .Values.scale.callerAuth.secretName }}
+        {{- /* The key it signs Scale caller assertions with, the same the operator proxy checks. */}}
+        - name: scale-caller
+          secret:
+            secretName: {{ .Values.scale.callerAuth.secretName }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.scale.callerAuth.key }}
+                path: {{ .Values.scale.callerAuth.key }}
         {{- end }}
         {{- with .Values.dataproxy.additionalVolumes -}}
         {{ tpl (toYaml .) $ | nindent 8 }}
@@ -60,6 +75,11 @@ spec:
             {{- if .Values.secrets.admin.enable }}
             - mountPath: /etc/union/secret
               name: secret-volume
+            {{- end }}
+            {{- if and .Values.scale.enabled .Values.scale.callerAuth.secretName }}
+            - mountPath: /etc/union/scale-caller
+              name: scale-caller
+              readOnly: true
             {{- end }}
             {{- with .Values.dataproxy.additionalVolumeMounts -}}
             {{ tpl (toYaml .) $ | nindent 12 }}

@@ -1,5 +1,19 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+Move this section under the next version's heading when `version` is bumped.
+
+### Scale refuses single-namespace mode
+
+**Breaking (Scale only).** With `scale.enabled: true` the render fails unless tasks run in
+namespaces of their own: set `singleNamespace: false` (or `low_privilege: false`) and
+`namespaces.enabled: true` (or `clusterresourcesync.enabled`). In single-namespace mode, the
+chart's default, tasks would run beside Scale's keys and the operator proxy. The render also
+fails when `namespace_mapping.template` can produce the release namespace or the proxy's secret
+store namespace (for example release namespace `union-production` with the default
+`{{ project }}-{{ domain }}`). Releases with Scale off are unchanged. See README, Scale.
+
 ## 2026.11.7
 
 `version` and `appVersion` move `2026.11.6` → `2026.11.7`, picking up the new
