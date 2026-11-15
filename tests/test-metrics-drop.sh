@@ -208,6 +208,22 @@ notes "both at once" "$(printf '%s\n%s' \
   --set monitoring.enabled=true --set-json "monitoring.prometheus.prometheusSpec.remoteWrite=[$kp_own]" \
   --set "$kps" --set-json "prometheus.server.remoteWrite=[$own]"
 
+# A rename of scale_* before the drop defeats it: such a queue is named (review N4). A drop first,
+# or after rules that write no __name__, still counts.
+kp_rename_first='{"url":"https://kp-rename.example/push","writeRelabelConfigs":[{"sourceLabels":["__name__"],"regex":"scale_(.*)","targetLabel":"__name__","replacement":"x_${1}","action":"replace"},{"sourceLabels":["__name__"],"regex":"scale_.*","action":"drop"}]}'
+kp_labelmap_first='{"url":"https://kp-labelmap.example/push","writeRelabelConfigs":[{"regex":"(.*)","action":"labelmap"},{"sourceLabels":["__name__"],"regex":"scale_.*","action":"drop"}]}'
+kp_other_first='{"url":"https://kp-other.example/push","writeRelabelConfigs":[{"sourceLabels":["job"],"regex":"x","action":"drop"},{"sourceLabels":["__name__"],"regex":"scale_.*","action":"drop"}]}'
+own_rename_first='{"url":"https://amp-rename.example/push","write_relabel_configs":[{"source_labels":["__name__"],"regex":"scale_(.*)","target_label":"__name__","replacement":"x_${1}"},{"source_labels":["__name__"],"regex":"scale_.*","action":"drop"}]}'
+notes "kube-prometheus-stack: a rename or labelmap before the drop" "$(printf '%s\n%s' \
+  "monitoring.prometheus.prometheusSpec.remoteWrite[0] https://kp-rename.example/push" \
+  "monitoring.prometheus.prometheusSpec.remoteWrite[1] https://kp-labelmap.example/push")" \
+  --set monitoring.enabled=true --set-json "monitoring.prometheus.prometheusSpec.remoteWrite=[$kp_rename_first,$kp_labelmap_first,$kp_other_first]"
+if grep -qF "kp-other.example" "$tmp/notes"; then
+  echo "FAIL [notes]: a queue whose earlier rules write no __name__ is named"; failures=$((failures + 1))
+fi
+notes "emptied override, own queue with a rename before the drop" "prometheus.server.remoteWrite[0] https://amp-rename.example/push" \
+  --set "$kps" --set-json "prometheus.server.remoteWrite=[$own_rename_first]"
+
 # Scale off: no Scale series exist, so no warning in NOTES or the manifests, whatever the queues.
 notes "Scale off, kube-prometheus-stack queue without the drop" none --set scale.enabled=false \
   --set monitoring.enabled=true --set-json "monitoring.prometheus.prometheusSpec.remoteWrite=[$kp_own]"

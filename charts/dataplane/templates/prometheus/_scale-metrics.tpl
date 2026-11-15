@@ -14,17 +14,26 @@ and never shows NOTES. It warns and never fails the render (owner decisions 2026
 18:40 IST). Checked by tests/test-metrics-drop.sh.
 */ -}}
 
-{{- /* "true" when the rules list (dict "rules" <list> "key" <source labels key>) holds the drop:
-       action drop, regex scale_.*, source labels [__name__]. */ -}}
+{{- /* "true" when the rules list (dict "rules" <list> "key" <source labels key>) holds the drop
+       (action drop, regex scale_.*, source labels [__name__]) before any rule that can rename a
+       series: a rule that writes __name__ (any action with that target label) or a labelmap. A
+       rename first defeats the drop (review N4). The target label key follows the source labels
+       key: targetLabel for kube-prometheus-stack's camelCase, target_label for Prometheus's. */ -}}
 {{- define "dataplane.scaleMetrics.hasDrop" -}}
 {{- $key := .key }}
+{{- $targetKey := ternary "targetLabel" "target_label" (eq $key "sourceLabels") }}
 {{- $found := false }}
+{{- $renamed := false }}
 {{- $rules := .rules }}
 {{- if not (kindIs "slice" $rules) }}{{ $rules = list }}{{ end }}
 {{- range $r := $rules }}
 {{- if kindIs "map" $r }}
-{{- if and (eq (lower (toString (get $r "action"))) "drop") (eq (toString (get $r "regex")) "scale_.*") (eq (toString (get $r $key)) "[__name__]") }}
+{{- $action := lower (toString (get $r "action")) }}
+{{- if and (not $renamed) (eq $action "drop") (eq (toString (get $r "regex")) "scale_.*") (eq (toString (get $r $key)) "[__name__]") }}
 {{- $found = true }}
+{{- end }}
+{{- if or (eq $action "labelmap") (eq (toString (get $r $targetKey)) "__name__") }}
+{{- $renamed = true }}
 {{- end }}
 {{- end }}
 {{- end }}
