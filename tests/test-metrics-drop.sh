@@ -91,6 +91,34 @@ if [ "$(grep -cx '        regex: scale_.\*' "$tmp/out")" != 1 ]; then
   echo "FAIL: the drop rule is not there exactly once"; failures=$((failures + 1))
 fi
 
+# Security L9: the drop is each queue's first rule, so a rule of the values that renames scale_*
+# series (or drops __name__ matching) cannot ship them under another name before the drop runs.
+own_rename='{"url":"https://amp.example/api/v1/remote_write","write_relabel_configs":[{"source_labels":["__name__"],"regex":"scale_(.*)","target_label":"__name__","replacement":"x_${1}","action":"replace"}]}'
+helm template t "$chart" -f "$values" --show-only "$cm" --set zero_trust.enabled=true \
+  --set-json "prometheus.server.remoteWrite=[$own_rename]" >"$tmp/out" 2>"$tmp/err" || { cat "$tmp/err"; failures=$((failures + 1)); }
+# One line per queue: the first rule's action and regex.
+awk '
+  /^    remote_write:$/ { in_rw = 1; next }
+  in_rw && /^    [a-z_]+:/ { in_rw = 0 }
+  !in_rw { next }
+  /^    - / { if (q) print q, first; q++; first = ""; rules = 0 }
+  /^      write_relabel_configs:$/ { rules = 1; next }
+  rules && /^      - / { if (first == "") { first = "rule"; take = 1 } else { take = 0 } }
+  rules && /^      [a-z_]+:/ { rules = 0 }
+  take && /^        action: / { first = first " " $2 }
+  take && /^      - action: / { first = first " " $3 }
+  take && /^        regex: / { first = first " " $2 }
+  END { if (q) print q, first }
+' "$tmp/out" >"$tmp/first"
+if [ "$(wc -l <"$tmp/first" | tr -d " ")" != 2 ]; then
+  echo "FAIL: want 2 queues with the rename rule:"; cat "$tmp/first"; failures=$((failures + 1))
+fi
+while read -r q first; do
+  if [ "$first" != "rule drop scale_.*" ]; then
+    echo "FAIL: queue $q's first write_relabel_configs rule is \"$first\", not the scale_.* drop"; failures=$((failures + 1))
+  fi
+done <"$tmp/first"
+
 # warning NAME WANT HELM_ARGS...: the same warning in the rendered manifests, which is all ArgoCD
 # (helm template) shows: a ConfigMap, union-scale-metrics-warning, whose union.ai/warning
 # annotation says what is wrong and whose data names each queue. WANT as for notes.

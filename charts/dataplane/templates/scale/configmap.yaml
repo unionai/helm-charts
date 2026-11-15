@@ -27,14 +27,6 @@ data:
       {{- with .Values.scale.signing.secretName }}
       signingKeyPath: /etc/scale/signing/{{ $.Values.scale.signing.key }}
       {{- end }}
-      {{- with .Values.scale.notify }}
-      {{- $notify := omit . "secretName" }}
-      {{- if not $notify.consoleURL }}
-      {{- $_ := set $notify "consoleURL" (printf "https://%s" (include "dataplane.cp.host" $)) }}
-      {{- end }}
-      notify:
-        {{- toYaml $notify | nindent 8 }}
-      {{- end }}
       {{- if .Values.scale.enablePprof }}
       {{- /* The Go profiler on the debug port, for a debugging session only (T-47). Only the chart's
              Prometheus and metricsFrom reach that port (networkpolicy-runtime.yaml). */}}
@@ -70,27 +62,6 @@ data:
       {{- end }}
       {{- with $config }}
       {{- tpl (toYaml .) $ | nindent 6 }}
-      {{- end }}
-      {{- $git := .Values.scale.git | default dict }}
-      {{- if $git.enabled }}
-      git:
-        enabled: true
-        github:
-          appId: {{ $git.github.appId | int64 }}
-          installationId: {{ $git.github.installationId | default 0 | int64 }}
-          apiUrl: {{ $git.github.apiUrl | quote }}
-          webUrl: {{ $git.github.webUrl | quote }}
-          privateKeyPath: /etc/scale/github/{{ $git.privateKeySecret.key }}
-        {{- /* The rest of scale.git; scale.config.git is refused (templates/scale/_scale.tpl). */}}
-        {{- range $k := list "pollInterval" "authorName" "authorEmail" "maxFiles" "maxFileBytes" }}
-        {{- with get $git $k }}
-        {{ $k }}: {{ . | toJson }}
-        {{- end }}
-        {{- end }}
-        {{- with $git.sources }}
-        sources:
-          {{- toYaml . | nindent 10 }}
-        {{- end }}
       {{- end }}
     union:
       connection:

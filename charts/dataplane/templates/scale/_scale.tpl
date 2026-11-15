@@ -24,8 +24,13 @@ platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
+{{/*
+The org Scale's runtime and agent watch and serve: orgName, in lower case. The runtime compares a
+run's org with this one exactly, and the control plane's org names are lower case, so "Acme" must
+give "acme" or every run is dropped as another org's (security L8).
+*/}}
 {{- define "scale.org" -}}
-{{- tpl .Values.orgName . -}}
+{{- tpl .Values.orgName . | lower -}}
 {{- end -}}
 
 {{/*
@@ -177,15 +182,13 @@ true
 {{- end -}}
 
 {{/*
-"true" when Scale is set up to write: fixes, code pushes or jobs, turned on in any place the
-config can say so (scale.config.fix.enabled, scale.git.enabled, scale.config.git.enabled,
-scale.jobs.image.repository). Every guard that protects writes keys off this, so no setting can
-turn writes on around them.
+"true" when Scale is set up to write: fixes or jobs, turned on in any place the config can say so
+(scale.config.fix.enabled, scale.jobs.image.repository). Every guard that protects writes keys off
+this, so no setting can turn writes on around them.
 */}}
 {{- define "scale.writes" -}}
 {{- $config := .Values.scale.config | default dict -}}
-{{- $git := .Values.scale.git | default dict -}}
-{{- if or (dig "fix" "enabled" false $config) (dig "git" "enabled" false $config) (dig "enabled" false $git) (include "scale.jobs" .) -}}
+{{- if or (dig "fix" "enabled" false $config) (include "scale.jobs" .) -}}
 true
 {{- end -}}
 {{- end -}}
@@ -263,7 +266,7 @@ for (unionai/cloud scale/README.md, Security).
        on while every check below, which reads fix.enabled, saw nothing. Refuse any other spelling. */}}
 {{- $config := .Values.scale.config | default dict }}
 {{- range $k, $v := $config }}
-{{- if and (has (lower $k) (list "fix" "git" "jobs" "agent")) (ne $k (lower $k)) }}
+{{- if and (has (lower $k) (list "fix" "jobs" "agent")) (ne $k (lower $k)) }}
 {{- fail (printf "scale: write scale.config.%s as scale.config.%s; the guards only read lowercase" $k (lower $k)) }}
 {{- end }}
 {{- end }}
@@ -290,7 +293,7 @@ for (unionai/cloud scale/README.md, Security).
 {{- if and (include "scale.proxyNetworkPolicy.rendered" .) .Values.ingress.enabled (not $nginxAdmitted) (not .Values.scale.proxyNetworkPolicy.from) }}
 {{- fail "scale: the proxy NetworkPolicy admits named pods only, and ingress.enabled routes to the operator proxy: list the ingress controller in scale.proxyNetworkPolicy.from (e.g. its namespace), or turn on the chart's ingress-nginx without ingress-nginx.nameOverride or ingress-nginx.namespaceOverride" }}
 {{- end }}
-{{- range $section := list (dig "fix" dict $config) (dig "git" dict $config) (.Values.scale.git | default dict) }}
+{{- range $section := list (dig "fix" dict $config) }}
 {{- range $k, $v := $section }}
 {{- if and (eq (lower $k) "enabled") (ne $k "enabled") }}
 {{- fail (printf "scale: write %s as enabled; the guards only read lowercase" $k) }}
@@ -300,8 +303,18 @@ for (unionai/cloud scale/README.md, Security).
 {{- if and .Values.scale.signing.acceptUnsignedUntil (not .Values.scale.storageContainer) }}
 {{- fail "scale: scale.signing.acceptUnsignedUntil needs scale.storageContainer; in the metadata bucket a task pod could plant unsigned objects during the window" }}
 {{- end }}
-{{- if hasKey $config "git" }}
-{{- fail "scale: put code change settings under scale.git, not scale.config.git, so the GitHub App key is mounted and the guards apply" }}
+{{- /* The Scale runtime has no code pushes and no notifications any more (unionai/cloud
+       scale/config/config.go has neither section), so the chart mounts neither the GitHub App key
+       nor the notify secret. Settings for them, in any spelling, would do nothing: refuse them. */}}
+{{- range $k, $v := $config }}
+{{- if has (lower $k) (list "git" "notify") }}
+{{- fail (printf "scale: remove scale.config.%s: the Scale runtime has no code pushes or notifications" $k) }}
+{{- end }}
+{{- end }}
+{{- range $k := list "git" "notify" }}
+{{- if hasKey $.Values.scale $k }}
+{{- fail (printf "scale: remove scale.%s: the Scale runtime has no code pushes or notifications" $k) }}
+{{- end }}
 {{- end }}
 {{- if and .Values.scale.storageContainer (not .Values.storage.enableMultiContainer) }}
 {{- fail "scale: scale.storageContainer needs storage.enableMultiContainer, or Scale cannot reach its bucket" }}

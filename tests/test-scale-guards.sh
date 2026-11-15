@@ -137,6 +137,7 @@ policy() { source_of templates/scale/agent-networkpolicy.yaml; }
 service() { source_of templates/scale/agent-service.yaml; }
 proxyconfig() { source_of templates/operator/configmap.yaml; }
 scaleconfig() { source_of templates/scale/configmap.yaml; }
+scaledeploy() { source_of templates/scale/deployment.yaml; }
 proxydeploy() { source_of templates/operator/deployment-proxy.yaml; }
 expect() {
   local where="$1" want="$2"
@@ -162,7 +163,6 @@ for text in "app: scale" "/etc/union/scale-" "SCALE_"; do
 done
 must_render --set scale.enabled=true
 must_render -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true
-must_render -f "$tmp/secure.yaml" --set scale.git.enabled=true --set scale.git.github.appId=1
 
 # Scale needs a caller key or the proxy NetworkPolicy, whatever else is on.
 must_fail "callerAuth.secretName or scale.proxyNetworkPolicy.enabled" --set scale.enabled=true --set scale.callerAuth.secretName= --set scale.proxyNetworkPolicy.enabled=false
@@ -265,9 +265,7 @@ must_render -f "$tmp/secure.yaml" --set "$crm.clusterResourcesPrivate.app.isServ
 must_render --set "$crm.clusterResourcesPrivate.app.isServerless=true" --set "$crm.cluster_resources.isServerless=true"
 
 # Every way to turn writes on goes through the guards.
-for on in scale.config.fix.enabled scale.git.enabled; do
-  must_fail "scale.auth.appId" --set scale.enabled=true --set "$on=true"
-done
+must_fail "scale.auth.appId" --set scale.enabled=true --set scale.config.fix.enabled=true
 # H1, M4: jobs are not available in this chart. A job needs its own cloud credential, the jobs
 # network check and the model relay, which only the union-operator chart in unionai/cloud has, so
 # setting the job image fails the render with the reason, whatever else is set. No scale-job service
@@ -364,23 +362,11 @@ must_fail "dogfood org only" -f "$tmp/secure.yaml" --set scale.fixWriter.secretN
 must_render -f "$tmp/secure.yaml" --set scale.fixWriter.secretName= --set scale.config.fix.enabled=true \
   --set scale.config.fix.writer.useRuntimeCredentials=true --set global.ORG_NAME=dogfood
 
-# scale.git's commit author, poll interval and read limits reach the runtime's config; unset, the
-# runtime's defaults apply.
-git_on=(-f "$tmp/secure.yaml" --set scale.git.enabled=true --set scale.git.github.appId=1)
-must_render "${git_on[@]}" --set scale.git.authorName="Acme Bot" --set scale.git.authorEmail=bot@acme.com \
-  --set scale.git.pollInterval=30s --set scale.git.maxFiles=500 --set scale.git.maxFileBytes=2097152
-for want in 'authorName: "Acme Bot"' 'authorEmail: "bot@acme.com"' 'pollInterval: "30s"' 'maxFiles: 500' 'maxFileBytes: 2097152'; do
-  expect scaleconfig "$want"
-done
-must_render "${git_on[@]}"
-for unset in authorName pollInterval maxFiles; do expect_not scaleconfig "$unset"; done
-
 # 0 daily diagnoses means no cap (-1 to the runtime), as in the operator chart.
 must_render -f "$tmp/agent.yaml" --set scale.agent.dailyDiagnoses=0
 expect scaleconfig "dailyDiagnoses: -1"
 must_render -f "$tmp/agent.yaml"
 expect scaleconfig "dailyDiagnoses: 20"
-must_fail "not scale.config.git" --set scale.enabled=true --set scale.config.git.enabled=true
 # Review 64 item 8: the runtime's agent section turns the agent on only with scale.agent, whose
 # guards (signing key, view-only app, app serving, model) then apply. Any spelling of enabled.
 must_fail "scale.config.agent.enabled needs scale.agent.enabled" --set scale.enabled=true --set scale.config.agent.enabled=true
@@ -388,7 +374,7 @@ must_fail "scale.config.agent.enabled needs scale.agent.enabled" --set scale.ena
   --set scale.config.agent.url=http://example
 must_render --set scale.enabled=true --set scale.config.agent.enabled=false
 must_render -f "$tmp/agent.yaml" --set scale.config.agent.enabled=true
-for spelling in scale.config.Fix.enabled scale.config.FIX.enabled scale.config.fix.Enabled scale.config.Git.enabled scale.git.Enabled; do
+for spelling in scale.config.Fix.enabled scale.config.FIX.enabled scale.config.fix.Enabled; do
   must_fail "only read lowercase" -f "$tmp/secure.yaml" --set "$spelling=true"
 done
 
@@ -623,6 +609,28 @@ must_render -f "$tmp/agent-base.yaml" -f "$tmp/anthropic.yaml" -f "$tmp/devdomai
 expect service 'value: "acme-dev"'
 must_fail "write scale.config.fix.developmentdomain as scale.config.fix.developmentDomain" \
   -f "$tmp/agent-base.yaml" -f "$tmp/anthropic.yaml" --set scale.config.fix.developmentdomain=sandbox
+
+# Security L9 (1): the Scale runtime has no code pushes (scale.git) and no notifications
+# (scale.notify) any more (unionai/cloud scale/config/config.go has neither). The chart mounts
+# neither the GitHub App key nor the notify secret, gives the runtime neither section, and refuses
+# the values, in any spelling, so they cannot seem to work.
+must_render -f "$tmp/secure.yaml" --set scale.config.fix.enabled=true
+for gone in "/etc/scale/github" "/etc/scale/notify" "github-app" "notify-secret"; do
+  expect_not scaledeploy "$gone"
+done
+for gone in "notify:" "git:" "privateKeyPath"; do expect_not scaleconfig "$gone"; done
+for setting in scale.git.enabled=true scale.git.github.appId=1 scale.notify.enabled=true scale.notify.secretName=scale-notify \
+  scale.config.git.enabled=true scale.config.Git.enabled=true scale.config.notify.enabled=true scale.config.Notify.enabled=true; do
+  must_fail "the Scale runtime has no code pushes or notifications" -f "$tmp/secure.yaml" --set "$setting"
+done
+
+# Security L8 (c): the runtime compares each run's org with its own exactly, and the control
+# plane's org names are lower case, so an orgName in another case would drop every run.
+must_render -f "$tmp/agent-base.yaml" -f "$tmp/anthropic.yaml" --set global.ORG_NAME=Acme
+expect scaleconfig 'organization: "acme"'
+expect_not scaleconfig 'organization: "Acme"'
+expect service 'value: "acme"'
+expect_not service 'value: "Acme"'
 
 if [ "$failures" -gt 0 ]; then echo "$failures Scale guard check(s) failed"; exit 1; fi
 echo "Scale guards OK"

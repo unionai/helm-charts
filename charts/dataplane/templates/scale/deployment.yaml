@@ -81,29 +81,12 @@ spec:
         {{- end }}
         - name: tmp
           emptyDir: {}
-        {{- with .Values.scale.notify.secretName }}
-        {{- /* The customer's Slack, Linear or Jira credentials; read only by this pod. */}}
-        - name: notify-secret
-          secret:
-            secretName: {{ . }}
-            defaultMode: 0440
-        {{- end }}
         {{- with .Values.scale.fixWriter.secretName }}
         {{- /* Scale's development-only writer app (unionai/cloud scale/fix/README.md). */}}
         - name: fix-writer-secret
           secret:
             secretName: {{ . }}
             defaultMode: 0440
-        {{- end }}
-        {{- if (.Values.scale.git | default dict).enabled }}
-        {{- /* The GitHub App's private key, from the customer's own secret in the dataplane. */}}
-        - name: github-app
-          secret:
-            secretName: {{ .Values.scale.git.privateKeySecret.name }}
-            defaultMode: 0440
-            items:
-              - key: {{ .Values.scale.git.privateKeySecret.key }}
-                path: {{ .Values.scale.git.privateKeySecret.key }}
         {{- end }}
       containers:
         - name: scale
@@ -155,19 +138,9 @@ spec:
               mountPath: /etc/scale/signing
               readOnly: true
             {{- end }}
-            {{- if .Values.scale.notify.secretName }}
-            - name: notify-secret
-              mountPath: /etc/scale/notify
-              readOnly: true
-            {{- end }}
             {{- if .Values.scale.fixWriter.secretName }}
             - name: fix-writer-secret
               mountPath: /etc/union/scale-fix-writer
-              readOnly: true
-            {{- end }}
-            {{- if (.Values.scale.git | default dict).enabled }}
-            - name: github-app
-              mountPath: /etc/scale/github
               readOnly: true
             {{- end }}
 {{- end }}

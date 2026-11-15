@@ -14,6 +14,14 @@ fails when `namespace_mapping.template` can produce the release namespace or the
 store namespace (for example release namespace `union-production` with the default
 `{{ project }}-{{ domain }}`). Releases with Scale off are unchanged. See README, Scale.
 
+### Scale: code pushes and notifications are gone
+
+**Breaking (Scale only).** The Scale runtime has no code pushes and no notifications, so the
+chart no longer mounts the GitHub App key or the notify secret, and `scale.git`, `scale.notify`,
+`scale.config.git` and `scale.config.notify` fail the render. Remove them from your values. The
+`scale_.*` drop is now the first rule of each remote_write queue, and Scale's org is `orgName`
+in lower case.
+
 ## 2026.11.7
 
 `version` and `appVersion` move `2026.11.6` → `2026.11.7`, picking up the new

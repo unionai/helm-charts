@@ -3890,9 +3890,9 @@ scale:
           matchLabels:
             app.kubernetes.io/name: prometheus
   # -- Keys merged into the scale config section (unionai/cloud scale/config/config.go), e.g.
-  # projects, shadow. Put notification settings under scale.notify and code change settings under
-  # scale.git, not here. Fixes are under config.fix (scale/config/fix.go): off, and for no org,
-  # unless set. config.fix.developmentDomain (default development) also goes to Scale's agent as
+  # projects, shadow. Fixes are under config.fix (scale/config/fix.go): off, and for no org, unless
+  # set. The runtime has no code pushes or notifications: scale.git, scale.notify and the same keys
+  # here fail the render. config.fix.developmentDomain (default development) also goes to Scale's agent as
   # SCALE_AGENT_DEV_DOMAIN. detectors.cost.cloud (the cloud issues are priced for) comes from provider, or gcp
   # with GCS storage, unless set here; the usage price table (detectors.cost.priceTable: usage)
   # applies on aws only.
@@ -3907,51 +3907,6 @@ scale:
       closedIssues: 8760h
       # -- An Ask Scale conversation after its last message. 90 days.
       conversations: 2160h
-  # -- Notifications and tracker filing (scale/config/notify.go). Off by default, and silent
-  # while scale.config.shadow is true whatever is set here. Every call goes out from this cluster
-  # with the customer's own credentials; nothing passes through Union's control plane.
-  notify:
-    enabled: false
-    # -- Console base URL for issue links. Empty uses https://<control plane host>.
-    consoleURL: ""
-    # -- Least time between two notifications about one issue.
-    window: 24h
-    # -- Occurrence counts that notify again about an open issue, besides its open and reopen.
-    occurrenceSteps: [5, 10, 25, 50, 100]
-    # -- Adds the last error line to messages. Off, so raw error text stays out of Slack and tickets.
-    includeErrorSummary: false
-    slack:
-      enabled: false
-      # -- Project name to a file holding that project's own webhook URL (a key of secretName,
-      # e.g. /etc/scale/notify/slack-webhook-url-churn).
-      projectWebhookURLPaths: {}
-      # -- Projects that also post to the shared slack-webhook-url. A project in neither list gets
-      # no Slack message, so one channel never receives every project's issues.
-      projects: []
-    # -- A weekly summary per project, sent to the project's Slack webhook. In shadow mode it is
-    # only logged.
-    digest:
-      enabled: false
-      weekday: Monday
-      hourUTC: 9
-    # -- Files a ticket per issue, only for the listed projects.
-    tracker:
-      # -- linear or jira; empty files nothing.
-      kind: ""
-      projects: []
-      linear:
-        teamID: ""
-        labelIDs: []
-      jira:
-        # -- e.g. https://acme.atlassian.net
-        baseURL: ""
-        projectKey: ""
-        issueType: Bug
-        labels: []
-    # -- Kubernetes secret in the release namespace with the customer's credentials, mounted at
-    # /etc/scale/notify. Keys: slack-webhook-url, linear-api-key, jira-email (Jira Cloud only),
-    # jira-api-token. Empty mounts nothing.
-    secretName: ""
   # -- Scale's development-only writer app for fixes. When secretName is set, the secret is
   # mounted at /etc/union/scale-fix-writer; point config.fix.writer.clientSecretLocation at the
   # file in it and set config.fix.writer.clientId.
@@ -3959,7 +3914,7 @@ scale:
     secretName: ""
   # -- Scale's own service account, with no Kubernetes token. Give it cloud IAM for Scale's bucket
   # only, e.g. eks.amazonaws.com/role-arn (IRSA) or iam.gke.io/gcp-service-account (Workload
-  # Identity). Required for fixes and pushes.
+  # Identity). Required for fixes.
   serviceAccount:
     create: false
     annotations: {}
@@ -4056,36 +4011,6 @@ scale:
     requests:
       cpu: 50m
       memory: 128Mi
-  # -- Code changes. Scale prepares a commit on branch scale/<issue> inside the dataplane and
-  # pushes it only when a person clicks Push in the console. It never opens or merges pull
-  # requests. Needs a GitHub App with Contents read and write on the repositories, and egress from
-  # the Scale pod to the GitHub API.
-  git:
-    enabled: false
-    # -- Secret in the release namespace holding the GitHub App's PEM private key. Created by the
-    # customer in their dataplane; it never goes to the control plane.
-    privateKeySecret:
-      name: scale-github-app
-      key: private-key.pem
-    github:
-      appId: 0
-      # -- 0 looks the installation up for each repository.
-      installationId: 0
-      apiUrl: https://api.github.com
-      webUrl: https://github.com
-    # -- How often the runtime looks for pushes people asked for, e.g. 10s. Empty uses 5s.
-    pollInterval: ""
-    # -- Author of Scale's commits. Empty uses "Union Scale" and scale@union.ai. The person who
-    # pushes is recorded on the change, not in the commit.
-    authorName: ""
-    authorEmail: ""
-    # -- At most this many files of the source root are read to find a definition. 0 uses 2000.
-    maxFiles: 0
-    # -- Larger files are skipped. 0 uses 1 MiB.
-    maxFileBytes: 0
-    # -- Where each project's code lives, e.g.
-    # [{project: churn, repo: acme/pipelines, defaultBranch: main, sourceRoot: pipelines}].
-    sources: []
   # -- Scale's agent: answers people's questions about a project in the console and diagnoses new
   # issues. It runs as a cluster-local Knative service that scales to zero when idle, so only the
   # operator proxy and the Scale runtime in this cluster reach it. It reads with the cluster's
