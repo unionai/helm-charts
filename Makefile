@@ -18,11 +18,15 @@ generate-expected: $(GEN_DIR) vendor-crds
 	./tests/run.sh generate
 
 .PHONY: test
-test: check-vendored-crds helm-test kubeconform-test check-image-paths check-image-prewarm
+test: check-vendored-crds helm-test kubeconform-test check-image-paths check-image-prewarm check-values-schema python-test rbac-guard-test
 
 .PHONY: snapshot-generator-test
 snapshot-generator-test:
 	bash ./tests/test-atomic-render.sh
+
+.PHONY: rbac-guard-test
+rbac-guard-test: requirements
+	bash ./tests/test-rbac-guards.sh
 
 # Gate on fully qualified image references. Reads the checked-in
 # tests/generated/ corpus, so it needs neither network nor helm — but that
@@ -31,6 +35,26 @@ snapshot-generator-test:
 .PHONY: check-image-paths
 check-image-paths:
 	python3 scripts/check-image-paths.py
+
+# charts/dataplane/values.schema.json is generated from the `# @schema` blocks
+# in values.yaml (scripts/values_schema.py). The check fails when the committed
+# file is stale, then verifies every value path Fleet writes
+# (tests/fleet-values-paths.txt) is still accepted by the chart. No helm, no
+# network.
+.PHONY: values-schema
+values-schema: requirements
+	uv run python scripts/values_schema.py
+
+.PHONY: check-values-schema
+check-values-schema: requirements
+	uv run python scripts/values_schema.py --check
+	uv run python scripts/check_fleet_paths.py
+
+# Unit tests for the Python tooling (invoke tasks and the scripts above).
+# `python -m pytest` so the repo root is on sys.path for `tasks`.
+.PHONY: python-test
+python-test: requirements
+	uv run python -m pytest -q tasks scripts
 
 # The image pre-warm Job's image list is kept by hand; fail if a mirror test
 # profile's snapshot pulls an image through the mirror that the Job doesn't
@@ -67,7 +91,7 @@ check-vendored-crds:
 	exit $${fail}
 
 .PHONY: helm-test
-helm-test: $(TMP_DIR) snapshot-generator-test k3d-storage-test billing-test buildkit-arm-test workload-labels-test
+helm-test: $(TMP_DIR) snapshot-generator-test k3d-storage-test billing-test buildkit-arm-test workload-labels-test rbac-guard-test build-image-task-test
 	./tests/run.sh helm
 
 # Every Union workload the dataplane chart renders carries the component label the
@@ -89,6 +113,13 @@ billing-test: requirements
 buildkit-arm-test: requirements
 	helm dependency update $(CHART_DIR)
 	uv run python tests/test-buildkit-arm.py
+
+# Keep in sync with the flyte pin in the cloud repo's imagebuild/build-image-bootstrap/Dockerfile.
+BUILD_IMAGE_TASK_FLYTE_VERSION ?= 2.13.3
+
+.PHONY: build-image-task-test
+build-image-task-test:
+	uv run --no-project --with flyte==$(BUILD_IMAGE_TASK_FLYTE_VERSION) --with kubernetes python tests/test-build-image-task.py
 
 .PHONY: kubeconform-test
 kubeconform-test:
@@ -144,6 +175,12 @@ lint: lint-dataplane lint-dataplane-crds lint-knative-migration lint-sandbox lin
 .PHONY: lint-dataplane
 lint-dataplane:
 	helm lint charts/dataplane
+	# Each canonical overlay stack, so Helm validates values.schema.json against them.
+	helm lint charts/dataplane -f charts/dataplane/values.aws.yaml
+	helm lint charts/dataplane -f charts/dataplane/values.gcp.yaml
+	helm lint charts/dataplane -f charts/dataplane/values.azure.yaml
+	helm lint charts/dataplane -f charts/dataplane/values.k3d.yaml
+	helm lint charts/dataplane -f charts/dataplane/values.aws.yaml -f charts/dataplane/values.openshift.yaml
 
 .PHONY: lint-dataplane-crds
 lint-dataplane-crds:

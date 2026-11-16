@@ -429,6 +429,30 @@ For full monitoring documentation, see [Monitoring](https://docs.union.ai/deploy
 
 ---
 
+## RBAC
+
+`singleNamespace: true`, the default, runs Union in the release namespace with namespaced
+`Role`s. `singleNamespace: false` runs it across per-project namespaces with `ClusterRole`s.
+`low_privilege` is the key's older name and still works as an alias. Either mode keeps some
+cluster-scoped grants, so deploying the chart takes more than a namespace-confined install
+identity.
+
+Under `singleNamespace: false`, every work namespace needs a `<release-ns>-work-ns`
+RoleBinding. `namespaces.enabled` and `clusterresourcesync.enabled` both default to `false`,
+so setting only `singleNamespace: false` renders cleanly, and the first task fails with
+`Forbidden`. [Who creates the work-namespace binding](docs/rbac/work-namespaces.md#who-creates-the-work-namespace-binding)
+covers the routes.
+
+[docs/rbac/](docs/rbac/README.md) is the full reference:
+
+- [README.md](docs/rbac/README.md) covers the scope keys, what each mode promises, and where
+  in the code each grant is declared.
+- [slots.md](docs/rbac/slots.md) covers the slot system that Union's own components declare
+  their grants through.
+- [work-namespaces.md](docs/rbac/work-namespaces.md) covers the work-namespace RoleBinding.
+
+---
+
 ## Image mirrors (pull-through caches)
 
 Every node pulls Union's images from `public.ecr.aws`. Outside AWS those pulls are
@@ -611,8 +635,8 @@ Kubectl hook cleanup jobs use `image.kubectl`:
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `image.kubectl.repository` | `bitnami/kubectl` | Kubectl image repository used by dataplane Helm hook cleanup jobs. |
-| `image.kubectl.tag` | `latest` | Kubectl image tag used by dataplane Helm hook cleanup jobs. |
+| `image.kubectl.repository` | `docker.io/alpine/k8s` | Kubectl image repository used by dataplane Helm hook cleanup jobs. |
+| `image.kubectl.tag` | `1.32.3` | Kubectl image tag used by dataplane Helm hook cleanup jobs. |
 | `image.kubectl.pullPolicy` | `""` | Optional imagePullPolicy for dataplane Helm hook cleanup jobs. Omit when empty. |
 | `image.kubectl.imagePullSecrets` | `[]` | Optional imagePullSecrets for dataplane Helm hook cleanup jobs. |
 

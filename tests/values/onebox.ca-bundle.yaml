@@ -1,0 +1,33 @@
+# A private CA trusted everywhere (S3, OIDC, registry), and extra mounts and
+# proxy settings for onebox and task pods.
+bundled:
+  enabled: true
+internalSecret:
+  existingSecret: onebox-internal
+webhook:
+  certificate:
+    # A generated cert would differ on every render.
+    provider: external
+    external: {caCert: test-ca, tlsCrt: test-crt, tlsKey: test-key}
+caBundle:
+  configMap: corp-ca-bundle
+extraVolumes:
+  - name: corp-data
+    persistentVolumeClaim: {claimName: corp-data}
+extraVolumeMounts:
+  - name: corp-data
+    mountPath: /mnt/corp
+    readOnly: true
+taskPods:
+  extraEnv:
+    - name: HTTPS_PROXY
+      value: http://proxy.corp:3128
+    - name: NO_PROXY
+      value: .svc,.cluster.local,10.0.0.0/8
+  extraVolumes:
+    - name: datasets
+      persistentVolumeClaim: {claimName: datasets}
+  extraVolumeMounts:
+    - name: datasets
+      mountPath: /datasets
+      readOnly: true

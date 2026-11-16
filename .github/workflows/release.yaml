@@ -68,3 +68,39 @@ jobs:
         run: |
           git fetch --tags
           ./scripts/generate-release-notes.sh --publish
+
+      # Add a newly published stable dataplane version to Fleet: start cloud's
+      # fleet-chart-staging-release pipeline, which publishes it to Fleet's OCI
+      # registry and, once approved, registers it in each staging region serving
+      # stored templates. Canary and production are started by hand for now.
+      # This workflow runs on every Chart.yaml change, so it triggers only when
+      # this push changed the dataplane version. That is decided from the push
+      # itself (before/after commits), not from the tags this run created, so
+      # rerunning a failed job retries the trigger; the pipeline is safe to rerun.
+      - name: Register the new dataplane chart with Fleet
+        if: github.repository == 'unionai/helm-charts'
+        env:
+          BUILDKITE_API_TOKEN: ${{ secrets.BUILDKITE_API_TOKEN }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          version_of() { grep '^version:' | awk '{print $2}' | tr -d '"'; }
+          ver=$(version_of < charts/dataplane/Chart.yaml)
+          tag="dataplane-${ver}"
+          old_ver=""
+          if [[ ! "$BEFORE_SHA" =~ ^0+$ ]]; then
+            old_ver=$(git show "${BEFORE_SHA}:charts/dataplane/Chart.yaml" 2>/dev/null | version_of || true)
+          fi
+          if [ "$ver" = "$old_ver" ]; then
+            echo "dataplane is still ${ver} in this push; nothing to register"; exit 0
+          fi
+          # Stable CalVer only (YYYY.M.N), as the pipeline accepts.
+          if ! [[ "$ver" =~ ^[0-9]{4}\.[0-9]{1,2}\.[0-9]+$ ]]; then
+            echo "${tag} is not a stable release; Fleet registers stable versions only"; exit 0
+          fi
+          # chart-releaser must have published it; fail (so a rerun retries) if not.
+          git fetch -q --tags
+          git rev-parse -q --verify "refs/tags/${tag}" >/dev/null ||
+            { echo "${tag} was not released by chart-releaser; nothing to register" >&2; exit 1; }
+          .github/scripts/trigger-buildkite-build.sh fleet-chart-staging-release \
+            CHART_NAME=dataplane CHART_VERSION="${ver}"

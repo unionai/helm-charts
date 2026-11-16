@@ -18,14 +18,13 @@ data:
       nodeCacheDir: {{ required "uvolMountBroker.nodeCache.hostPath is required when nodeCache is enabled" .Values.uvolMountBroker.nodeCache.hostPath }}
       {{- end }}
       {{- $block := .Values.uvolMountBroker.block | default dict }}
-      {{- /* block.allow unset: every pod unless low_privilege; any list (even []) is used as given */}}
       {{- $allow := $block.allow }}
       {{- if kindIs "invalid" $allow }}
-      {{- $allow = ternary (list) (list (dict "namespace" "*")) (.Values.low_privilege | default false) }}
+      {{- $allow = ternary (list (dict "namespace" .Release.Namespace)) (list (dict "namespace" "*")) (not (empty (include "singleNamespace" .))) }}
       {{- end }}
       {{- if $allow }}
       blockAllow:
-        {{- toYaml $allow | nindent 8 }}
+        {{- tpl (toYaml $allow) . | nindent 8 }}
       blockFreezeMax: {{ $block.freezeMax | default "60s" | quote }}
       {{- end }}
       metricsScope: "{{ .Values.uvolMountBroker.metricsScope }}"
