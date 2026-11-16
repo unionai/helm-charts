@@ -1,0 +1,112 @@
+{{- if .Values.scale.enabled }}
+{{- /* The runtime's agent section turns the agent on and names its URL, so it comes only with
+       scale.agent, whose guards (signing key, view-only app, app serving, model) then apply. Any
+       spelling of enabled: the runtime's loader matches keys case-insensitively. */}}
+{{- $agentConfig := get (.Values.scale.config | default dict) "agent" }}
+{{- if and (kindIs "map" $agentConfig) (not .Values.scale.agent.enabled) }}
+{{- range $k, $v := $agentConfig }}
+{{- if and (eq (lower $k) "enabled") $v }}
+{{- fail "scale: scale.config.agent.enabled needs scale.agent.enabled: the agent is set up with scale.agent, so its guards apply. Remove scale.config.agent.enabled or turn on scale.agent" }}
+{{- end }}
+{{- end }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scale
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "scale.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    scale:
+      organization: {{ include "scale.org" . | quote }}
+      cluster: {{ include "getClusterName" . | quote }}
+      {{- /* Shared with the operator proxy (templates/operator/configmap.yaml, proxy.scale). */}}
+      storageContainer: {{ .Values.scale.storageContainer | quote }}
+      {{- with .Values.scale.signing.secretName }}
+      signingKeyPath: /etc/scale/signing/{{ $.Values.scale.signing.key }}
+      {{- end }}
+      {{- with .Values.scale.notify }}
+      {{- $notify := omit . "secretName" }}
+      {{- if not $notify.consoleURL }}
+      {{- $_ := set $notify "consoleURL" (printf "https://%s" (include "dataplane.cp.host" $)) }}
+      {{- end }}
+      notify:
+        {{- toYaml $notify | nindent 8 }}
+      {{- end }}
+      {{- if .Values.scale.enablePprof }}
+      {{- /* The Go profiler on the debug port, for a debugging session only (T-47). Only the chart's
+             Prometheus and metricsFrom reach that port (networkpolicy-runtime.yaml). */}}
+      enablePprof: true
+      {{- end }}
+      {{- /*
+      The usage price table holds AWS prices only, and an empty detectors.cost.cloud means it
+      applies, so a GCP or Azure cluster gets the cluster's cloud here unless the values set one.
+      */}}
+      {{- $config := deepCopy (.Values.scale.config | default dict) }}
+      {{- /* The chart's agent settings go in scale.config.agent's key, the chart's winning, so the
+             runtime config has one agent key: its loader refuses a key given twice. As the
+             union-operator chart (templates/scale/configmap.yaml). */}}
+      {{- if .Values.scale.agent.enabled }}
+      {{- $daily := .Values.scale.agent.dailyDiagnoses | int }}
+      {{- $agent := dict
+            "enabled" true
+            "url" (include "scale-agent.url" .)
+            "dailyDiagnoses" (ternary $daily -1 (gt $daily 0))
+            "timeout" (printf "%ds" (.Values.scale.agent.timeoutSeconds | int)) }}
+      {{- /* Wake the agent to diagnose new and reopened issues. 0 daily diagnoses in the values
+             means no cap, as for the proxy's budgets; the runtime reads 0 as its default and a
+             negative number as no cap. */}}
+      {{- $_ := set $config "agent" (mergeOverwrite (get $config "agent" | default dict) $agent) }}
+      {{- end }}
+      {{- $detectors := get $config "detectors" | default dict }}
+      {{- $cost := get $detectors "cost" | default dict }}
+      {{- $cloud := include "scale.cloud" . }}
+      {{- if and $cloud (not (get $cost "cloud")) }}
+      {{- $_ := set $cost "cloud" $cloud }}
+      {{- $_ := set $detectors "cost" $cost }}
+      {{- $_ := set $config "detectors" $detectors }}
+      {{- end }}
+      {{- with $config }}
+      {{- tpl (toYaml .) $ | nindent 6 }}
+      {{- end }}
+      {{- $git := .Values.scale.git | default dict }}
+      {{- if $git.enabled }}
+      git:
+        enabled: true
+        github:
+          appId: {{ $git.github.appId | int64 }}
+          installationId: {{ $git.github.installationId | default 0 | int64 }}
+          apiUrl: {{ $git.github.apiUrl | quote }}
+          webUrl: {{ $git.github.webUrl | quote }}
+          privateKeyPath: /etc/scale/github/{{ $git.privateKeySecret.key }}
+        {{- /* The rest of scale.git; scale.config.git is refused (templates/scale/_scale.tpl). */}}
+        {{- range $k := list "pollInterval" "authorName" "authorEmail" "maxFiles" "maxFileBytes" }}
+        {{- with get $git $k }}
+        {{ $k }}: {{ . | toJson }}
+        {{- end }}
+        {{- end }}
+        {{- with $git.sources }}
+        sources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      {{- end }}
+    union:
+      connection:
+        {{- tpl (toYaml .Values.config.union.connection) $ | nindent 8 }}
+      auth:
+        type: ClientSecret
+        {{- /* Scale's own view-only app when configured, else the operator's. */}}
+        clientId: {{ tpl (.Values.scale.auth.appId | default .Values.secrets.admin.clientId) $ | quote }}
+        clientSecretLocation: /etc/union/secret/app_secret
+        authorizationMetadataKey: "flyte-authorization"
+        tokenRefreshWindow: 5m
+    logger:
+      {{- tpl (omit .Values.logging "pythonLevel" | toYaml) $ | nindent 6 }}
+    sharedService:
+      metrics:
+        scope: "scale:"
+  {{- /* The same store the operator proxy reads issues from. */}}
+  storage.yaml: | {{ tpl (include "storage" .) $ | nindent 4 }}
+{{- end }}

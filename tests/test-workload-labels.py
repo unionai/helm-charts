@@ -70,6 +70,9 @@ ALLOWLIST = {
     "dataplane-nginx-controller",
     "release-name-metrics-server",
     "release-name-opencost",
+    # Scale (opt-in, scale.enabled): not yet a component the operator's cluster snapshot
+    # reports. Label it once "scale" is in componentIDs in unionai/cloud operator/pkg/components.go.
+    "scale",
 }
 
 

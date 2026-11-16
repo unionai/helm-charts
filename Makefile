@@ -91,7 +91,7 @@ check-vendored-crds:
 	exit $${fail}
 
 .PHONY: helm-test
-helm-test: $(TMP_DIR) snapshot-generator-test k3d-storage-test billing-test buildkit-arm-test workload-labels-test rbac-guard-test build-image-task-test
+helm-test: $(TMP_DIR) snapshot-generator-test k3d-storage-test billing-test buildkit-arm-test workload-labels-test rbac-guard-test build-image-task-test scale-guards-test metrics-drop-test
 	./tests/run.sh helm
 
 # Every Union workload the dataplane chart renders carries the component label the
@@ -99,6 +99,20 @@ helm-test: $(TMP_DIR) snapshot-generator-test k3d-storage-test billing-test buil
 .PHONY: workload-labels-test
 workload-labels-test: requirements
 	uv run python tests/test-workload-labels.py
+
+# Scale's guards (charts/dataplane/templates/scale/_scale.tpl) fail every unsafe combination
+# of settings, and Scale renders nothing while it is off.
+.PHONY: scale-guards-test
+scale-guards-test:
+	helm dependency update $(CHART_DIR)
+	./tests/test-scale-guards.sh
+
+# Every remote_write the dataplane chart renders (zero trust or not) drops Scale's scale_* series,
+# which stay in the data plane; NOTES names the subcharts' remote_writes that lack the drop.
+.PHONY: metrics-drop-test
+metrics-drop-test:
+	helm dependency update $(CHART_DIR)
+	./tests/test-metrics-drop.sh
 
 .PHONY: k3d-storage-test
 k3d-storage-test:

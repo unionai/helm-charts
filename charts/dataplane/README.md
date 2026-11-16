@@ -453,6 +453,34 @@ covers the routes.
 
 ---
 
+## Scale
+
+Scale (`scale.enabled`, off by default) watches runs in this dataplane, groups repeated
+failures and waste into issues, and explains them in the Union console. The chart mirrors the
+union-operator chart in unionai/cloud, and `templates/scale/_scale.tpl` fails the render for any
+unsafe combination of settings.
+
+**Scale needs tasks in namespaces of their own.** The render fails with Scale on in
+single-namespace mode, the chart's default: tasks would run in the release namespace beside
+Scale's signing, caller and model keys and the operator proxy, and a task could read them. Set
+these two values:
+
+```yaml
+singleNamespace: false     # low_privilege: false is the older spelling
+namespaces:
+  enabled: true            # or clusterresourcesync.enabled, or your own tooling (see RBAC)
+```
+
+`singleNamespace: false` gives the release cluster-scoped RBAC and moves every task to a
+namespace per project and domain, so the chart does not set it for you. The render also fails
+when `namespace_mapping.template` can produce the release namespace or the proxy's secret store
+namespace for some project or domain name. With the default `{{ project }}-{{ domain }}`, a
+release namespace such as `union-production` fails, because project `union` and domain
+`production` map to it. Use a release namespace without that shape, or a template with a fixed
+prefix such as `tasks-{{ project }}-{{ domain }}`.
+
+---
+
 ## Image mirrors (pull-through caches)
 
 Every node pulls Union's images from `public.ecr.aws`. Outside AWS those pulls are
