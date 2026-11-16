@@ -8,15 +8,115 @@ CHART="${SCRIPT_DIR}/../charts/dataplane"
 RELEASE="release-name"
 NAMESPACE="union"
 
-echo "Vendoring subchart dependencies..."
-helm dependency update "${CHART}"
-echo
+# Rendering the chart is nearly all of this test's cost, and many checks
+# render the same configuration. So each configuration is rendered once, and
+# every check asserts on that render's cached stdout, stderr and exit status.
+#
+# The script runs in three passes over one shared WORK_DIR:
+#   collect   a dry run that records every configuration a check would render
+#             (render prints nothing; the run's own output is discarded)
+#   (prerender: those configurations are rendered in parallel into the cache)
+#   check     the real run, whose output and verdict are the test's. A
+#             configuration the dry run missed is rendered here, on demand.
+# Only the check pass decides anything, and it renders exactly what it did
+# before; the first two passes only warm the cache.
+RBAC_GUARD_PASS=${RBAC_GUARD_PASS:-}
+
+function render-uncached {
+  helm template "${RELEASE}" "${CHART}" \
+    --namespace "${NAMESPACE}" \
+    --kube-version 1.32.0 \
+    --values "${CHART}/examples/values-test-certs.yaml" \
+    --set global.UNION_CONTROL_PLANE_HOST=test-controlplane-host \
+    --set secrets.admin.create=false \
+    --set secrets.admin.clientSecret=test \
+    --set secrets.admin.clientId=test \
+    "$@"
+}
+
+# A configuration is its exact argument list plus the contents of every
+# argument that names a file (values files written into WORK_DIR by a check).
+function render-key {
+  local arg
+  for arg in "$@"; do
+    printf '%s\0' "${arg}"
+    if [[ -f "${arg}" ]]; then
+      cat -- "${arg}"
+      printf '\0'
+    fi
+  done | git hash-object --stdin
+}
+
+# Render one configuration into the cache. The status file is written last,
+# so its presence marks a complete entry.
+function render-into {
+  local entry=$1; shift
+  local status=0
+  render-uncached "$@" >"${entry}.out" 2>"${entry}.err" || status=$?
+  echo "${status}" >"${entry}.status.tmp"
+  mv "${entry}.status.tmp" "${entry}.status"
+}
+
+function render {
+  local entry
+  entry="${RENDER_CACHE}/$(render-key "$@")"
+  if [[ "${RBAC_GUARD_PASS}" == "collect" ]]; then
+    # NUL-separated; printf would write one empty argument for none.
+    if (( $# )); then printf '%s\0' "$@"; fi >"${entry}.args"
+    return 0
+  fi
+  if [[ ! -f "${entry}.status" ]]; then
+    render-into "${entry}" "$@"
+  fi
+  # helm reports warnings before it writes the manifests, so a caller that
+  # merges the streams sees them in the order it always did.
+  cat "${entry}.err" >&2
+  cat "${entry}.out"
+  return "$(<"${entry}.status")"
+}
+
+case "${RBAC_GUARD_PASS}" in
+  "")
+    echo "Vendoring subchart dependencies..."
+    "${SCRIPT_DIR}/lib/ensure-chart-deps.sh" "${CHART}"
+    echo
+
+    RBAC_GUARD_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/helm-charts-rbac-guards.XXXXXX")
+    export RBAC_GUARD_WORK_DIR
+    trap 'rm -rf "${RBAC_GUARD_WORK_DIR}"' EXIT
+    mkdir "${RBAC_GUARD_WORK_DIR}/render-cache"
+
+    RBAC_GUARD_PASS=collect bash "${BASH_SOURCE[0]}" >/dev/null 2>&1 || true
+    jobs=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+    configs=$(find "${RBAC_GUARD_WORK_DIR}/render-cache" -name '*.args' | wc -l | tr -d ' ')
+    echo "Rendering ${configs} distinct configurations, ${jobs} at a time..."
+    find "${RBAC_GUARD_WORK_DIR}/render-cache" -name '*.args' -print0 |
+      RBAC_GUARD_PASS=prerender xargs -0 -n 1 -P "${jobs}" bash "${BASH_SOURCE[0]}"
+    echo
+
+    status=0
+    RBAC_GUARD_PASS=check bash "${BASH_SOURCE[0]}" || status=$?
+    exit "${status}"
+    ;;
+  prerender)
+    args_file=$1
+    mapfile -d '' -t args <"${args_file}"
+    render-into "${args_file%.args}" "${args[@]}"
+    exit 0
+    ;;
+  collect)
+    # Assertions see empty renders here, so let the dry run carry on past
+    # them, and skip the Python rule parsers, whose input would be empty.
+    set +e
+    function uv { :; }
+    ;;
+esac
 
 failures=0
 checks=0
 
-WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/helm-charts-rbac-guards.XXXXXX")
-trap 'rm -rf "${WORK_DIR}"' EXIT
+WORK_DIR="${RBAC_GUARD_WORK_DIR}"
+RENDER_CACHE="${WORK_DIR}/render-cache"
 
 function ksm-namespaces-file {
   local name=$1
@@ -29,18 +129,6 @@ prometheus:
     namespaces: '${value}'
 EOF
   echo "${path}"
-}
-
-function render {
-  helm template "${RELEASE}" "${CHART}" \
-    --namespace "${NAMESPACE}" \
-    --kube-version 1.32.0 \
-    --values "${CHART}/examples/values-test-certs.yaml" \
-    --set global.UNION_CONTROL_PLANE_HOST=test-controlplane-host \
-    --set secrets.admin.create=false \
-    --set secrets.admin.clientSecret=test \
-    --set secrets.admin.clientId=test \
-    "$@"
 }
 
 function expect-render {
