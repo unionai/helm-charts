@@ -136,6 +136,14 @@ spec:
         app.kubernetes.io/name: {{ $name }}-s3
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
+      initContainers:
+        # floci drops its capabilities, so it cannot write the root of a fresh
+        # block volume (EBS, Persistent Disk) the way it can a local-path one.
+        - name: data-permissions
+          image: {{ $b.s3.image }}
+          command: [sh, -c, "chmod 0777 /data"]
+          volumeMounts:
+            - {name: data, mountPath: /data}
       containers:
         - name: s3
           image: {{ $b.s3.image }}
