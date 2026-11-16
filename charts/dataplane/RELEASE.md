@@ -16,6 +16,15 @@ Notable image changes (unionai/cloud `release/2026.11.6..14d75bf0f4`, tagged
 - **sandbox-agent:** microVM snapshots go to a bounded tmpfs with a disk fallback,
   and memory is pre-copied ([cloud#20082](https://github.com/unionai/cloud/pull/20082)).
 
+### Chart: the legacy webhook cleanup Job uses the common service account
+
+When `commonServiceAccount.enabled` is true, the `flyte-webhook-cleanup` pre-upgrade
+Job now runs as `commonServiceAccount.name` and its RoleBindings target that account.
+The hook no longer creates its dedicated `flyte-webhook-cleanup` ServiceAccount in
+this mode, so its image can inherit `commonServiceAccount.imagePullSecrets` when no
+hook-specific image pull secrets are set. With the common account disabled, the
+existing dedicated account and behavior are kept.
+
 ## 2026.11.6
 
 `version` moves `2026.11.5` → `2026.11.6` and `appVersion` moves `2026.11.4` →
