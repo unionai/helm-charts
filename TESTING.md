@@ -90,3 +90,19 @@ test exercises real `helm upgrade --dry-run=server` value merging and ConfigMap
 lookup, including retained defaults under `--reuse-values`, explicit overrides,
 `--reset-values`, invalid prior configuration, and the full dataplane render.
 Set `HELM_BIN` to exercise another installed Helm version.
+
+## Proxy configuration contract
+
+The dataplane chart passes `config.proxy` into operator configuration. Fleet permits
+undeclared descendants, but checks fields declared by chart defaults or packaged
+schema. New supported fields absent from defaults should have optional type
+declarations in the `config.proxy` schema annotation, derived from the operator
+source selected by the chart image. Keep parsed defaults unchanged.
+
+The initial complete proxy declaration uses Cloud `release/2026.11.7`, commit
+`14d75bf0f44765d19bd87cb658ec6e39007e0ff2`. It supplements defaults and existing
+annotations; it does not close the proxy section or add runtime configuration rules.
+Run `make check-values-schema python-test lint-dataplane` and package the candidate
+with its dependencies. In the Cloud checkout, run
+`bash scripts/test_fleet_proxy_chart_schema.sh ARCHIVE SHA256_DIGEST typed` to
+exercise the candidate through Fleet and Helm for all four vendors.
