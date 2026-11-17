@@ -1,5 +1,26 @@
 # controlplane — Release Notes
 
+## 2026.11.10
+
+`version` and `appVersion` move `2026.11.7` → `2026.11.10`, picking up the new
+images. 2026.11.8 and 2026.11.9 were not released. No controlplane template or
+values changes; lockstep release with the `dataplane` chart.
+
+The images are 2026.11.7 plus two migration fixes for upgrades from 2026.7.x:
+
+- **cluster:** `cluster-migrate` no longer fails with `column "state" of relation
+  "queues" contains null values` when upgrading from 2026.7.2 or earlier with
+  existing queues.
+- **executions:** migrations no longer fail on PostgreSQL 14 with `syntax error at
+  or near "("`. On PostgreSQL 14 the CDC publication is not created, so
+  `notifications.source=cdc` is unavailable; the default `listen` is unaffected.
+
+A PostgreSQL 14 executions database left dirty by an earlier failed upgrade must
+be reset once before upgrading:
+
+- dirty at `20260921000000`: `UPDATE schema_migrations SET version = 20260910000000, dirty = false;`
+- dirty at `20261022170000`: `UPDATE schema_migrations SET version = 20261015130000, dirty = false;`
+
 ## 2026.11.7
 
 `version` and `appVersion` move `2026.11.6` → `2026.11.7`, picking up the new

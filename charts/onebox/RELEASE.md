@@ -1,5 +1,24 @@
 # onebox — Release Notes
 
+## 2026.11.10
+
+`version` and `appVersion` move `2026.11.7` → `2026.11.10`, picking up the new
+images, which carry the control-plane migration fixes in the `controlplane` notes.
+Lockstep release with the `controlplane` / `dataplane` charts.
+
+### Installs on EKS and GKE ([#691](https://github.com/unionai/helm-charts/pull/691))
+
+`kubeVersion` is now `>= 1.28.0-0`. Managed clusters report versions such as
+`v1.35.9-eks-…` and `v1.33.5-gke.…`, which count as prereleases, so the old
+`>= 1.28.0` made `helm install` fail with `chart requires kubeVersion: >= 1.28.0
+which is incompatible with Kubernetes …`.
+
+### `bundled.enabled` works on block volumes ([#691](https://github.com/unionai/helm-charts/pull/691))
+
+An init container makes `/data` writable before the bundled object store starts.
+On a freshly formatted block volume, such as EBS gp3, the store crash-looped with
+`AccessDeniedException` on `/data`.
+
 ## 2026.11.7
 
 `version` and `appVersion` move `2026.11.6` → `2026.11.7`, picking up the new

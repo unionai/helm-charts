@@ -1,5 +1,13 @@
 # sandbox — Release Notes
 
+## 2026.11.10
+
+Lockstep release with the `controlplane` / `dataplane` charts. `version` and the
+informational `appVersion` move to `2026.11.10`. No sandbox template changes.
+
+`kubeVersion` is now `>= 1.28.0-0`, so the chart installs on EKS and GKE, whose
+versions count as prereleases ([#691](https://github.com/unionai/helm-charts/pull/691)).
+
 ## 2026.11.7
 
 Lockstep release with the `controlplane` / `dataplane` charts. `version` and the
