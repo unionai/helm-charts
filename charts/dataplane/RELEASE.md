@@ -1,6 +1,75 @@
 # dataplane — Release Notes
 
-## Unreleased
+## 2026.11.10
+
+`version` and `appVersion` move `2026.11.7` → `2026.11.10`; lockstep release with
+the `controlplane` chart. 2026.11.8 and 2026.11.9 were not released.
+
+One chart change, below. No dataplane image changes: this release's fixes are in
+the control plane.
+
+### Chart: the legacy webhook cleanup Job uses the common service account ([#690](https://github.com/unionai/helm-charts/pull/690))
+
+When `commonServiceAccount.enabled` is true, the `flyte-webhook-cleanup` pre-upgrade
+Job now runs as `commonServiceAccount.name` and its RoleBindings target that account.
+The hook no longer creates its dedicated `flyte-webhook-cleanup` ServiceAccount in
+this mode, so its image can inherit `commonServiceAccount.imagePullSecrets` when no
+hook-specific image pull secrets are set. With the common account disabled, the
+existing dedicated account and behavior are kept.
+
+## 2026.11.7
+
+`version` and `appVersion` move `2026.11.6` → `2026.11.7`, picking up the new
+images. No dataplane template or values changes; lockstep release with the
+`controlplane` chart.
+
+Notable image changes (unionai/cloud `release/2026.11.6..14d75bf0f4`, tagged
+`release/2026.11.7`):
+
+- **flyte:** the secrets webhook copies the primary task container's
+  `securityContext` to the secrets init container ([cloud#20086](https://github.com/unionai/cloud/pull/20086)).
+- **dataproxy:** a session route and WebSocket-capable port forward reach servers
+  inside session microVMs ([cloud#20059](https://github.com/unionai/cloud/pull/20059)).
+- **sandbox-agent:** microVM snapshots go to a bounded tmpfs with a disk fallback,
+  and memory is pre-copied ([cloud#20082](https://github.com/unionai/cloud/pull/20082)).
+
+## 2026.11.6
+
+`version` moves `2026.11.5` → `2026.11.6` and `appVersion` moves `2026.11.4` →
+`2026.11.6`, picking up the new images. This release stops rendering the
+`depot-token` Secret ([#683](https://github.com/unionai/helm-charts/pull/683)), which is breaking for Depot mode: read below
+before upgrading.
+
+Notable image changes (unionai/cloud `release/2026.11.4..fc8a27db50`, tagged
+`release/2026.11.6`):
+
+- **Union On-Demand:** shared queues, Modal GPU, per-org storage and managed
+  secrets. The operator proxy gains an `orgDepot` lookup: with
+  `imageBuilderConfig.orgDepot.enabled`, each org's images are looked up in its
+  own Depot project, read from the `depot-token` Secret in that org's task
+  namespace ([cloud#19890](https://github.com/unionai/cloud/pull/19890)).
+- **Image builder:** one registry lookup for ECR, Artifact Registry and ACR
+  (go-containerregistry), a new `basic` authentication type for registries that
+  speak docker basic auth (GHCR, Depot, private registries), and Depot tags
+  longer than 128 characters are shortened with a hash suffix so different
+  image specs no longer collide on one tag ([cloud#15338](https://github.com/unionai/cloud/pull/15338)). A failed build's error
+  leads with BuildKit's last lines ([cloud#19918](https://github.com/unionai/cloud/pull/19918)).
+- **leasor:** enforces org capability limits: max concurrent runs
+  ([cloud#19671](https://github.com/unionai/cloud/pull/19671)), max actions per run ([cloud#19704](https://github.com/unionai/cloud/pull/19704)), `max_queue_depth`
+  ([cloud#19961](https://github.com/unionai/cloud/pull/19961)) and `max_concurrent_actions` ([cloud#20021](https://github.com/unionai/cloud/pull/20021)). A lease is closed as
+  final when the actions service reports the action not found ([cloud#19931](https://github.com/unionai/cloud/pull/19931)),
+  and the actions service no longer enqueues an action the leasor already has
+  ([cloud#19993](https://github.com/unionai/cloud/pull/19993)).
+- **leaseworker:** inline leaseworker retries orchestrators the way flyte-sdk
+  retries tasks ([cloud#19928](https://github.com/unionai/cloud/pull/19928)).
+- **operator:** cluster health judges DaemonSet pods by their node's readiness
+  ([cloud#19965](https://github.com/unionai/cloud/pull/19965)); the operator reports secret names and checks the org's max
+  secrets before creating one ([cloud#19861](https://github.com/unionai/cloud/pull/19861)).
+- **dataproxy:** reads action data from the pool of the action's queue
+  ([cloud#19898](https://github.com/unionai/cloud/pull/19898)).
+- Go 1.27.4 ([cloud#20007](https://github.com/unionai/cloud/pull/20007)).
+
+### Chart: `depot-token` is no longer rendered ([#683](https://github.com/unionai/helm-charts/pull/683))
 
 **Breaking (Depot mode only).** Depot mode is `imageBuilder.enabled: true`,
 `imageBuilder.buildkit.enabled: false` and an empty `imageBuilder.buildkitUri`. Other

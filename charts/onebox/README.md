@@ -99,20 +99,20 @@ account.
 
 ### License key
 
-Without a valid key and with `license.enforce` on, onebox is read-only: reads
+onebox always enforces its license: without a valid key it is read-only. Reads
 work, changes are refused, and runs in flight finish. Account admins add keys in
 the console, or mount one from a Secret:
 
 ```bash
 kubectl -n onebox create secret generic onebox-license --from-literal=license-key=<key>
-helm upgrade --install onebox ... --set license.existingSecret=onebox-license \
-  --set license.enforce=true --set license.issueURL=<where users get a key>
+helm upgrade --install onebox ... --set license.existingSecret=onebox-license
 ```
 
 The console shows the install ID a key is issued for and links to `issueURL`
-with it. A rotated key in the Secret is picked up without a restart. Nothing is
-rendered while the `license` values are unset; they need an onebox image with
-licensing.
+with it: by default Union's sign-up, which lands people on their organization's
+License Keys page for this install. A rotated key in the Secret is picked up
+without a restart. Keys are verified offline against Union's issuer keys, built
+into each onebox release.
 
 ### A private CA, extra mounts and proxies
 

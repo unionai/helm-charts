@@ -1,8 +1,96 @@
 # controlplane — Release Notes
 
-## Unreleased
+## 2026.11.10
 
-### `global.UNION_PUBLIC_PORT` keeps a non-443 port on the OAuth callback
+`version` and `appVersion` move `2026.11.7` → `2026.11.10`, picking up the new
+images. 2026.11.8 and 2026.11.9 were not released. No controlplane template or
+values changes; lockstep release with the `dataplane` chart.
+
+The images are 2026.11.7 plus two migration fixes for upgrades from 2026.7.x:
+
+- **cluster:** `cluster-migrate` no longer fails with `column "state" of relation
+  "queues" contains null values` when upgrading from 2026.7.2 or earlier with
+  existing queues.
+- **executions:** migrations no longer fail on PostgreSQL 14 with `syntax error at
+  or near "("`. On PostgreSQL 14 the CDC publication is not created, so
+  `notifications.source=cdc` is unavailable; the default `listen` is unaffected.
+
+A PostgreSQL 14 executions database left dirty by an earlier failed upgrade must
+be reset once before upgrading:
+
+- dirty at `20260921000000`: `UPDATE schema_migrations SET version = 20260910000000, dirty = false;`
+- dirty at `20261022170000`: `UPDATE schema_migrations SET version = 20261015130000, dirty = false;`
+
+## 2026.11.7
+
+`version` and `appVersion` move `2026.11.6` → `2026.11.7`, picking up the new
+images. Lockstep release with the `dataplane` chart.
+
+Notable image changes (unionai/cloud `release/2026.11.6..14d75bf0f4`, tagged
+`release/2026.11.7`):
+
+- **Image builder:** the `build-image-bootstrap` image pins `flyte==2.13.3`
+  instead of installing the latest release ([cloud#20073](https://github.com/unionai/cloud/pull/20073)).
+- **shared_service:** `migrate` creates a missing database instead of failing
+  with `SQLSTATE 3D000`, which blocked fresh self-managed installs once the chart
+  runs `cloudcacheservice migrate` ([cloud#19667](https://github.com/unionai/cloud/pull/19667)).
+- **console:** server-side connects get 2.5s per resolved address, fixing
+  intermittent "couldn't complete the login" errors ([cloud#20087](https://github.com/unionai/cloud/pull/20087)).
+- **flyte:** the secrets webhook copies the primary task container's
+  `securityContext` to the secrets init container ([cloud#20086](https://github.com/unionai/cloud/pull/20086)).
+- **dataproxy:** a session route and WebSocket-capable port forward reach servers
+  inside session microVMs ([cloud#20059](https://github.com/unionai/cloud/pull/20059)).
+
+### build-image is registered without CoPilot data loading ([#685](https://github.com/unionai/helm-charts/pull/685))
+
+The `imageBuilder.bootstrap` hook registers `build-image` with whatever `flyte`
+the bootstrap image installs. Since flyte-sdk 2.12.3 that sends a data loading
+config, so the backend added CoPilot containers to the build pod and the uploader
+failed with `file not found at path [/var/outputs/fully_qualified_image]`: the
+`imagebuild` binary writes its outputs to the remote prefix itself. The chart task
+now sets `ContainerTask(data_loading=False)`, which needs flyte >= 2.13.3; the
+`2026.11.7` bootstrap image pins it. A custom or mirrored bootstrap image must ship
+flyte >= 2.13.3.
+
+The hook registers with `--version <appVersion>` and `flyte deploy` skips a
+version that already exists, so the fix lands with this new appVersion.
+
+## 2026.11.6
+
+`version` moves `2026.11.5` → `2026.11.6` and `appVersion` moves `2026.11.4` →
+`2026.11.6`, picking up the new images. Lockstep release with the `dataplane`
+chart.
+
+Notable image changes (unionai/cloud `release/2026.11.4..fc8a27db50`, tagged
+`release/2026.11.6`):
+
+- **Union On-Demand:** shared queues, Modal GPU, per-org storage and managed
+  secrets. The operator proxy gains an `orgDepot` lookup: with
+  `imageBuilderConfig.orgDepot.enabled`, each org's images are looked up in its
+  own Depot project, read from the `depot-token` Secret in that org's task
+  namespace ([cloud#19890](https://github.com/unionai/cloud/pull/19890)).
+- **Image builder:** one registry lookup for ECR, Artifact Registry and ACR
+  (go-containerregistry), a new `basic` authentication type for registries that
+  speak docker basic auth (GHCR, Depot, private registries), and Depot tags
+  longer than 128 characters are shortened with a hash suffix so different
+  image specs no longer collide on one tag ([cloud#15338](https://github.com/unionai/cloud/pull/15338)). A failed build's error
+  leads with BuildKit's last lines ([cloud#19918](https://github.com/unionai/cloud/pull/19918)).
+- **leasor:** enforces org capability limits: max concurrent runs
+  ([cloud#19671](https://github.com/unionai/cloud/pull/19671)), max actions per run ([cloud#19704](https://github.com/unionai/cloud/pull/19704)), `max_queue_depth`
+  ([cloud#19961](https://github.com/unionai/cloud/pull/19961)) and `max_concurrent_actions` ([cloud#20021](https://github.com/unionai/cloud/pull/20021)). A lease is closed as
+  final when the actions service reports the action not found ([cloud#19931](https://github.com/unionai/cloud/pull/19931)),
+  and the actions service no longer enqueues an action the leasor already has
+  ([cloud#19993](https://github.com/unionai/cloud/pull/19993)).
+- **leaseworker:** inline leaseworker retries orchestrators the way flyte-sdk
+  retries tasks ([cloud#19928](https://github.com/unionai/cloud/pull/19928)).
+- **operator:** cluster health judges DaemonSet pods by their node's readiness
+  ([cloud#19965](https://github.com/unionai/cloud/pull/19965)); the operator reports secret names and checks the org's max
+  secrets before creating one ([cloud#19861](https://github.com/unionai/cloud/pull/19861)).
+- **dataproxy:** reads action data from the pool of the action's queue
+  ([cloud#19898](https://github.com/unionai/cloud/pull/19898)).
+- Go 1.27.4 ([cloud#20007](https://github.com/unionai/cloud/pull/20007)).
+
+### `global.UNION_PUBLIC_PORT` keeps a non-443 port on the OAuth callback ([#672](https://github.com/unionai/helm-charts/pull/672))
 
 flyteadmin builds the OAuth `redirect_uri` from the first `authorizedUris` entry
 whose hostname matches, ignoring the port. A control plane served on, say, `:8443`
