@@ -4,6 +4,35 @@ Tracking the migration story for the helm-charts cloud overlays. New entries at 
 
 ---
 
+## controlplane — the cache service runs `cloudcacheservice`
+
+### What changed
+
+The `cacheservice` Deployment runs `cloudcacheservice` (`migrate` in the init container, then
+`serve`) instead of the old `cacheservice` binary, against the same `cacheservice` database. Its
+names, labels, ports and `flyte.cacheservice.*` values are unchanged. It also serves
+`flyteidl2.cacheservice.v2.CacheService`, which the ingress and `GRPCRoute` now route.
+
+- The config is derived from `flyte.db.cacheservice.database` and
+  `flyte.configmap.cacheserviceServer.cacheservice`, so existing overrides keep working.
+  `sharedService` starts from `configMap.sharedService` like the other Union services, and
+  `cacheserviceServer.sharedService` overrides it.
+- `cacheserviceServer.cache-server` and `cacheserviceServer.private` are no longer read.
+
+### Who needs to act
+
+`flyte.cacheservice.image.tag` must name a `services` image that ships `cloudcacheservice`
+(built from `unionai/cloud` after #19192). On an older image the pod fails with
+`exec: "cloudcacheservice": executable file not found`. A fresh install also needs `migrate` to
+create the missing `cacheservice` database, as the old binary did: images with `unionai/cloud#19667`,
+such as the chart's default `2026.11.10`, do.
+
+### Rollback
+
+Revert the chart change. Both binaries read the same tables.
+
+---
+
 ## dataplane — `singleNamespace` replaces `low_privilege`, and work namespaces need a binding
 
 Find the scenario that matches your values and apply its snippet. The dataplane
