@@ -1715,6 +1715,17 @@ union-webhook-system
 {{- end -}}
 
 {{/*
+Returns the legacy webhook cleanup Job service account name, using the common SA when enabled.
+*/}}
+{{- define "webhook.cleanupServiceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+flyte-webhook-cleanup
+{{- end -}}
+{{- end -}}
+
+{{/*
 Returns the fluentbit service account name, using the common SA when enabled.
 */}}
 {{- define "fluentbit.serviceAccountName" -}}

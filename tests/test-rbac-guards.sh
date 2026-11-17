@@ -1282,12 +1282,13 @@ function expect-verb-resources {
 
 function expect-cleanup-grant-exact {
   local desc=$1; shift
-  local out got job
+  local service_account=$1; shift
+  local out got job job_service_account created_service_account want_created_service_account
   local want_job="deployment/flytepropeller-webhook
 deployment/union-operator-prometheus
 mutatingwebhookconfiguration/flyte-pod-webhook
 secret/flyte-pod-webhook"
-  read -r -d '' want_rbac <<'EXPECTED' || true
+  read -r -d '' want_rbac <<EXPECTED || true
 kind: ClusterRole
 metadata:
   name: flyte-webhook-cleanup-union
@@ -1306,7 +1307,7 @@ roleRef:
   name: flyte-webhook-cleanup-union
 subjects:
   - kind: ServiceAccount
-    name: flyte-webhook-cleanup
+    name: ${service_account}
     namespace: union
 kind: Role
 metadata:
@@ -1334,7 +1335,7 @@ roleRef:
   name: flyte-webhook-cleanup-union
 subjects:
   - kind: ServiceAccount
-    name: flyte-webhook-cleanup
+    name: ${service_account}
     namespace: union
 EXPECTED
   checks=$((checks + 1))
@@ -1360,7 +1361,30 @@ EXPECTED
       for (i=1; i<NF; i++) if ($i == "delete") {print $(i+1) "/" $(i+2); break}
     }
   ' <<<"${out}" | sort -u)
-  if [[ "${got}" == "${want_rbac}" && "${job}" == "${want_job}" ]]; then
+  job_service_account=$(awk '
+    /^# Source: / {src=$3; kind=""}
+    src !~ /pre-upgrade-cleanup\.yaml$/ {next}
+    /^kind: / {kind=$2; next}
+    kind == "Job" && /^      serviceAccountName:/ {
+      sub(/^ *serviceAccountName: */, ""); gsub(/^["\047]|["\047]$/, ""); print; exit
+    }
+  ' <<<"${out}")
+  created_service_account=$(awk '
+    /^# Source: / {src=$3; kind=""; inmetadata=0}
+    src !~ /pre-upgrade-cleanup\.yaml$/ {next}
+    /^kind: / {kind=$2; next}
+    kind == "ServiceAccount" && /^metadata:$/ {inmetadata=1; next}
+    kind == "ServiceAccount" && inmetadata && /^  name:/ {
+      sub(/^ *name: */, ""); print; exit
+    }
+  ' <<<"${out}")
+  want_created_service_account=""
+  if [[ "${service_account}" == "flyte-webhook-cleanup" ]]; then
+    want_created_service_account="flyte-webhook-cleanup"
+  fi
+  if [[ "${got}" == "${want_rbac}" && "${job}" == "${want_job}" &&
+        "${job_service_account}" == "${service_account}" &&
+        "${created_service_account}" == "${want_created_service_account}" ]]; then
     echo "  ok       ${desc}"
   else
     echo "  FAILED   ${desc}"
@@ -1371,6 +1395,12 @@ EXPECTED
     if [[ "${job}" != "${want_job}" ]]; then
       echo "           Job deletions differ from the four legacy objects:"
       diff <(echo "${want_job}") <(echo "${job}") | sed 's/^/             /'
+    fi
+    if [[ "${job_service_account}" != "${service_account}" ]]; then
+      echo "           Job uses ${job_service_account:-<no service account>} instead of ${service_account}"
+    fi
+    if [[ "${created_service_account}" != "${want_created_service_account}" ]]; then
+      echo "           cleanup ServiceAccount object: expected ${want_created_service_account:-<absent>}, got ${created_service_account:-<absent>}"
     fi
     failures=$((failures + 1))
   fi
@@ -1463,9 +1493,12 @@ EXPECTED
   fi
 }
 
-expect-cleanup-grant-exact "its grant is exactly the four objects its Job deletes"
+expect-cleanup-grant-exact "its grant is exactly the four objects its Job deletes" union-system
 expect-cleanup-grant-exact "and outside singleNamespace too" \
+  union-system \
   --set singleNamespace=false --set clusterresourcesync.enabled=true
+expect-cleanup-grant-exact "and keeps its dedicated identity when the common account is disabled" \
+  flyte-webhook-cleanup --set commonServiceAccount.enabled=false
 expect-manifest "and every cleanup object is hook-scoped" \
   present "helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed"
 

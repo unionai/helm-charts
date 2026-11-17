@@ -1,5 +1,60 @@
 # controlplane — Release Notes
 
+## 2026.11.10
+
+`version` and `appVersion` move `2026.11.7` → `2026.11.10`, picking up the new
+images. 2026.11.8 and 2026.11.9 were not released. No controlplane template or
+values changes; lockstep release with the `dataplane` chart.
+
+The images are 2026.11.7 plus two migration fixes for upgrades from 2026.7.x:
+
+- **cluster:** `cluster-migrate` no longer fails with `column "state" of relation
+  "queues" contains null values` when upgrading from 2026.7.2 or earlier with
+  existing queues.
+- **executions:** migrations no longer fail on PostgreSQL 14 with `syntax error at
+  or near "("`. On PostgreSQL 14 the CDC publication is not created, so
+  `notifications.source=cdc` is unavailable; the default `listen` is unaffected.
+
+A PostgreSQL 14 executions database left dirty by an earlier failed upgrade must
+be reset once before upgrading:
+
+- dirty at `20260921000000`: `UPDATE schema_migrations SET version = 20260910000000, dirty = false;`
+- dirty at `20261022170000`: `UPDATE schema_migrations SET version = 20261015130000, dirty = false;`
+
+## 2026.11.7
+
+`version` and `appVersion` move `2026.11.6` → `2026.11.7`, picking up the new
+images. Lockstep release with the `dataplane` chart.
+
+Notable image changes (unionai/cloud `release/2026.11.6..14d75bf0f4`, tagged
+`release/2026.11.7`):
+
+- **Image builder:** the `build-image-bootstrap` image pins `flyte==2.13.3`
+  instead of installing the latest release ([cloud#20073](https://github.com/unionai/cloud/pull/20073)).
+- **shared_service:** `migrate` creates a missing database instead of failing
+  with `SQLSTATE 3D000`, which blocked fresh self-managed installs once the chart
+  runs `cloudcacheservice migrate` ([cloud#19667](https://github.com/unionai/cloud/pull/19667)).
+- **console:** server-side connects get 2.5s per resolved address, fixing
+  intermittent "couldn't complete the login" errors ([cloud#20087](https://github.com/unionai/cloud/pull/20087)).
+- **flyte:** the secrets webhook copies the primary task container's
+  `securityContext` to the secrets init container ([cloud#20086](https://github.com/unionai/cloud/pull/20086)).
+- **dataproxy:** a session route and WebSocket-capable port forward reach servers
+  inside session microVMs ([cloud#20059](https://github.com/unionai/cloud/pull/20059)).
+
+### build-image is registered without CoPilot data loading ([#685](https://github.com/unionai/helm-charts/pull/685))
+
+The `imageBuilder.bootstrap` hook registers `build-image` with whatever `flyte`
+the bootstrap image installs. Since flyte-sdk 2.12.3 that sends a data loading
+config, so the backend added CoPilot containers to the build pod and the uploader
+failed with `file not found at path [/var/outputs/fully_qualified_image]`: the
+`imagebuild` binary writes its outputs to the remote prefix itself. The chart task
+now sets `ContainerTask(data_loading=False)`, which needs flyte >= 2.13.3; the
+`2026.11.7` bootstrap image pins it. A custom or mirrored bootstrap image must ship
+flyte >= 2.13.3.
+
+The hook registers with `--version <appVersion>` and `flyte deploy` skips a
+version that already exists, so the fix lands with this new appVersion.
+
 ## 2026.11.6
 
 `version` moves `2026.11.5` → `2026.11.6` and `appVersion` moves `2026.11.4` →

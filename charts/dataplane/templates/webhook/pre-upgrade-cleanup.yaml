@@ -9,6 +9,7 @@ Pre-upgrade hook that deletes objects left behind by chart versions before
   3. Secret/flyte-pod-webhook — marked immutable:true; blocks TLS cert renewal.
   4. Deployment/union-operator-prometheus — same selector problem.
 */}}
+{{- if not (include "useCommonServiceAccount" .) }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -19,6 +20,7 @@ metadata:
     helm.sh/hook: pre-upgrade
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
     helm.sh/hook-weight: "-5"
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -57,7 +59,7 @@ roleRef:
   name: flyte-webhook-cleanup-{{ .Release.Namespace }}
 subjects:
   - kind: ServiceAccount
-    name: flyte-webhook-cleanup
+    name: {{ include "webhook.cleanupServiceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -89,7 +91,7 @@ roleRef:
   name: flyte-webhook-cleanup-{{ .Release.Namespace }}
 subjects:
   - kind: ServiceAccount
-    name: flyte-webhook-cleanup
+    name: {{ include "webhook.cleanupServiceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 ---
 apiVersion: batch/v1
@@ -105,7 +107,7 @@ spec:
   template:
     spec:
       restartPolicy: OnFailure
-      serviceAccountName: flyte-webhook-cleanup
+      serviceAccountName: {{ include "webhook.cleanupServiceAccountName" . }}
       {{- with .Values.flytepropellerwebhook.legacyWebhookCleanup.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -124,4 +126,4 @@ spec:
               kubectl delete secret flyte-pod-webhook -n ${NS} --ignore-not-found
               kubectl delete deployment union-operator-prometheus -n ${NS} --ignore-not-found
 {{- end }}
-{{- end }}
+{{- end -}}
