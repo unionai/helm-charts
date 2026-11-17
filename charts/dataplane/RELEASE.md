@@ -1,5 +1,22 @@
 # dataplane — Release Notes
 
+## 2026.11.10
+
+`version` and `appVersion` move `2026.11.7` → `2026.11.10`; lockstep release with
+the `controlplane` chart. 2026.11.8 and 2026.11.9 were not released.
+
+One chart change, below. No dataplane image changes: this release's fixes are in
+the control plane.
+
+### Chart: the legacy webhook cleanup Job uses the common service account ([#690](https://github.com/unionai/helm-charts/pull/690))
+
+When `commonServiceAccount.enabled` is true, the `flyte-webhook-cleanup` pre-upgrade
+Job now runs as `commonServiceAccount.name` and its RoleBindings target that account.
+The hook no longer creates its dedicated `flyte-webhook-cleanup` ServiceAccount in
+this mode, so its image can inherit `commonServiceAccount.imagePullSecrets` when no
+hook-specific image pull secrets are set. With the common account disabled, the
+existing dedicated account and behavior are kept.
+
 ## 2026.11.7
 
 `version` and `appVersion` move `2026.11.6` → `2026.11.7`, picking up the new
@@ -15,15 +32,6 @@ Notable image changes (unionai/cloud `release/2026.11.6..14d75bf0f4`, tagged
   inside session microVMs ([cloud#20059](https://github.com/unionai/cloud/pull/20059)).
 - **sandbox-agent:** microVM snapshots go to a bounded tmpfs with a disk fallback,
   and memory is pre-copied ([cloud#20082](https://github.com/unionai/cloud/pull/20082)).
-
-### Chart: the legacy webhook cleanup Job uses the common service account
-
-When `commonServiceAccount.enabled` is true, the `flyte-webhook-cleanup` pre-upgrade
-Job now runs as `commonServiceAccount.name` and its RoleBindings target that account.
-The hook no longer creates its dedicated `flyte-webhook-cleanup` ServiceAccount in
-this mode, so its image can inherit `commonServiceAccount.imagePullSecrets` when no
-hook-specific image pull secrets are set. With the common account disabled, the
-existing dedicated account and behavior are kept.
 
 ## 2026.11.6
 
