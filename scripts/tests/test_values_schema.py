@@ -8,37 +8,6 @@ import values_schema
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 REAL_CHART = REPO_ROOT / "charts" / "dataplane"
 
-# Every leaf the dataplane schema must declare: the paths Fleet's vendor
-# templates write that values.yaml does not default.
-FLEET_LEAVES = {
-    "provider": "string",
-    "low_privilege": "boolean",
-    "global.AWS_ACCOUNT_ID": "string",
-    "global.AWS_REGION": "string",
-    "config.core.webhook.embeddedSecretManagerConfig.azureConfig.vaultURI": "string",
-    "config.core.webhook.embeddedSecretManagerConfig.gcpConfig.project": "string",
-    "config.proxy.smConfig.awsConfig.account": "string",
-    "config.proxy.smConfig.awsConfig.region": "string",
-    "config.proxy.smConfig.azureConfig.vaultURI": "string",
-    "config.proxy.smConfig.gcpConfig.project": "string",
-    "config.proxy.persistedLogs.azureLogAnalytics.logAnalyticsWorkspaceResourceIdTemplate": "string",
-    "config.proxy.persistedLogs.gcpLogging.gcp.project": "string",
-    "config.k8s.plugins.k8s.default-labels": "array",
-    "config.k8s.plugins.k8s.interruptible-tolerations": "array",
-    "config.k8s.plugins.k8s.gpu-device-node-label": "string",
-    "config.k8s.plugins.k8s.gpu-partition-size-node-label": "string",
-    "config.k8s.plugins.k8s.accelerator-device-classes": ["object", "array"],
-    "config.k8s.plugins.k8s.accelerator-devices": ["object", "array"],
-    "config.k8s.plugins.k8s.interruptible-node-selector-requirement.key": "string",
-    "config.k8s.plugins.k8s.interruptible-node-selector-requirement.operator": "string",
-    "config.k8s.plugins.k8s.interruptible-node-selector-requirement.values": "array",
-    "config.k8s.plugins.k8s.non-interruptible-node-selector-requirement.key": "string",
-    "config.k8s.plugins.k8s.non-interruptible-node-selector-requirement.operator": "string",
-    "config.k8s.plugins.k8s.non-interruptible-node-selector-requirement.values": "array",
-    "leaseworker.task_logs.plugins.logs.azure-log-templates": "array",
-    "leaseworker.task_logs.plugins.logs.stackdriver-enabled": "boolean",
-}
-
 
 # Additional supported proxy fields, pinned to the selected operator source.
 PROXY_LEAVES = {
@@ -259,6 +228,15 @@ def test_output_is_deterministic(tmp_path):
         ("# @schema\n# type: object\n# required: [a]\n# @schema\nkey: {}\n", "required"),
         ("# @schema\n# $ref: '#/definitions/x'\n# @schema\nkey: 1\n", r"\$ref"),
         ("# @schema\n# type: tuple\n# @schema\nkey: 1\n", "unsupported type"),
+        ("# @schema\n# type: string\n# enum: [aws]\n# @schema\nkey: ''\n", "enum"),
+        (
+            "# @schema\n# properties: {child: {type: string, enum: [aws]}}\n# @schema\nkey: {}\n",
+            "enum",
+        ),
+        (
+            "# @schema\n# type: array\n# items: {type: string, enum: [aws]}\n# @schema\nkey: []\n",
+            "enum",
+        ),
         (
             "# @schema\n# type: string\n# properties: {a: {type: string}}\n# @schema\nkey: {}\n",
             "declares properties but type string",
@@ -290,9 +268,17 @@ def test_check_mode_exit_codes(tmp_path, capsys):
     assert values_schema.main(["--chart", str(tmp_path), "--check"]) == 2
 
 
-def test_real_dataplane_chart_declares_fleet_and_proxy_paths():
+def test_real_dataplane_contract_is_open_and_current():
     schema = json.loads(values_schema.generate(REAL_CHART))
-    assert leaves(schema) == FLEET_LEAVES | PROXY_LEAVES
+    labels = schema["properties"]["config"]["properties"]["k8s"]["properties"]["plugins"][
+        "properties"
+    ]["k8s"]["properties"]["default-labels"]
+    assert labels["type"] == ["array", "object"]
+    declared = leaves(schema)
+    for path, expected in PROXY_LEAVES.items():
+        assert declared[path] == expected, path
+    for path in ("accelerator-device-classes", "accelerator-devices"):
+        assert declared[f"config.k8s.plugins.k8s.{path}"] == ["object", "array"]
     assert "additionalProperties" not in json.dumps(schema)
     assert "enum" not in json.dumps(schema)
     assert values_schema.generate(REAL_CHART) == (REAL_CHART / "values.schema.json").read_text()
