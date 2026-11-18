@@ -3456,13 +3456,51 @@ gateway:
   # ingress-nginx instead (`ingress.serving.class`), so this stays off there.
   publicLoadBalancer:
     enabled: false
-    # -- Annotations for the LoadBalancer Service — cloud LB scheme
-    # (internet-facing) + external-dns hostname. Set these for separate-cluster
-    # dataplanes; e.g. on AWS:
-    #   service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
-    #   service.beta.kubernetes.io/aws-load-balancer-type: external
-    #   external-dns.alpha.kubernetes.io/hostname: "*.apps.<CLUSTER_NAME>.<CONTROLPLANE_HOST>"
+    # -- Annotations for the LoadBalancer Service — cloud LB scheme + optional
+    # external-dns hostname. Required: the scheme annotation decides whether apps
+    # are reachable from the internet, and every cloud defaults to a PUBLIC load
+    # balancer when it is absent. Set these for separate-cluster dataplanes.
+    #
+    # Internet-facing (apps reachable publicly, DNS usually via external-dns):
+    #   AWS:
+    #     service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+    #     service.beta.kubernetes.io/aws-load-balancer-type: external
+    #     external-dns.alpha.kubernetes.io/hostname: "*.apps.<CLUSTER_NAME>.<CONTROLPLANE_HOST>"
+    #
+    # Internal / VPC-only (apps reachable only from inside the VPC and whatever
+    # is routed to it — a corporate VPN, Direct Connect, Interconnect). Pair this
+    # with tunnelService.apps.enableGlobalIngress=false and a private DNS zone, or
+    # the apps stay reachable through the shared app ingress regardless:
+    #   AWS:
+    #     service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+    #     service.beta.kubernetes.io/aws-load-balancer-type: external
+    #   GCP:
+    #     networking.gke.io/load-balancer-type: "Internal"
+    #     # optional, to place the LB outside the node subnet:
+    #     networking.gke.io/internal-load-balancer-subnet: "<SUBNET_NAME>"
+    #   Azure:
+    #     service.beta.kubernetes.io/azure-load-balancer-internal: "true"
     annotations: {}
+    # -- Pin the load balancer to an address you reserved, instead of letting the
+    # cloud allocate an ephemeral one. Worth setting whenever DNS for the apps
+    # wildcard is maintained outside this chart (a private zone, a corporate
+    # resolver): without it, deleting and recreating this Service hands out a new
+    # address and every app URL resolves to a dead one until the record is fixed.
+    # Unused by AWS, which selects a reserved address by annotation instead.
+    loadBalancerIP: ""
+    # -- Restrict which client CIDRs the load balancer accepts, rendered as
+    # spec.loadBalancerSourceRanges. Defence in depth for VPC-only deployments:
+    # if the scheme annotation above is wrong or dropped, this still keeps the
+    # apps gateway from answering the internet. Empty means any client the load
+    # balancer's scheme allows. e.g. ["10.0.0.0/8"]
+    loadBalancerSourceRanges: []
+    # -- externalTrafficPolicy for the Service. "Local" preserves the client
+    # source IP, so the gateway's access logs record the real caller rather than
+    # a node address — needed to audit who reached an app. It also drops traffic
+    # on nodes running no gateway pod, so run the gateway with enough replicas or
+    # a spread constraint before enabling it. Empty leaves the Kubernetes default
+    # ("Cluster").
+    externalTrafficPolicy: ""
     # -- Secret holding the apps wildcard TLS cert (tls.crt/tls.key) that Envoy's
     # apps_https:8443 listener terminates. Required (non-empty) when
     # publicLoadBalancer.enabled — the chart fails to render otherwise, as TLS

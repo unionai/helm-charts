@@ -15,6 +15,15 @@ gateway's selector/labels, so every serving data plane gets the same wiring
 instead of hand-rolling the Service. Annotations (LB scheme + external-dns
 hostname) are the only per-environment part, supplied via
 `gateway.publicLoadBalancer.annotations`.
+
+The same Service also serves the VPC-only case: an internal LB annotation makes
+apps reachable from the VPC and whatever routes into it (a corporate VPN) and
+from nowhere else. That needs three things together, since each alone leaves a
+public path open — the internal scheme annotation here,
+`tunnelService.apps.enableGlobalIngress: false` to drop the shared app ingress
+route, and an apps domain the customer resolves privately
+(`updateStatus.connectionConfig.apps.domain`). `loadBalancerSourceRanges` is the
+backstop for the first of the three; see values.yaml.
 */}}
 apiVersion: v1
 kind: Service
@@ -30,6 +39,16 @@ metadata:
   {{- end }}
 spec:
   type: LoadBalancer
+  {{- with .Values.gateway.publicLoadBalancer.loadBalancerIP }}
+  loadBalancerIP: {{ tpl . $ | quote }}
+  {{- end }}
+  {{- with .Values.gateway.publicLoadBalancer.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+  {{- with .Values.gateway.publicLoadBalancer.externalTrafficPolicy }}
+  externalTrafficPolicy: {{ . }}
+  {{- end }}
   selector:
     app: gateway
   ports:
