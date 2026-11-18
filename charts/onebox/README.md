@@ -1,4 +1,9 @@
-# onebox
+# Self-hosted Base
+
+This chart is published as `selfhosted-base`, and also as `onebox`, its name
+before the rename. The two are the same chart. To move a release installed
+from `onebox` to `selfhosted-base`, upgrade it with `--set nameOverride=onebox`
+so its resources keep their names.
 
 Union in one pod. One Deployment runs:
 
