@@ -1335,6 +1335,34 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{/*
+The operator's proxy configuration (config.proxy). When the image lookup authenticates
+with "basic", its credentials come from imageBuilder.basicAuth, unless
+config.proxy.imageBuilderConfig.basicAuth is set. Without credentials the operator
+rejects a "basic" lookup at startup. The registry host is left for the operator to
+take from the repository it probes.
+*/}}
+{{- define "operator.proxyConfig" -}}
+{{- with .Values.config.proxy -}}
+{{- $proxy := deepCopy . -}}
+{{- $lookup := $proxy.imageBuilderConfig | default dict -}}
+{{- $type := tpl ($lookup.authenticationType | default "" | toString) $ -}}
+{{- if and (eq $type "basic") (not (hasKey $lookup "basicAuth")) -}}
+{{- $configured := $.Values.imageBuilder.basicAuth | default dict -}}
+{{- $basicAuth := dict "username" ($configured.username | default "") -}}
+{{- with $configured.passwordSecretName -}}
+{{- $_ := set $basicAuth "passwordSecretName" . -}}
+{{- end -}}
+{{- with $configured.passwordPlainText -}}
+{{- $_ := set $basicAuth "passwordPlainText" . -}}
+{{- end -}}
+{{- $_ := set $lookup "basicAuth" $basicAuth -}}
+{{- $_ := set $proxy "imageBuilderConfig" $lookup -}}
+{{- end -}}
+{{- toYaml $proxy -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Check if Depot should be enabled for image building.
 True when imageBuilder is enabled, buildkit is not, and no custom buildkitUri is set.
 */}}
