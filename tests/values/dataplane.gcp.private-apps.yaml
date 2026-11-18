@@ -1,0 +1,45 @@
+# helm-values: examples/values-test-certs.yaml
+#
+# VPC-only apps: the gateway is exposed through an INTERNAL load balancer, the
+# shared app ingress route is off, and app URLs are issued under a per-cluster
+# domain the customer resolves in a private DNS zone. All three are needed
+# together — each one alone leaves a public path to the apps.
+host: byok.us-west-2.union.ai
+clusterName: test-e2e-gcp-private-apps
+orgName: byok
+provider: gcp
+storage:
+  provider: gcs
+  bucketName: test-gcp-bucket
+  fastRegistrationBucketName: test-gcp-bucket
+  region: us-central1
+  gcp:
+    projectId: test-gcp-project-123
+secrets:
+  admin:
+    create: true
+    clientId: byok-test-e2e-gcp-private-apps-operator
+    clientSecret: test-not-real-secret
+updateStatus:
+  connectionConfig:
+    enabled: true
+    host: test-e2e-gcp-private-apps.dp.byok.us-west-2.union.ai
+    apps:
+      domain: apps.test-e2e-gcp-private-apps.byok.us-west-2.union.ai
+gateway:
+  publicLoadBalancer:
+    enabled: true
+    annotations:
+      networking.gke.io/load-balancer-type: "Internal"
+    loadBalancerIP: 10.128.0.42
+    loadBalancerSourceRanges:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+    externalTrafficPolicy: Local
+    tlsSecretName: dataplane-apps-private-tls
+tunnelService:
+  apps:
+    enableGlobalIngress: false
+ingress:
+  serving:
+    enabled: false
