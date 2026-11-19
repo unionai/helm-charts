@@ -1,4 +1,21 @@
 {{- if .Values.flyte.cacheservice.enabled }}
+{{- /*
+The cache service runs cloudcacheservice. Its db, sharedService and cacheService sections are derived from the
+flyte.db.cacheservice and cacheserviceServer.cacheservice values, so existing overrides keep working. sharedService
+starts from the configMap.sharedService the other Union services use (single-tenant org, legacy hosts), and the
+metrics scope stays "flyte:", which the dashboards query (flyte:cacheservice:*). server.yaml passes the remaining
+cacheserviceServer sections through (authorizer, otel, union).
+*/}}
+{{- $server := .Values.flyte.configmap.cacheserviceServer }}
+{{- $settings := index $server "cacheservice" | default dict }}
+{{- $db := .Values.flyte.db.cacheservice.database }}
+{{- $sharedService := mergeOverwrite (deepCopy (.Values.configMap.sharedService | default dict)) (dict
+  "port" 8090
+  "httpPort" 8088
+  "connectPort" 8089
+  "profilerPort" (index $settings "profiler-port" | default 10254)
+  "metrics" (dict "scope" (printf "%s:" (index $settings "metrics-scope" | default "flyte")))
+) (deepCopy ($server.sharedService | default dict)) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -6,14 +23,30 @@ metadata:
   namespace: {{ template "flyte.namespace" . }}
   labels: {{ include "cacheservice.labels" . | nindent 4 }}
 data:
-{{- with .Values.flyte.db.cacheservice }}
-  db.yaml: | {{ tpl (toYaml .) $ | nindent 4 }}
-{{- end }}
+  db.yaml: |
+    db:
+      host: {{ tpl (toString $db.host) . | quote }}
+      port: {{ $db.port }}
+      dbname: {{ $db.dbname | quote }}
+      username: {{ tpl (toString $db.username) . | quote }}
+      passwordPath: {{ $db.passwordPath | quote }}
+      {{- with $db.options }}
+      options: {{ . | quote }}
+      {{- end }}
+      connectionPool:
+        maxIdleConnections: {{ $db.maxIdleConnections }}
+        maxOpenConnections: {{ $db.maxOpenConnections }}
+        maxConnectionLifetime: {{ $db.connMaxLifeTime | quote }}
 {{- with .Values.logging }}
   logger.yaml: | {{ tpl (toYaml .) $ | nindent 4 }}
 {{- end }}
-{{- with .Values.flyte.configmap.cacheserviceServer }}
-  server.yaml: | {{ tpl (toYaml .) $ | nindent 4 }}
-{{- end }}
+  server.yaml: | {{ tpl (toYaml (omit $server "cache-server" "cacheservice" "private" "sharedService")) . | nindent 4 }}
+  cacheservice.yaml: |
+    sharedService: {{- tpl (toYaml $sharedService) . | nindent 6 }}
+    cacheService:
+      storagePrefix: {{ index $settings "storage-prefix" | default "cached_outputs" | quote }}
+      heartbeatGracePeriodMultiplier: {{ index $settings "heartbeat-grace-period-multiplier" | default 3 }}
+      maxReservationHeartbeat: {{ index $settings "max-reservation-heartbeat" | default "10s" | quote }}
+      maxInlineSizeBytes: {{ index $settings "max-inline-size-bytes" | default 0 }}
   storage.yaml: | {{ tpl (include "cacheservice-storage" .) $ | nindent 4 }}
 {{- end }}

@@ -40,6 +40,69 @@ FLEET_LEAVES = {
 }
 
 
+# Additional supported proxy fields, pinned to the selected operator source.
+PROXY_LEAVES = {
+    "config.proxy.logStreamTimeout": ["number", "string"],
+    "config.proxy.informerResyncDuration": ["number", "string"],
+    "config.proxy.actorConfig.streamingPollerInterval": ["number", "string"],
+    "config.proxy.logsServiceConfig.streamingFlushInterval": ["number", "string"],
+    "config.proxy.logsServiceConfig.streamingFlushByteSize": "integer",
+    "config.proxy.logsServiceConfig.streamingBufferSize": "integer",
+    "config.proxy.logsServiceConfig.maxConcurrentStreams": "integer",
+    "config.proxy.smConfig.awsConfig.retries": "integer",
+    "config.proxy.smConfig.gcpConfig.externalAccount.type": "string",
+    "config.proxy.smConfig.gcpConfig.externalAccount.audience": "string",
+    "config.proxy.smConfig.gcpConfig.externalAccount.scopes": "array",
+    "config.proxy.smConfig.gcpConfig.externalAccount.subjectTokenType": "string",
+    "config.proxy.smConfig.gcpConfig.externalAccount.serviceAccountImpersonationURL": "string",
+    "config.proxy.smConfig.gcpConfig.externalAccount.enableAuthDebugTransport": "boolean",
+    "config.proxy.smConfig.gcpConfig.externalAccount.aws.account": "string",
+    "config.proxy.smConfig.gcpConfig.externalAccount.aws.region": "string",
+    "config.proxy.smConfig.gcpConfig.externalAccount.aws.retries": "integer",
+    "config.proxy.smConfig.gcpConfig.gcpSecretManager.replicationPolicy": "string",
+    "config.proxy.smConfig.gcpConfig.gcpSecretManager.replicationLocations": "array",
+    "config.proxy.organization": "string",
+    "config.proxy.cluster": "string",
+    "config.proxy.orgStorage.enabled": "boolean",
+    "config.proxy.serverlessConfig.enabled": "boolean",
+    "config.proxy.serverlessConfig.objectStoreServiceEndpoint": "string",
+    "config.proxy.persistedLogs.awsCloudWatch.groupNameTemplate": "string",
+    "config.proxy.persistedLogs.awsCloudWatch.streamNameTemplate": "string",
+    "config.proxy.persistedLogs.awsCloudWatch.streamNamePrefixTemplate": "string",
+    "config.proxy.persistedLogs.awsCloudWatch.aws.account": "string",
+    "config.proxy.persistedLogs.awsCloudWatch.aws.region": "string",
+    "config.proxy.persistedLogs.awsCloudWatch.aws.retries": "integer",
+    "config.proxy.persistedLogs.gcpLogging.gcp.externalAccount.type": "string",
+    "config.proxy.persistedLogs.gcpLogging.gcp.externalAccount.audience": "string",
+    "config.proxy.persistedLogs.gcpLogging.gcp.externalAccount.scopes": "array",
+    "config.proxy.persistedLogs.gcpLogging.gcp.externalAccount.subjectTokenType": "string",
+    "config.proxy.persistedLogs.gcpLogging.gcp.externalAccount.serviceAccountImpersonationURL": "string",
+    "config.proxy.persistedLogs.gcpLogging.gcp.externalAccount.enableAuthDebugTransport": "boolean",
+    "config.proxy.persistedLogs.gcpLogging.gcp.externalAccount.aws.account": "string",
+    "config.proxy.persistedLogs.gcpLogging.gcp.externalAccount.aws.region": "string",
+    "config.proxy.persistedLogs.gcpLogging.gcp.externalAccount.aws.retries": "integer",
+    "config.proxy.persistedLogs.gcpLogging.gcp.gcpSecretManager.replicationPolicy": "string",
+    "config.proxy.persistedLogs.gcpLogging.gcp.gcpSecretManager.replicationLocations": "array",
+    "config.proxy.persistedLogs.gcpLogging.resourceNames": "array",
+    "config.proxy.stream.modifyStreamContentType": "boolean",
+    "config.proxy.imageBuilderConfig.repositoryOverride": "string",
+    "config.proxy.imageBuilderConfig.basicAuth.registry": "string",
+    "config.proxy.imageBuilderConfig.basicAuth.username": "string",
+    "config.proxy.imageBuilderConfig.basicAuth.passwordPlainText": "string",
+    "config.proxy.imageBuilderConfig.basicAuth.passwordSecretName": "string",
+    "config.proxy.imageBuilderConfig.anonymousLookup": "boolean",
+    "config.proxy.imageBuilderConfig.depotProjectId": "string",
+    "config.proxy.imageBuilderConfig.orgDepot.enabled": "boolean",
+    "config.proxy.imageBuilderConfig.orgDepot.namespaceTemplate": "string",
+    "config.proxy.imageBuilderConfig.orgDepot.secret": "string",
+    "config.proxy.connectorLogs.clientCacheSize": "integer",
+    "config.proxy.connectorLogs.clientCacheTTL": ["number", "string"],
+    "config.proxy.connectorLogs.maxPages": "integer",
+    "config.proxy.prometheusUrl": "string",
+    "config.proxy.podSessionCookiePrefixes": "array",
+}
+
+
 def leaves(schema: dict, prefix: tuple[str, ...] = ()) -> dict[str, str]:
     properties = schema.get("properties")
     if not properties:
@@ -227,9 +290,9 @@ def test_check_mode_exit_codes(tmp_path, capsys):
     assert values_schema.main(["--chart", str(tmp_path), "--check"]) == 2
 
 
-def test_real_dataplane_chart_declares_exactly_the_fleet_paths():
+def test_real_dataplane_chart_declares_fleet_and_proxy_paths():
     schema = json.loads(values_schema.generate(REAL_CHART))
-    assert leaves(schema) == FLEET_LEAVES
+    assert leaves(schema) == FLEET_LEAVES | PROXY_LEAVES
     assert "additionalProperties" not in json.dumps(schema)
     assert "enum" not in json.dumps(schema)
     assert values_schema.generate(REAL_CHART) == (REAL_CHART / "values.schema.json").read_text()
