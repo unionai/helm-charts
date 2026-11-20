@@ -1,5 +1,43 @@
 # controlplane — Release Notes
 
+## 2026.11.11
+
+`version` and `appVersion` move `2026.11.10` → `2026.11.11`, picking up the new
+images. Lockstep release with the `dataplane` chart.
+
+### Chart: the cache service runs as `cloudcacheservice` ([#655](https://github.com/unionai/helm-charts/pull/655))
+
+The control plane's cache service runs `cloudcacheservice` (`migrate`, then `serve`)
+instead of the old `cacheservice` binary. The Deployment, Service, database and
+`flyte.cacheservice.*` values stay the same, and existing overrides keep working.
+`flyteidl2.cacheservice.v2.CacheService` is routed in the ingress and `GRPCRoute`.
+`cache-server` and `private` are dropped from the defaults.
+
+Notable image changes (unionai/cloud `release/2026.11.7..4a17cf980b`, tagged
+`release/2026.11.11`; 2026.11.11 is cut from `main`, so it also carries the two
+2026.11.10 migration fixes):
+
+- **Runs:** CreateRun no longer drops a run when two concurrent creates draw the same
+  generated name. Under heavy concurrent load about 2 in 1,000 runs were accepted but
+  never created; names now come from `crypto/rand`, and a collision is refused with a
+  retryable error ([cloud#20266](https://github.com/unionai/cloud/pull/20266)).
+- **Migrations:** upgrades from 2026.7.x no longer fail in `cluster-migrate`, and
+  executions migrations run on PostgreSQL 14 ([cloud#20238](https://github.com/unionai/cloud/pull/20238), [cloud#20242](https://github.com/unionai/cloud/pull/20242)).
+- **Authorization:** tenants can no longer delete org or domain resources or create
+  domain resources, `_cluster` domain names are reserved ([cloud#20256](https://github.com/unionai/cloud/pull/20256), [cloud#20257](https://github.com/unionai/cloud/pull/20257)), and
+  writing settings requires scope administration ([cloud#20255](https://github.com/unionai/cloud/pull/20255)).
+- **Org limits:** runs, triggers, apps and logs past their retention are hidden, active log
+  streams are capped, `0` means unlimited for every enforced limit, and `Organizations.Get`
+  reports tier defaults and per-limit status ([cloud#20025](https://github.com/unionai/cloud/pull/20025), [cloud#20026](https://github.com/unionai/cloud/pull/20026), [cloud#20027](https://github.com/unionai/cloud/pull/20027),
+  [cloud#19920](https://github.com/unionai/cloud/pull/19920), [cloud#20116](https://github.com/unionai/cloud/pull/20116)).
+- **Apps:** API-key callers are authorized as applications, not users ([cloud#20137](https://github.com/unionai/cloud/pull/20137)); the
+  operator deletes a KService whose app no longer exists ([cloud#20282](https://github.com/unionai/cloud/pull/20282)).
+- **Runs:** fork a run with per-action input and code overrides ([cloud#19498](https://github.com/unionai/cloud/pull/19498)).
+- **Identity:** cached lookups no longer fail when the cache write outlives the request
+  deadline, and cached not-found identities are scoped to the org ([cloud#19729](https://github.com/unionai/cloud/pull/19729), [cloud#20143](https://github.com/unionai/cloud/pull/20143)).
+- **Sign-in:** fixes a sign-in loop on a stale CSRF cookie ([cloud#19887](https://github.com/unionai/cloud/pull/19887)).
+- **Triggers:** trigger inputs are kept out of the expiring metadata bucket ([cloud#20089](https://github.com/unionai/cloud/pull/20089)).
+
 ## 2026.11.10
 
 `version` and `appVersion` move `2026.11.7` → `2026.11.10`, picking up the new
