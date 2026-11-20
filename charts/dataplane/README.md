@@ -327,6 +327,52 @@ For full setup instructions including IAM policy examples, see [Persistent logs]
 
 ---
 
+## Node pool publishing (Karpenter)
+
+The operator can read the cluster's Karpenter NodePools and publish each one to the
+control plane as a node group, so resource-aware scheduling places tasks on shapes the
+cluster can provision. It is off by default:
+
+```yaml
+config:
+  operator:
+    nodepoolScrape:
+      enabled: true
+```
+
+Turning it on adds `get`, `list` and `watch` on `karpenter.sh` nodepools and
+`karpenter.k8s.aws` ec2nodeclasses to the operator's cluster-read ClusterRole.
+
+### IAM
+
+The operator reads instance types from EC2. The IAM role on its service account
+(`commonServiceAccount`, or `operator.serviceAccount` when the common account is off)
+needs:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["ec2:DescribeInstanceTypes", "ec2:DescribeInstanceTypeOfferings"],
+  "Resource": "*"
+}
+```
+
+Without it, the operator logs the denied call and publishes nothing.
+
+### One writer per cluster
+
+Node groups are replaced as a whole on each push. Use either the scraper or the
+node-group API for a cluster, not both: the scraper overwrites API edits within
+`reconcileInterval` (default 1h).
+
+### One GPU type per NodePool
+
+A node group carries one accelerator. Pin each GPU NodePool to a single GPU type, for
+example with a `karpenter.k8s.aws/instance-gpu-name` requirement. The operator skips a
+NodePool whose instance types have different GPUs and reports it as `mixed_accelerators`.
+
+---
+
 ## Monitoring & Observability
 
 The dataplane ships with two separate [kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack) instances, each with a distinct responsibility:
