@@ -156,8 +156,8 @@ curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/datapl
 
 For intra-cluster topologies (CP + DP in the same cluster), layer
 `examples/values.{cloud}.intracluster.yaml` on top — it overrides the
-DP→CP routing globals (`CONTROLPLANE_GRPC_ENDPOINT`, `QUEUE_GRPC_ENDPOINT`)
-to dial cluster-local Services.
+DP→CP routing global (`CONTROLPLANE_HOST`) to dial the control plane's
+cluster-local ingress Service.
 
 ### 4. Install the chart
 
