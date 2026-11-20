@@ -477,9 +477,8 @@ IfNotPresent
 {{- /* v2-actions CreateRun routing is unconditional: this deployment's own
        UNION_ORG goes through the v2 actions service and sub-2.0.4 SDK
        CreateRun is hard-rejected. The legacy queue service is gone from this
-       chart, so there is no fallback path and no toggle (.Values.actionsLeasor
-       is a deprecated no-op). The run service reads useActionsServiceForOrgs +
-       rejectLegacySDKVersions out of the executions configmap
+       chart, so there is no fallback path and no toggle. The run service reads
+       useActionsServiceForOrgs + rejectLegacySDKVersions out of the executions configmap
        (services.executions.configMap.executions.task in values.yaml), so we
        patch that path before rendering. */}}
 {{- if eq .key "executions" }}
