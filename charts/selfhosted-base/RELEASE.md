@@ -1,5 +1,16 @@
 # onebox — Release Notes
 
+## 2026.11.11
+
+`version` and `appVersion` move `2026.11.10` → `2026.11.11`, picking up the new
+images. No onebox template changes. Lockstep release with the `controlplane` /
+`dataplane` charts.
+
+The images carry the run-loss fix: under heavy concurrent load about 2 in 1,000 runs
+were accepted but never created; the server now draws run names from `crypto/rand`
+and refuses a collision with a retryable error ([cloud#20266](https://github.com/unionai/cloud/pull/20266)). The `controlplane` notes
+list the other image changes.
+
 ## 2026.11.10
 
 `version` and `appVersion` move `2026.11.7` → `2026.11.10`, picking up the new

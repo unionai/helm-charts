@@ -22,7 +22,14 @@ for d in yaml.safe_load_all(sys.stdin):
 }
 if command -v helm >/dev/null; then
   for c in onebox selfhosted-base; do [[ -d charts/$c/charts ]] || helm dependency build "charts/$c" >/dev/null; done
-  if ! diff <(names onebox) <(names selfhosted-base --set nameOverride=onebox); then
+  # Rendered to files, not process substitution, so a failed render (no PyYAML, a
+  # template error) fails the check instead of comparing two empty lists.
+  tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+  names onebox >"$tmp/onebox"
+  names selfhosted-base --set nameOverride=onebox >"$tmp/selfhosted-base"
+  if [[ ! -s $tmp/onebox ]]; then
+    echo "rendering charts/onebox produced no resources" >&2; status=1
+  elif ! diff "$tmp/onebox" "$tmp/selfhosted-base"; then
     echo "selfhosted-base with nameOverride=onebox renders different names than onebox" >&2; status=1
   fi
 fi
