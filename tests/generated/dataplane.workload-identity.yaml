@@ -5923,6 +5923,24 @@ data:
   image-builder.authentication-type: "noop"
 
 ---
+# Source: dataplane/templates/operator/workload-identity-configmap.yaml
+# Whether the control plane verifies this cluster's pods' own service-account
+# tokens. The operator writes data.verified from each status report; the
+# leaseworker tells task pods to authenticate as themselves (and drops their
+# api key) only while it is "true", so a missing value keeps pods on their
+# key. The chart sets no data, so an upgrade or sync never resets the
+# operator's value; it only creates the object the operator may update.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: union-workload-identity
+  labels:
+    app.kubernetes.io/name: union-operator
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+
+---
 # Source: dataplane/templates/prometheus/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -7507,6 +7525,15 @@ metadata:
   name: union-operator-comp-ns-write
   namespace: union
 rules:
+  - apiGroups:
+    - ""
+    resourceNames:
+    - union-workload-identity
+    resources:
+    - configmaps
+    verbs:
+    - get
+    - update
   - apiGroups:
     - apps
     resourceNames:

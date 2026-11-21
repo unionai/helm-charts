@@ -20,6 +20,11 @@ With it on:
   UID of the pod it created on its lease heartbeats;
 - the `task-template` PodTemplate gives task pods a projected service-account
   token (audience `union-control-plane`) at `workloadIdentity.tokenMountPath`.
+- the chart creates the `union-workload-identity` ConfigMap, and the operator
+  may update it (that object only). The operator records there whether the
+  control plane verifies this cluster's pods' own tokens; until it says so,
+  and whenever it says it does not, task and app pods keep EAGER_API_KEY and
+  are not told to authenticate as themselves.
 
 **Turn on the control plane side first** (the cluster service's
 `workloadIdentity.enabled` and the edge's `workloadTokenVerifyURL`). A task pod
