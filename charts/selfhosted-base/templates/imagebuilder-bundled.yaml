@@ -1,0 +1,177 @@
+{{- include "onebox.bundled" . }}
+{{- if and .Values.imageBuilder.enabled .Values.imageBuilder.bundled.enabled }}
+{{- $name := include "onebox.fullname" . }}
+{{- $b := .Values.imageBuilder.bundled }}
+# imageBuilder.bundled: a registry and BuildKit for remote image builds, as
+# onebox's local e2e runs them. FOR A SINGLE-USER OR EVALUATION CLUSTER ONLY:
+# BuildKit is privileged, on the node's network and listening without TLS, and
+# the registry takes anonymous pushes, so anything that reaches them can run
+# builds as root on the node or overwrite images. For anything shared, run
+# BuildKit with mTLS or rootless and a registry with authentication, and set
+# imageBuilder.buildkitURI / repository / lookupURL to them instead.
+#
+# Both BuildKit (pushing) and the kubelet (pulling) address the registry as
+# localhost:<registry.nodePort>: BuildKit runs on the node's network and the
+# NodePort listens on every node. containerd and BuildKit allow plain HTTP for
+# localhost registries, so neither needs registry config.
+{{- if $b.registry.storage }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}-registry
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+  annotations:
+    # Uninstalling keeps the images; delete the claim to drop them.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with $b.registry.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $b.registry.storage }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}-registry
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}-registry
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $name }}-registry
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: registry
+          image: {{ $b.registry.image }}
+          ports:
+            - containerPort: 5000
+          readinessProbe:
+            httpGet:
+              path: /v2/
+              port: 5000
+          resources:
+            {{- toYaml $b.registry.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/registry
+      volumes:
+        - name: data
+          {{- if $b.registry.storage }}
+          persistentVolumeClaim:
+            claimName: {{ $name }}-registry
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-registry
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: {{ $name }}-registry
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: registry
+      port: 5000
+      targetPort: 5000
+      nodePort: {{ $b.registry.nodePort }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}-buildkit
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # Its hostPort is taken until the old pod is gone.
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}-buildkit
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $name }}-buildkit
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      # On the node's network, to push to the registry at localhost.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      automountServiceAccountToken: false
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: buildkit
+          image: {{ $b.buildkit.image }}
+          args:
+            - --addr
+            - unix:///run/buildkit/buildkitd.sock
+            - --addr
+            - tcp://0.0.0.0:{{ $b.buildkit.hostPort }}
+          ports:
+            - name: buildkit
+              containerPort: {{ $b.buildkit.hostPort }}
+          securityContext:
+            privileged: true
+          readinessProbe:
+            exec:
+              command: [buildctl, debug, workers]
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          resources:
+            {{- toYaml $b.buildkit.resources | nindent 12 }}
+---
+# Task pods (the build-image task) reach BuildKit through this Service.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-buildkit
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ $name }}-buildkit
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: buildkit
+      port: 1234
+      targetPort: {{ $b.buildkit.hostPort }}
+{{- end }}
