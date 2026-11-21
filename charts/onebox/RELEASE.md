@@ -1,5 +1,23 @@
 # onebox — Release Notes
 
+## 2026.11.12
+
+`version` and `appVersion` move `2026.11.11` → `2026.11.12`, picking up the new
+images. Lockstep release with the `controlplane` / `dataplane` charts. This chart is
+published as both `selfhosted-base` and `onebox` ([#695](https://github.com/unionai/helm-charts/pull/695)).
+
+### Published as `selfhosted-base` ([#695](https://github.com/unionai/helm-charts/pull/695))
+
+Self-hosted Base is this chart's public name. It is published as `selfhosted-base`
+and, unchanged, as `onebox`. New `nameOverride` and `fullnameOverride` values: to move
+a release installed from the `onebox` chart to `selfhosted-base`, upgrade it with
+`--set nameOverride=onebox` so its Deployment, Services and volumes keep their names
+(`flyte install selfhosted-base` sets it for you). Default renders are unchanged.
+
+The images carry license keys' new `selfhosted-base` audience, and every key issued
+before or after the rename keeps working ([cloud#20336](https://github.com/unionai/cloud/pull/20336)). The `controlplane` notes list
+the other image changes.
+
 ## 2026.11.11
 
 `version` and `appVersion` move `2026.11.10` → `2026.11.11`, picking up the new
