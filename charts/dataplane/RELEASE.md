@@ -1,5 +1,18 @@
 # dataplane — Release Notes
 
+## 2026.11.12
+
+`version` and `appVersion` move `2026.11.11` → `2026.11.12`; lockstep release with
+the `controlplane` chart.
+
+### Chart: executor overlay shims removed ([#700](https://github.com/unionai/helm-charts/pull/700))
+
+The images no longer run the executor, so the chart no longer adjusts overlays that
+still set executor keys. **Overlays must drop `config.operator.dependenciesHeartbeat.executor`
+and move any `executor.task_logs` to `leaseworker.task_logs`.**
+
+The `controlplane` notes list the image changes.
+
 ## 2026.11.11
 
 `version` and `appVersion` move `2026.11.10` → `2026.11.11`; lockstep release with
