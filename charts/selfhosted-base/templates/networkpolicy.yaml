@@ -1,0 +1,89 @@
+{{- $enabled := .Values.networkPolicy.enabled }}
+{{- if kindIs "invalid" $enabled }}{{ $enabled = .Values.authz.enabled }}{{ end }}
+{{- if $enabled }}
+# The tasks port trusts whoever reaches it as the built-in tasks app: only task
+# pods (this namespace, plus tasksFrom) may. Only the authenticating proxy may
+# reach the port that trusts its identity headers, when proxyFrom names it.
+# The webhook port stays open: the API server's address is not something a
+# policy can name portably.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "onebox.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "onebox.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - port: 8080
+      {{- with .Values.networkPolicy.proxyFrom }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    - ports:
+        - port: 8082
+        - port: 15606
+      from:
+        - podSelector: {}
+        {{- with .Values.networkPolicy.tasksFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    {{- if .Values.serving.enabled }}
+    - ports:
+        - port: 8083
+      from:
+        - podSelector:
+            matchLabels:
+              app: 3scale-kourier-gateway
+              app.kubernetes.io/instance: {{ .Release.Name }}
+    {{- end }}
+    - ports:
+        - port: 9443
+    - ports:
+        - port: 10254
+{{- if .Values.serving.enabled }}
+---
+# The apps gateway's external listener (8080, 8443: app hosts) serves every
+# app without asking who is calling when serving.gateway.auth is off, so only
+# onebox (which forwards app hosts to it) and Kourier's controller may reach
+# it. Its other ports stay open: the cluster-local listener (in-cluster
+# callers of an app's .svc.cluster.local address), probes and metrics.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "onebox.fullname" . }}-kourier-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: 3scale-kourier-gateway
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - port: 8080
+        - port: 8443
+      from:
+        - podSelector:
+            matchLabels:
+              {{- include "onebox.selectorLabels" . | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              app: net-kourier-controller
+              app.kubernetes.io/instance: {{ .Release.Name }}
+    - ports:
+        - port: 1
+          endPort: 8079
+        - port: 8081
+          endPort: 8442
+        - port: 8444
+          endPort: 65535
+{{- end }}
+{{- end }}

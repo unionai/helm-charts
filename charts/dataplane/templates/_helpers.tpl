@@ -1932,9 +1932,6 @@ the caller that emits directly (the operator) applies tpl itself.
 {{- range $key, $value := .Values.config.operator.dependenciesHeartbeat }}
 {{- if and (eq $key "propeller") (not $.Values.flytepropeller.enabled) }}
 {{- else if and (eq $key "leaseworker") (not $.Values.leaseworker.enabled) }}
-{{- /* The executor was removed from this chart; drop stale overlay entries so
-       the operator doesn't heartbeat a nonexistent service. */}}
-{{- else if eq $key "executor" }}
 {{- else if and (eq $key "prometheus") (not $.Values.prometheus.enabled) }}
 {{- else }}
 {{- $_ := set $heartbeat $key $value }}
@@ -2041,12 +2038,11 @@ when none of them is configured.
 {{- end -}}
 {{- end -}}
 {{- end -}}
-{{- /* The task logs of the dispatcher that runs: the leaseworker's, as its ConfigMap
-     picks them (the deprecated executor.task_logs first), with no fallback to
-     propeller's, which the leaseworker does not read either. */ -}}
+{{- /* The task logs of the dispatcher that runs: the leaseworker's, with no
+     fallback to propeller's, which the leaseworker does not read either. */ -}}
 {{- $taskLogs := dict -}}
 {{- if .Values.leaseworker.enabled -}}
-{{- $taskLogs = (.Values.executor | default dict).task_logs | default .Values.leaseworker.task_logs | default dict -}}
+{{- $taskLogs = .Values.leaseworker.task_logs | default dict -}}
 {{- else -}}
 {{- $taskLogs = index $values "task_logs" | default dict -}}
 {{- end -}}

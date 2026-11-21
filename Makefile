@@ -18,7 +18,7 @@ generate-expected: $(GEN_DIR) vendor-crds
 	./tests/run.sh generate
 
 .PHONY: test
-test: check-vendored-crds helm-test kubeconform-test check-image-paths check-image-prewarm check-values-schema python-test rbac-guard-test
+test: check-vendored-crds check-selfhosted-base-alias helm-test kubeconform-test check-image-paths check-image-prewarm check-values-schema python-test rbac-guard-test
 
 .PHONY: snapshot-generator-test
 snapshot-generator-test:
@@ -144,6 +144,7 @@ gen_version_bump: requirements
 	uv run invoke builder.version-bumper --file charts/knative-migration/Chart.yaml $(_PRERELEASE_FLAG)
 	uv run invoke builder.version-bumper --file charts/sandbox/Chart.yaml $(_PRERELEASE_FLAG)
 	uv run invoke builder.version-bumper --file charts/onebox/Chart.yaml $(_PRERELEASE_FLAG)
+	uv run invoke builder.version-bumper --file charts/selfhosted-base/Chart.yaml $(_PRERELEASE_FLAG)
 
 .PHONY: gen_dataplane_release
 gen_dataplane_release: requirements
@@ -165,12 +166,16 @@ gen_sandbox_release: requirements
 gen_onebox_release: requirements
 	uv run invoke builder.release --chart onebox
 
+.PHONY: gen_selfhosted_base_release
+gen_selfhosted_base_release: requirements
+	uv run invoke builder.release --chart selfhosted-base
+
 .PHONY: release-notes-dry-run
 release-notes-dry-run:
 	./scripts/generate-release-notes.sh
 
 .PHONY: lint
-lint: lint-dataplane lint-dataplane-crds lint-knative-migration lint-sandbox lint-onebox
+lint: lint-dataplane lint-dataplane-crds lint-knative-migration lint-sandbox lint-onebox lint-selfhosted-base
 
 .PHONY: lint-dataplane
 lint-dataplane:
@@ -197,6 +202,15 @@ lint-sandbox:
 .PHONY: lint-onebox
 lint-onebox:
 	helm lint charts/onebox --values tests/values/onebox.default.yaml
+
+.PHONY: lint-selfhosted-base
+lint-selfhosted-base:
+	helm lint charts/selfhosted-base --values tests/values/onebox.default.yaml
+
+# charts/onebox is published as an alias of charts/selfhosted-base.
+.PHONY: check-selfhosted-base-alias
+check-selfhosted-base-alias:
+	./scripts/check-selfhosted-base-alias.sh
 
 .PHONY: generate-metrics-manifest
 generate-metrics-manifest:

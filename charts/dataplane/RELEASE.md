@@ -33,6 +33,28 @@ calls fail if the control plane does not accept them yet. Needs Union images
 with workload identity (unionai/cloud `haytham/dataplane-sts`) and an SDK with
 the `WorkloadToken` authenticator.
 
+## 2026.11.11
+
+`version` and `appVersion` move `2026.11.10` → `2026.11.11`; lockstep release with
+the `controlplane` chart.
+
+### Chart: proxy configuration types declared ([#693](https://github.com/unionai/helm-charts/pull/693))
+
+The values schema declares the 58 supported `config.proxy.*` fields it was missing,
+such as `config.proxy.imageBuilderConfig.orgDepot.enabled` (boolean) and
+`namespaceTemplate` and `secret` (strings), so a mistyped value fails schema validation.
+
+Notable data-plane image changes (unionai/cloud `release/2026.11.7..4a17cf980b`,
+tagged `release/2026.11.11`):
+
+- **Runs:** see the run-loss fix in the `controlplane` notes ([cloud#20266](https://github.com/unionai/cloud/pull/20266)).
+- **leaseworker:** a fasttask worker is recycled after its task is aborted ([cloud#19663](https://github.com/unionai/cloud/pull/19663)).
+- **operator:** a KService whose app no longer exists in the control plane is deleted
+  ([cloud#20282](https://github.com/unionai/cloud/pull/20282)).
+- **node agent:** no nested pod-resources mount under the broker's bidirectional kubelet
+  mount ([cloud#20167](https://github.com/unionai/cloud/pull/20167)).
+- **Image builder:** each build step's `sh -c` runs unsplit ([cloud#20227](https://github.com/unionai/cloud/pull/20227)).
+
 ## 2026.11.10
 
 `version` and `appVersion` move `2026.11.7` → `2026.11.10`; lockstep release with
