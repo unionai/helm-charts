@@ -1,5 +1,24 @@
 # controlplane — Release Notes
 
+## 2026.11.12
+
+`version` and `appVersion` move `2026.11.11` → `2026.11.12`, picking up the new
+images. Lockstep release with the `dataplane` chart.
+
+### Chart: no-op `actionsLeasor` value removed ([#700](https://github.com/unionai/helm-charts/pull/700))
+
+The `actionsLeasor` value did nothing and is gone, along with the queue service's
+ScyllaDB authentication doc and stale comments.
+
+Notable image changes (unionai/cloud `release/2026.11.11..bbaf4c80fa`, tagged `release/2026.11.12`):
+
+- **Actions only:** every run goes through the actions service; the legacy queue service and executor are gone ([cloud#19096](https://github.com/unionai/cloud/pull/19096), [cloud#19502](https://github.com/unionai/cloud/pull/19502), [cloud#20464](https://github.com/unionai/cloud/pull/20464)).
+- **Validation errors read differently:** protovalidate v1.4.1 drops the rule ID from violation messages and says "validation errors:" for several ([cloud#20405](https://github.com/unionai/cloud/pull/20405)). It also uses far less memory for built validators.
+- **cacheservice:** v2 Gets find entries stored without an org ([cloud#20403](https://github.com/unionai/cloud/pull/20403)).
+- **dataproxy:** no longer panics when a data plane response breaks mid-read ([cloud#20307](https://github.com/unionai/cloud/pull/20307)).
+- **Org limits:** refusals carry the tier default and an upgrade URL; runs past their retention are hidden from the remaining read paths and cache hits ([cloud#20254](https://github.com/unionai/cloud/pull/20254), [cloud#20179](https://github.com/unionai/cloud/pull/20179), [cloud#20181](https://github.com/unionai/cloud/pull/20181)).
+- **Self-hosted Base:** license keys carry both the `selfhosted-base` and `onebox` audiences; the server and console images are also published as `selfhosted-base-server` and `selfhosted-base-console` ([cloud#20336](https://github.com/unionai/cloud/pull/20336)).
+
 ## 2026.11.11
 
 `version` and `appVersion` move `2026.11.10` → `2026.11.11`, picking up the new
