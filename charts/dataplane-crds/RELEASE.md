@@ -1,8 +1,8 @@
 # dataplane-crds — Release Notes
 
-## 2026.11.13
+## 2026.11.14
 
-`version` and `appVersion` move `2026.11.12` → `2026.11.13`; lockstep release with
+`version` and `appVersion` move `2026.11.12` → `2026.11.14`; lockstep release with
 the `controlplane` / `dataplane` charts. No CRD changes.
 
 ## 2026.11.12

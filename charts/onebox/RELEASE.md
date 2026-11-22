@@ -1,8 +1,8 @@
 # onebox — Release Notes
 
-## 2026.11.13
+## 2026.11.14
 
-`version` and `appVersion` move `2026.11.12` → `2026.11.13`, picking up the new
+`version` and `appVersion` move `2026.11.12` → `2026.11.14`, picking up the new
 images. Lockstep release with the `controlplane` / `dataplane` charts. This chart is
 published as both `selfhosted-base` and `onebox`.
 

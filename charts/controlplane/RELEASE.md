@@ -1,14 +1,15 @@
 # controlplane — Release Notes
 
-## 2026.11.13
+## 2026.11.14
 
-`version` and `appVersion` move `2026.11.12` → `2026.11.13`, picking up the new
+`version` and `appVersion` move `2026.11.12` → `2026.11.14`, picking up the new
 images. Lockstep release with the `dataplane` chart. No controlplane template
 changes.
 
-Notable image changes (unionai/cloud `release/2026.11.12..f44377c1fc`, tagged `release/2026.11.13`):
+Notable image changes (unionai/cloud `release/2026.11.12..9786b50c73`, tagged `release/2026.11.14`; `2026.11.13` had no chart release):
 
 - **actions:** the startup scan evicts each row's TypeSpec as it goes, so a large backlog no longer holds them all in memory ([cloud#20515](https://github.com/unionai/cloud/pull/20515)).
+- **leasor:** places an action on the worker its task prefers ([cloud#20521](https://github.com/unionai/cloud/pull/20521)).
 - **Fork a running run:** the backend for `flyte fork` of a run that is still running, behind `task.allowForkFromRunningRun` ([cloud#20465](https://github.com/unionai/cloud/pull/20465)).
 - **Self-hosted Base memory:** see the `selfhosted-base` notes ([cloud#20487](https://github.com/unionai/cloud/pull/20487)).
 
