@@ -1,5 +1,11 @@
 # sandbox — Release Notes
 
+## 2026.11.13
+
+`version` and `appVersion` move `2026.11.12` → `2026.11.13`, picking up the new
+images. No sandbox template changes. Lockstep release with the `controlplane` /
+`dataplane` charts.
+
 ## 2026.11.12
 
 `version` and `appVersion` move `2026.11.11` → `2026.11.12`, picking up the new

@@ -1,5 +1,11 @@
 # dataplane — Release Notes
 
+## 2026.11.13
+
+`version` and `appVersion` move `2026.11.12` → `2026.11.13`; lockstep release with
+the `controlplane` chart. No dataplane template changes. The `controlplane` notes
+list the image changes.
+
 ## 2026.11.12
 
 `version` and `appVersion` move `2026.11.11` → `2026.11.12`; lockstep release with

@@ -1,5 +1,30 @@
 # onebox — Release Notes
 
+## 2026.11.13
+
+`version` and `appVersion` move `2026.11.12` → `2026.11.13`, picking up the new
+images. Lockstep release with the `controlplane` / `dataplane` charts. This chart is
+published as both `selfhosted-base` and `onebox`.
+
+### Images default to the `selfhosted-base-*` names ([#702](https://github.com/unionai/helm-charts/pull/702))
+
+`image.repository` defaults to `ghcr.io/unionai/selfhosted-base-server` and
+`console.image.repository` to `ghcr.io/unionai/selfhosted-base-console`: the same
+images Union publishes as `onebox-server` and `onebox-console`, which are still
+published. Earlier `image.tag` values exist only under the `onebox-*` names, so a
+release that pins a tag before `2026.11.12` must also set the repositories.
+
+### Uses about half the memory under load ([cloud#20487](https://github.com/unionai/cloud/pull/20487))
+
+- The Go runtime's memory limit is set to 90% of the container's, so it collects
+  garbage before the kernel kills it rather than after.
+- The secrets webhook's cache is capped at 16 MiB.
+- Informers drop `managedFields` from pods and events they cache.
+
+Measured on EKS with a 2 CPU / 4 GiB limit: 128 runs/s and 4,000 running at once,
+with no restarts. Before, 32 runs/s and 1,000 running OOM-killed it.
+1 CPU / 2 GiB also takes 128 runs/s and 4,000 running.
+
 ## 2026.11.12
 
 `version` and `appVersion` move `2026.11.11` → `2026.11.12`, picking up the new
