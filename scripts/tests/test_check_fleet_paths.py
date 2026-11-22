@@ -120,10 +120,3 @@ def test_main_exit_codes(tmp_path, capsys):
     bad = make_fixture(tmp_path, "a", "b")
     assert check_fleet_paths.main(["--chart", str(chart), "--fixture", str(bad)]) == 1
     assert "1 Fleet value path(s) are not accepted" in capsys.readouterr().err
-
-
-def test_real_dataplane_chart_accepts_every_fleet_path():
-    failures = check_fleet_paths.check(
-        REPO_ROOT / "charts" / "dataplane", REPO_ROOT / "tests" / "fleet-values-paths.txt"
-    )
-    assert failures == []

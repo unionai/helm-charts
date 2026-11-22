@@ -15,7 +15,7 @@ access, fast:
 | `kubeconform` | schema-validate the rendered manifests |
 | `vendored-crds` | verify the vendored CRDs are in sync |
 | `release-notes` | `RELEASE.md` is updated |
-| `values-schema` (`make check-values-schema python-test`) | `charts/dataplane/values.schema.json` matches the `# @schema` blocks in `values.yaml`, every value path Union Fleet writes (`tests/fleet-values-paths.txt`) is still accepted, and the Python tooling tests pass |
+| `values-schema` (`make check-values-schema python-test`) | `charts/dataplane/values.schema.json` matches chart annotations plus `fleet-contract.json`; generated common/vendor/merged coverage passes offline, and Python tooling tests pass |
 
 If `validate` fails after a template or values change, regenerate the snapshots
 and commit them alongside your change:
@@ -106,3 +106,16 @@ Run `make check-values-schema python-test lint-dataplane` and package the candid
 with its dependencies. In the Cloud checkout, run
 `bash scripts/test_fleet_proxy_chart_schema.sh ARCHIVE SHA256_DIGEST typed` to
 exercise the candidate through Fleet and Helm for all four vendors.
+
+## Fleet schema compatibility
+
+Fleet source generation and packaged registration/target-values checks run in cloud. The required `fleet/schema-compatible` commit status validates each candidate against cloud main and pending cloud PR sources. See [the cloud automation runbook](https://github.com/unionai/cloud/tree/main/scripts/fleet_schema).
+
+Ordinary source generation retains existing declarations and coverage, adds the current run's contributions, and fails on conflicting declarations. Maintenance can propose removing unused fields in a separate reviewed PR. Bot-created schema PRs mention affected source PR authors, individual requested reviewers, and human review participants.
+
+Generation discovers declarations through Fleet-rendered paths. Keep supplemental
+annotations for supported component settings that Fleet does not emit, including
+the proxy fields above. Complete dataplane configuration coverage is tracked in
+[ENG26-2127](https://linear.app/unionai/issue/ENG26-2127). Validation backports for
+already released charts remain separate in
+[ENG26-2119](https://linear.app/unionai/issue/ENG26-2119).
