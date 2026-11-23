@@ -248,6 +248,47 @@ The IAM role trust policies must still trust the Kubernetes service account subj
 
 ---
 
+## Task pod security contexts
+
+For Flyte 2 Linux task pods using Pod Security Admission `restricted`, configure both
+pod-level and container-level defaults under `config.k8s.plugins.k8s`:
+
+```yaml
+config:
+  k8s:
+    plugins:
+      k8s:
+        default-pod-security-context:
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        default-security-context:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+```
+
+These settings cover the non-root, seccomp, privilege-escalation, and capability
+requirements in the [Kubernetes Restricted Pod Security Standard](https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted).
+Task and copilot images must support execution as a non-root user, with writable
+paths for the configured UID. Set `runAsUser` and `fsGroup` in
+`default-pod-security-context` when your images or volumes require a particular
+numeric UID or group.
+
+`default-pod-security-context` supplies a missing pod security context.
+`default-security-context` supplies a missing primary-container security context.
+After accelerator and base PodTemplates are merged, generated copilot downloader
+and uploader containers inherit an independent copy of the primary container's
+effective security context when their own context is missing. An explicit helper
+context, including an empty context, is preserved; inheritance does not fill its
+missing fields. Other user-supplied containers need their own container-level
+settings, which can be provided through PodTemplates.
+
+Copilot inheritance requires runtime images containing the fixes tracked in
+[ENG26-1566](https://linear.app/unionai/issue/ENG26-1566). For older images, use a
+PodTemplate with `default` and `default-init` entries to configure container
+security contexts.
+
 ## OpenShift
 
 For OpenShift clusters, layer `values.openshift.yaml` after your cloud and deployment-mode values file:
