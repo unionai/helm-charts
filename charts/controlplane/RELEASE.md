@@ -1,5 +1,75 @@
 # controlplane — Release Notes
 
+## 2026.11.14
+
+`version` and `appVersion` move `2026.11.12` → `2026.11.14`, picking up the new
+images. Lockstep release with the `dataplane` chart. No controlplane template
+changes.
+
+Notable image changes (unionai/cloud `release/2026.11.12..9786b50c73`, tagged `release/2026.11.14`; `2026.11.13` had no chart release):
+
+- **actions:** the startup scan evicts each row's TypeSpec as it goes, so a large backlog no longer holds them all in memory ([cloud#20515](https://github.com/unionai/cloud/pull/20515)).
+- **leasor:** places an action on the worker its task prefers ([cloud#20521](https://github.com/unionai/cloud/pull/20521)).
+- **Fork a running run:** the backend for `flyte fork` of a run that is still running, behind `task.allowForkFromRunningRun` ([cloud#20465](https://github.com/unionai/cloud/pull/20465)).
+- **Self-hosted Base memory:** see the `selfhosted-base` notes ([cloud#20487](https://github.com/unionai/cloud/pull/20487)).
+
+## 2026.11.12
+
+`version` and `appVersion` move `2026.11.11` → `2026.11.12`, picking up the new
+images. Lockstep release with the `dataplane` chart.
+
+### Chart: no-op `actionsLeasor` value removed ([#700](https://github.com/unionai/helm-charts/pull/700))
+
+The `actionsLeasor` value did nothing and is gone, along with the queue service's
+ScyllaDB authentication doc and stale comments.
+
+Notable image changes (unionai/cloud `release/2026.11.11..bbaf4c80fa`, tagged `release/2026.11.12`):
+
+- **Actions only:** every run goes through the actions service; the legacy queue service and executor are gone ([cloud#19096](https://github.com/unionai/cloud/pull/19096), [cloud#19502](https://github.com/unionai/cloud/pull/19502), [cloud#20464](https://github.com/unionai/cloud/pull/20464)).
+- **Validation errors read differently:** protovalidate v1.4.1 drops the rule ID from violation messages and says "validation errors:" for several ([cloud#20405](https://github.com/unionai/cloud/pull/20405)). It also uses far less memory for built validators.
+- **cacheservice:** v2 Gets find entries stored without an org ([cloud#20403](https://github.com/unionai/cloud/pull/20403)).
+- **dataproxy:** no longer panics when a data plane response breaks mid-read ([cloud#20307](https://github.com/unionai/cloud/pull/20307)).
+- **Org limits:** refusals carry the tier default and an upgrade URL; runs past their retention are hidden from the remaining read paths and cache hits ([cloud#20254](https://github.com/unionai/cloud/pull/20254), [cloud#20179](https://github.com/unionai/cloud/pull/20179), [cloud#20181](https://github.com/unionai/cloud/pull/20181)).
+- **Self-hosted Base:** license keys carry both the `selfhosted-base` and `onebox` audiences; the server and console images are also published as `selfhosted-base-server` and `selfhosted-base-console` ([cloud#20336](https://github.com/unionai/cloud/pull/20336)).
+
+## 2026.11.11
+
+`version` and `appVersion` move `2026.11.10` → `2026.11.11`, picking up the new
+images. Lockstep release with the `dataplane` chart.
+
+### Chart: the cache service runs as `cloudcacheservice` ([#655](https://github.com/unionai/helm-charts/pull/655))
+
+The control plane's cache service runs `cloudcacheservice` (`migrate`, then `serve`)
+instead of the old `cacheservice` binary. The Deployment, Service, database and
+`flyte.cacheservice.*` values stay the same, and existing overrides keep working.
+`flyteidl2.cacheservice.v2.CacheService` is routed in the ingress and `GRPCRoute`.
+`cache-server` and `private` are dropped from the defaults.
+
+Notable image changes (unionai/cloud `release/2026.11.7..4a17cf980b`, tagged
+`release/2026.11.11`; 2026.11.11 is cut from `main`, so it also carries the two
+2026.11.10 migration fixes):
+
+- **Runs:** CreateRun no longer drops a run when two concurrent creates draw the same
+  generated name. Under heavy concurrent load about 2 in 1,000 runs were accepted but
+  never created; names now come from `crypto/rand`, and a collision is refused with a
+  retryable error ([cloud#20266](https://github.com/unionai/cloud/pull/20266)).
+- **Migrations:** upgrades from 2026.7.x no longer fail in `cluster-migrate`, and
+  executions migrations run on PostgreSQL 14 ([cloud#20238](https://github.com/unionai/cloud/pull/20238), [cloud#20242](https://github.com/unionai/cloud/pull/20242)).
+- **Authorization:** tenants can no longer delete org or domain resources or create
+  domain resources, `_cluster` domain names are reserved ([cloud#20256](https://github.com/unionai/cloud/pull/20256), [cloud#20257](https://github.com/unionai/cloud/pull/20257)), and
+  writing settings requires scope administration ([cloud#20255](https://github.com/unionai/cloud/pull/20255)).
+- **Org limits:** runs, triggers, apps and logs past their retention are hidden, active log
+  streams are capped, `0` means unlimited for every enforced limit, and `Organizations.Get`
+  reports tier defaults and per-limit status ([cloud#20025](https://github.com/unionai/cloud/pull/20025), [cloud#20026](https://github.com/unionai/cloud/pull/20026), [cloud#20027](https://github.com/unionai/cloud/pull/20027),
+  [cloud#19920](https://github.com/unionai/cloud/pull/19920), [cloud#20116](https://github.com/unionai/cloud/pull/20116)).
+- **Apps:** API-key callers are authorized as applications, not users ([cloud#20137](https://github.com/unionai/cloud/pull/20137)); the
+  operator deletes a KService whose app no longer exists ([cloud#20282](https://github.com/unionai/cloud/pull/20282)).
+- **Runs:** fork a run with per-action input and code overrides ([cloud#19498](https://github.com/unionai/cloud/pull/19498)).
+- **Identity:** cached lookups no longer fail when the cache write outlives the request
+  deadline, and cached not-found identities are scoped to the org ([cloud#19729](https://github.com/unionai/cloud/pull/19729), [cloud#20143](https://github.com/unionai/cloud/pull/20143)).
+- **Sign-in:** fixes a sign-in loop on a stale CSRF cookie ([cloud#19887](https://github.com/unionai/cloud/pull/19887)).
+- **Triggers:** trigger inputs are kept out of the expiring metadata bucket ([cloud#20089](https://github.com/unionai/cloud/pull/20089)).
+
 ## 2026.11.10
 
 `version` and `appVersion` move `2026.11.7` → `2026.11.10`, picking up the new

@@ -1,0 +1,198 @@
+# onebox — Release Notes
+
+## 2026.11.14
+
+`version` and `appVersion` move `2026.11.12` → `2026.11.14`, picking up the new
+images. Lockstep release with the `controlplane` / `dataplane` charts. This chart is
+published as both `selfhosted-base` and `onebox`.
+
+### Images default to the `selfhosted-base-*` names ([#702](https://github.com/unionai/helm-charts/pull/702))
+
+`image.repository` defaults to `ghcr.io/unionai/selfhosted-base-server` and
+`console.image.repository` to `ghcr.io/unionai/selfhosted-base-console`: the same
+images Union publishes as `onebox-server` and `onebox-console`, which are still
+published. Earlier `image.tag` values exist only under the `onebox-*` names, so a
+release that pins a tag before `2026.11.12` must also set the repositories.
+
+### Uses about half the memory under load ([cloud#20487](https://github.com/unionai/cloud/pull/20487))
+
+- The Go runtime's memory limit is set to 90% of the container's, so it collects
+  garbage before the kernel kills it rather than after.
+- The secrets webhook's cache is capped at 16 MiB.
+- Informers drop `managedFields` from pods and events they cache.
+
+Measured on EKS with a 2 CPU / 4 GiB limit: 128 runs/s and 4,000 running at once,
+with no restarts. Before, 32 runs/s and 1,000 running OOM-killed it.
+1 CPU / 2 GiB also takes 128 runs/s and 4,000 running.
+
+## 2026.11.12
+
+`version` and `appVersion` move `2026.11.11` → `2026.11.12`, picking up the new
+images. Lockstep release with the `controlplane` / `dataplane` charts. This chart is
+published as both `selfhosted-base` and `onebox` ([#695](https://github.com/unionai/helm-charts/pull/695)).
+
+### Published as `selfhosted-base` ([#695](https://github.com/unionai/helm-charts/pull/695))
+
+Self-hosted Base is this chart's public name. It is published as `selfhosted-base`
+and, unchanged, as `onebox`. New `nameOverride` and `fullnameOverride` values: to move
+a release installed from the `onebox` chart to `selfhosted-base`, upgrade it with
+`--set nameOverride=onebox` so its Deployment, Services and volumes keep their names
+(`flyte install selfhosted-base` sets it for you). Default renders are unchanged.
+
+The images carry license keys' new `selfhosted-base` audience, and every key issued
+before or after the rename keeps working ([cloud#20336](https://github.com/unionai/cloud/pull/20336)). The `controlplane` notes list
+the other image changes.
+
+## 2026.11.11
+
+`version` and `appVersion` move `2026.11.10` → `2026.11.11`, picking up the new
+images. No onebox template changes. Lockstep release with the `controlplane` /
+`dataplane` charts.
+
+The images carry the run-loss fix: under heavy concurrent load about 2 in 1,000 runs
+were accepted but never created; the server now draws run names from `crypto/rand`
+and refuses a collision with a retryable error ([cloud#20266](https://github.com/unionai/cloud/pull/20266)). The `controlplane` notes
+list the other image changes.
+
+## 2026.11.10
+
+`version` and `appVersion` move `2026.11.7` → `2026.11.10`, picking up the new
+images, which carry the control-plane migration fixes in the `controlplane` notes.
+Lockstep release with the `controlplane` / `dataplane` charts.
+
+### Installs on EKS and GKE ([#691](https://github.com/unionai/helm-charts/pull/691))
+
+`kubeVersion` is now `>= 1.28.0-0`. Managed clusters report versions such as
+`v1.35.9-eks-…` and `v1.33.5-gke.…`, which count as prereleases, so the old
+`>= 1.28.0` made `helm install` fail with `chart requires kubeVersion: >= 1.28.0
+which is incompatible with Kubernetes …`.
+
+### `bundled.enabled` works on block volumes ([#691](https://github.com/unionai/helm-charts/pull/691))
+
+An init container makes `/data` writable before the bundled object store starts.
+On a freshly formatted block volume, such as EBS gp3, the store crash-looped with
+`AccessDeniedException` on `/data`.
+
+## 2026.11.7
+
+`version` and `appVersion` move `2026.11.6` → `2026.11.7`, picking up the new
+images, which always enforce the license ([cloud#20075](https://github.com/unionai/cloud/pull/20075), [cloud#20094](https://github.com/unionai/cloud/pull/20094)).
+
+### The license is always enforced; `license.enforce` and `license.trustedKeys` are removed ([#686](https://github.com/unionai/helm-charts/pull/686))
+
+onebox now enforces its license unconditionally: without a valid key the install
+is read-only (reads work, changes are refused, runs in flight finish). Add a key
+in the console, or give one with `license.existingSecret`. `license.enforce` is
+gone, and so is `license.trustedKeys`: with enforcement mandatory, an
+operator-added issuer would let anyone sign their own key, so only Union's issuer,
+built into each release, signs keys onebox accepts. `license.issueURL` defaults to
+Union's sign-up; setting it still points Get a key at another issuer. The license
+block renders only for a key Secret or a custom `issueURL`.
+
+## 2026.11.6
+
+`version` moves `2026.11.5` → `2026.11.6` and `appVersion` moves `2026.11.4` →
+`2026.11.6`, picking up the new images. No onebox template or values changes;
+lockstep release with the `controlplane` / `dataplane` charts.
+
+## 2026.11.5
+
+`version` moves `2026.11.4` → `2026.11.5`; `appVersion` stays `2026.11.4`. Lockstep
+chart-only release with the `controlplane` / `dataplane` charts; no onebox template,
+values or image changes, no functional changes.
+
+## 2026.11.4
+
+`version` moves `2026.11.3` → `2026.11.4` and `appVersion` moves `2026.11.2` →
+`2026.11.4`, picking up the new images. No onebox template or values changes;
+lockstep release with the `controlplane` / `dataplane` charts.
+
+## 2026.11.3
+
+`version` moves `2026.11.2` → `2026.11.3`; `appVersion` stays `2026.11.2`.
+
+### License, private CA, app isolation and image builder from GHCR (#669)
+
+- `license`: a license key from a Secret (`existingSecret`), `enforce` to make
+  an install without a valid key read-only, `issueURL` where users get one, and
+  `trustedKeys` for a self-hosted issuer. Rendered only when set, and needs an
+  onebox image with licensing.
+- `caBundle`: a private CA bundle trusted by onebox, the console and every task
+  pod (S3, database, identity provider, registry).
+- `extraVolumes`/`extraVolumeMounts` for the onebox container, and
+  `taskPods.extraEnv`/`extraVolumes`/`extraVolumeMounts` for task pods, through
+  a PodTemplate every task pod starts from.
+- `serving.appHostOnly`: path-based apps on a host of their own, which serves
+  only apps, so app scripts run on a different origin from the console.
+- The apps gateway removes the caller's bearer token once it has authorized
+  them (`UNION_AUTH_STRIPCALLERCREDENTIALS`), so apps never receive it.
+- The image builder's task images default to `ghcr.io/unionai/imagebuilder`
+  at the chart's appVersion (`imageBuilder.taskImages.tag` defaults to it)
+  instead of a pinned canary build on public ECR, whose anonymous pulls are
+  rate limited.
+
+The license values, `serving.appHostOnly` and the gateway's token removal need
+onebox images from a release with unionai/cloud#19283 and #19820, newer than
+2026.11.2.
+
+## 2026.11.2
+
+`version` and `appVersion` move `2026.11.1` → `2026.11.2`.
+
+### Serve under a path of a shared host (#664)
+
+`basePath` serves onebox under a path of a host something else owns, e.g.
+`basePath: /onebox` for `https://platform.example.com/onebox/`. The console runs at
+`/onebox/v2`; the API, `/login` and `/logout` sit under `/onebox`. The value is passed
+to the console as `UNION_BASE_PATH` and validated as lowercase DNS-label segments; an
+invalid value (`/One`) fails the render.
+
+Apps can share the host with a path-based `serving.publicURLPattern`
+(`https://platform.example.com/onebox/apps/%s/`); `serving.stripAppPathPrefix` removes
+the app's path for servers that only serve at `/`. NOTES show the prefixed console and
+SDK endpoint, and the README covers the proxy contract (forward `/onebox/` with the
+path unchanged, WebSockets, no buffering) and the shared-origin caveat for path-based
+apps. Without `basePath`, rendering is unchanged.
+
+Requires onebox and onebox-console images that include unionai/cloud#19740 and
+unionai/cloud#19741, and flyte-sdk with flyteorg/flyte-sdk#1739.
+
+## 2026.11.1
+
+`version` and `appVersion` move to `2026.11.1`. The chart can now run everything
+the install guide set up by hand:
+
+- **Apps** (`serving.knative.install`, on with `serving.enabled`): Knative Serving
+  1.23, the same version the dataplane's zero-trust gateway runs, in the release
+  namespace. Its CRDs are in `crds/` (`crds/onebox/scripts/sync.sh` copies them
+  from the dataplane chart; `--skip-crds` installs apply them from
+  `crds/dataplane/`).
+- **Image builder** (`imageBuilder.bundled.enabled`): an in-cluster registry
+  (NodePort 30000) and BuildKit, with `imageBuilder.buildkitURI`, `repository`
+  and `lookupURL` filled in where not set. `lookupURL` points at the bundled
+  registry only when `repository` is the bundled one.
+- **Metrics** (`prometheus.enabled`): a bundled Prometheus (prometheus-community
+  `prometheus` 25.30.2, with kube-state-metrics), with `metrics.prometheusURL`
+  filled in from its Service, `forceNamespace` included.
+
+## 2026.11.0
+
+`version` and `appVersion` move to `2026.10.5`. The onebox image now sets
+`controlPlane.deploymentType: onebox` in its built-in defaults, and applies the console
+dashboards' `actions (org, created_at)` index as part of that type's migrations
+(unionai/cloud#19713). Existing onebox databases already have the index; the upgrade
+records it under a new version as a no-op.
+
+## 2026.9.7
+
+First release. Union in one pod: the v2 control plane, the in-process data
+plane worker, the pod webhook and the console, against one Postgres database
+and one object store, served on one port. Identity comes from headers set by
+an authenticating proxy in front; role based authorization (embedded
+userclouds-lite) is optional. Task pods call back on an in-cluster
+port where they act as a built-in app (`authz.tasksRole`); no credentials are
+injected into them. Namespaced least-privilege RBAC (extend with
+`rbac.extraRules` for plugin task types), a NetworkPolicy that is on whenever
+authz is, and an optional proxy shared secret; `database.sslMode` defaults to
+`require`. The chart and the software it deploys are under the Union License
+(`LICENSE`, with Union's copyright in `NOTICE`).

@@ -1,5 +1,59 @@
 # onebox — Release Notes
 
+## 2026.11.14
+
+`version` and `appVersion` move `2026.11.12` → `2026.11.14`, picking up the new
+images. Lockstep release with the `controlplane` / `dataplane` charts. This chart is
+published as both `selfhosted-base` and `onebox`.
+
+### Images default to the `selfhosted-base-*` names ([#702](https://github.com/unionai/helm-charts/pull/702))
+
+`image.repository` defaults to `ghcr.io/unionai/selfhosted-base-server` and
+`console.image.repository` to `ghcr.io/unionai/selfhosted-base-console`: the same
+images Union publishes as `onebox-server` and `onebox-console`, which are still
+published. Earlier `image.tag` values exist only under the `onebox-*` names, so a
+release that pins a tag before `2026.11.12` must also set the repositories.
+
+### Uses about half the memory under load ([cloud#20487](https://github.com/unionai/cloud/pull/20487))
+
+- The Go runtime's memory limit is set to 90% of the container's, so it collects
+  garbage before the kernel kills it rather than after.
+- The secrets webhook's cache is capped at 16 MiB.
+- Informers drop `managedFields` from pods and events they cache.
+
+Measured on EKS with a 2 CPU / 4 GiB limit: 128 runs/s and 4,000 running at once,
+with no restarts. Before, 32 runs/s and 1,000 running OOM-killed it.
+1 CPU / 2 GiB also takes 128 runs/s and 4,000 running.
+
+## 2026.11.12
+
+`version` and `appVersion` move `2026.11.11` → `2026.11.12`, picking up the new
+images. Lockstep release with the `controlplane` / `dataplane` charts. This chart is
+published as both `selfhosted-base` and `onebox` ([#695](https://github.com/unionai/helm-charts/pull/695)).
+
+### Published as `selfhosted-base` ([#695](https://github.com/unionai/helm-charts/pull/695))
+
+Self-hosted Base is this chart's public name. It is published as `selfhosted-base`
+and, unchanged, as `onebox`. New `nameOverride` and `fullnameOverride` values: to move
+a release installed from the `onebox` chart to `selfhosted-base`, upgrade it with
+`--set nameOverride=onebox` so its Deployment, Services and volumes keep their names
+(`flyte install selfhosted-base` sets it for you). Default renders are unchanged.
+
+The images carry license keys' new `selfhosted-base` audience, and every key issued
+before or after the rename keeps working ([cloud#20336](https://github.com/unionai/cloud/pull/20336)). The `controlplane` notes list
+the other image changes.
+
+## 2026.11.11
+
+`version` and `appVersion` move `2026.11.10` → `2026.11.11`, picking up the new
+images. No onebox template changes. Lockstep release with the `controlplane` /
+`dataplane` charts.
+
+The images carry the run-loss fix: under heavy concurrent load about 2 in 1,000 runs
+were accepted but never created; the server now draws run names from `crypto/rand`
+and refuses a collision with a retryable error ([cloud#20266](https://github.com/unionai/cloud/pull/20266)). The `controlplane` notes
+list the other image changes.
+
 ## 2026.11.10
 
 `version` and `appVersion` move `2026.11.7` → `2026.11.10`, picking up the new

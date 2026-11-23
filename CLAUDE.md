@@ -101,5 +101,4 @@ Docs are colocated with the charts and at the repo root:
 - `charts/controlplane/README.md`, `charts/dataplane/README.md` — chart-level guides
 - `charts/MIGRATION.md` — breaking-change migration notes
 - `charts/CONVENTIONS.md` — overlay naming and RELEASE.md rules
-- `charts/controlplane/docs/SELFHOSTED_scylladb_authentication.md` — ScyllaDB auth guide
 - `RELEASING.md`, `TESTING.md` — release and test workflows
