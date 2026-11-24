@@ -1651,6 +1651,13 @@ expect-binding-subject "with per-component identities too, where it would be vis
 echo
 echo "- cluster-wide reads follow the code paths that make them"
 
+expect-resource-group "the operator lists Kueue LocalQueues cluster-wide outside singleNamespace, for the entitlement check" \
+  union-operator-work-ns-cluster-read localqueues "kueue.x-k8s.io" \
+  --set singleNamespace=false
+expect-resource-group "and lists namespaces to place them, with the image builder off" \
+  union-operator-work-ns-cluster-read namespaces "(core)" \
+  --set singleNamespace=false --set imageBuilder.enabled=false
+
 expect-resource-group "the pod-metrics list appears outside singleNamespace with default billing" \
   union-operator-work-ns-cluster-read pods "(core),metrics.k8s.io" \
   --set singleNamespace=false
@@ -1677,7 +1684,7 @@ expect-resource-group "and with billing None, while collectUsages is on" \
   union-operator-comp-ns-read pods "metrics.k8s.io" \
   --set config.operator.billing.model=None
 expect-verb-resources "and not with billing None and collectUsages off" \
-  union-operator-comp-ns-read list "daemonsets,deployments,statefulsets" \
+  union-operator-comp-ns-read list "daemonsets,deployments,localqueues,statefulsets" \
   --set config.operator.billing.model=None --set config.operator.collectUsages.enabled=false \
   --set imageBuilder.enabled=false
 expect-verb-resources "and not outside singleNamespace, where the cluster-wide grant covers it" \
@@ -1880,8 +1887,8 @@ expect-provisioner-matches-chart "the provisioner's binding still matches the ch
 
 expect-verb-resources "leaseworker's comp-ns-read is its Endpoints watch and nothing else" \
   union-leaseworker-comp-ns-read get "endpoints"
-expect-verb-resources "and the operator's is its pod-metrics list, the image builder's informers and the snapshot's workload reads" \
-  union-operator-comp-ns-read list "configmaps,daemonsets,deployments,pods,secrets,statefulsets"
+expect-verb-resources "and the operator's is its pod-metrics list, the image builder's informers, the snapshot's workload reads and its Kueue LocalQueue count" \
+  union-operator-comp-ns-read list "configmaps,daemonsets,deployments,localqueues,pods,secrets,statefulsets"
 expect-verb-resources "with get on the snapshot's workloads, component ConfigMaps and shard PodTemplate" \
   union-operator-comp-ns-read get "configmaps,daemonsets,deployments,podtemplates,statefulsets"
 expect-verb-resources "and the same get with the image builder off" \
