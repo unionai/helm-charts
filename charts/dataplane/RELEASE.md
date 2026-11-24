@@ -1,5 +1,12 @@
 # dataplane — Release Notes
 
+## 2026.11.15
+
+`version` and `appVersion` move `2026.11.14` → `2026.11.15`; lockstep release with
+the `controlplane` chart. No template changes (task pod security defaults are now
+documented, [#697](https://github.com/unionai/helm-charts/pull/697)). The
+`controlplane` notes list the image changes.
+
 ## 2026.11.14
 
 `version` and `appVersion` move `2026.11.12` → `2026.11.14`; lockstep release with

@@ -1,5 +1,19 @@
 # controlplane — Release Notes
 
+## 2026.11.15
+
+`version` and `appVersion` move `2026.11.14` → `2026.11.15`, picking up the new
+images. Lockstep release with the `dataplane` chart. No controlplane template
+changes.
+
+Notable image changes (unionai/cloud `release/2026.11.14..release/2026.11.15`, `077af496d7`):
+
+- **Workload identity:** task pods act as their run's creator, without an `EAGER_API_KEY` ([cloud#19529](https://github.com/unionai/cloud/pull/19529)).
+- **Org storage:** native GCS and Azure org stores ([cloud#20510](https://github.com/unionai/cloud/pull/20510)).
+- **flyteadmin:** dynamic nodes are validated against the resolved cluster pool ([cloud#20579](https://github.com/unionai/cloud/pull/20579)).
+- **Console:** usage and cost charts reach back only as far as `trends_history_days` ([cloud#20470](https://github.com/unionai/cloud/pull/20470)).
+- **Self-hosted Base:** see the `selfhosted-base` notes ([cloud#20538](https://github.com/unionai/cloud/pull/20538)).
+
 ## 2026.11.14
 
 `version` and `appVersion` move `2026.11.12` → `2026.11.14`, picking up the new

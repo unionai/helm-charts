@@ -1,5 +1,23 @@
 # onebox — Release Notes
 
+## 2026.11.15
+
+`version` and `appVersion` move `2026.11.14` → `2026.11.15`, picking up the new
+images. Lockstep release with the `controlplane` / `dataplane` charts. This chart is
+published as both `selfhosted-base` and `onebox`.
+
+### The console greets the license key's organization ([cloud#20538](https://github.com/unionai/cloud/pull/20538))
+
+The home page shows the organization the install's license key was issued to (the
+one its users signed up as), and "Welcome to Union!" until a key is added, instead of
+the install's own `organization` (default `onebox`). **Settings → License** notes when
+the two differ. `organization` itself is unchanged: set it when you install
+(`flyte install selfhosted-base --organization`, flyteplugins-union 0.26.2 or later)
+to match, and keep it unchanged afterwards: everything the install stores is under it.
+
+The local image (`ghcr.io/unionai/onebox`) takes `ONEBOX_ORGANIZATION`, which
+`flyte start onebox --organization` sets for a new install.
+
 ## 2026.11.14
 
 `version` and `appVersion` move `2026.11.12` → `2026.11.14`, picking up the new
