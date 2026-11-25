@@ -2230,6 +2230,23 @@ for scope in "singleNamespace=true" "singleNamespace=false"; do
     absent "name: union-operator-system-node-capacity" --set "${scope}" "${CAP[@]}" "${PODS[@]}"
 done
 
+echo "- nodepool scraping reads Karpenter node pools and node classes, in both scope modes"
+NPS=(--set config.operator.nodepoolScrape.enabled=true)
+NPS_NO_KARPENTER=("${NPS[@]}" --set config.operator.nodepoolScrape.karpenter.enabled=false)
+for scope in "singleNamespace=true" "singleNamespace=false"; do
+  expect-rule "${scope}: no nodepools read without scraping" absent \
+    union-operator-cluster-read "karpenter.sh nodepools get,list,watch -" --set "${scope}"
+  expect-rule "${scope}: scraping reads nodepools" present \
+    union-operator-cluster-read "karpenter.sh nodepools get,list,watch -" --set "${scope}" "${NPS[@]}"
+  expect-rule "${scope}: and ec2nodeclasses" present \
+    union-operator-cluster-read "karpenter.k8s.aws ec2nodeclasses get,list,watch -" --set "${scope}" "${NPS[@]}"
+  expect-rule "${scope}: also with cluster permissions disabled" present \
+    union-operator-cluster-read "karpenter.sh nodepools get,list,watch -" \
+    --set "${scope}" "${NPS[@]}" --set config.operator.disableClusterPermissions=true
+  expect-rule "${scope}: no nodepools read with the Karpenter scraper off" absent \
+    union-operator-cluster-read "karpenter.sh nodepools get,list,watch -" --set "${scope}" "${NPS_NO_KARPENTER[@]}"
+done
+
 echo "- node-bootstrap removes its startup taint through its own cluster slots, in both scope modes"
 NB=(--set nodeBootstrap.enabled=true --set nodeBootstrap.cloudProvider=aws)
 NB_NO_TAINT=("${NB[@]}" --set nodeBootstrap.startupTaintKey=)
@@ -2398,6 +2415,8 @@ cat > "${SCOPE_ALLOWLIST}" <<'EOF'
 union-operator-cluster-read read core nodes list,watch
 union-operator-cluster-read read core nodes get
 union-operator-cluster-read read core pods get,list,watch
+union-operator-cluster-read read karpenter.sh nodepools get,list,watch
+union-operator-cluster-read read karpenter.k8s.aws ec2nodeclasses get,list,watch
 union-operator-cluster-read read - /metrics get
 
 union-nodeobserver-cluster-read read core nodes get
