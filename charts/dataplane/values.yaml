@@ -4002,3 +4002,33 @@ dataproxy:
   additionalVolumes: []
   # -- Appends additional volume mounts to the main container's spec. May include template values.
   additionalVolumeMounts: []
+
+# -- Workload identity: task and app pods authenticate to the control plane with
+# their own projected service-account token instead of EAGER_API_KEY. A task pod
+# acts as its run's creator (within the run's project and domain), an app's pod
+# as the app. The operator publishes the cluster's service-account issuer keys
+# and reports app pods; the leaseworker tells each covered task pod which
+# attempt it runs and reports the pod it created; pods get the token through the
+# task-template PodTemplate (and the leaseworker or apps controller adds it to
+# pods built without it).
+#
+# Which pods drop EAGER_API_KEY: single-pod tasks (container, sidecar, pod),
+# reusable environment workers and apps, whose task or app was serialized by
+# flyte-sdk 2.15.0 or later (the SDK recorded at deploy time, not the one in the
+# image). Ray, Spark and Dask pods are told to use their token but keep the key
+# as a fallback; older SDKs keep the key.
+#
+# The operator records in the union-workload-identity ConfigMap whether the
+# control plane verifies this cluster's tokens; until it says so, pods keep
+# EAGER_API_KEY. The answer decides how new pods are built; pods already running
+# keep the credentials they were built with. Turn on the control plane's side
+# first (cluster workloadIdentity.enabled and the edge's workloadTokenVerifyURL).
+workloadIdentity:
+  # -- Publish the issuer keys and have task and app pods authenticate as themselves. Also turns on
+  # config.operator.apps.controller.workloadIdentity (set its enabled: false to keep apps on the key;
+  # its tokenMountPath, if set, must equal tokenMountPath below).
+  enabled: false
+  # -- Where task pods get the projected service-account token (audience union-control-plane).
+  tokenMountPath: /var/run/secrets/union.ai/workload
+  # -- Lifetime the kubelet requests for the projected token; it rotates it before expiry.
+  projectedTokenExpirationSeconds: 3600

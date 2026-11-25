@@ -1,5 +1,49 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+### Workload identity (opt-in): task pods without EAGER_API_KEY
+
+`workloadIdentity.enabled: true` lets task and app pods authenticate to the
+control plane with their own projected service-account token in place of the
+long-lived EAGER_API_KEY: a task pod acts as its run's creator, held to the
+run's project and domain, and an app's pod as the app. Off by default; nothing
+renders differently while it is off.
+
+With it on:
+
+- the operator publishes the cluster's service-account issuer and its public
+  keys on every status report. It reads them from the API server's OIDC
+  discovery, which every service account may read by default. With apps
+  enabled it also gets read-only access to ReplicaSets and Deployments, to tell
+  an app's pods by their Knative controller chain, and the apps controller's
+  `workloadIdentity` is turned on with the same token path (set its `enabled:
+  false` to keep apps on the key; a different `tokenMountPath` fails the
+  render);
+- the leaseworker tells each covered task pod which attempt it runs, and
+  reports the UID of the pod it created on its lease heartbeats. Settings under
+  `leaseworker.config.workloadIdentity` (plugins, reusable environments) are
+  kept; the chart sets only `enabled` and the token file;
+- the `task-template` PodTemplate gives task pods a projected service-account
+  token (audience `union-control-plane`) at `workloadIdentity.tokenMountPath`;
+- the chart creates the `union-workload-identity` ConfigMap; the operator may
+  update it and the leaseworker read it (that object only). The operator
+  records there whether the control plane verifies this cluster's pods' own
+  tokens. Until it says so, task and app pods keep EAGER_API_KEY; the answer
+  decides how new pods are built, and pods already running keep theirs.
+
+Covered pods: single-pod tasks, reusable environment workers and apps whose
+task or app was serialized by flyte-sdk 2.15.0 or later. Ray, Spark and Dask
+pods use their token but keep EAGER_API_KEY as a fallback, as do older SDKs.
+
+**Turn on the control plane side first** (the cluster service's
+`workloadIdentity.enabled` and the edge's `workloadTokenVerifyURL`). A task pod
+told to authenticate as itself stops using EAGER_API_KEY, so its control-plane
+calls fail if the control plane does not accept them yet (the control plane's
+handshake keeps pods on the key until it does). Needs Union images with workload
+identity (unionai/cloud#19529) and tasks built with flyte-sdk 2.15.0 or later;
+pods of older SDKs keep EAGER_API_KEY.
+
 ## 2026.11.15
 
 `version` and `appVersion` move `2026.11.14` → `2026.11.15`; lockstep release with

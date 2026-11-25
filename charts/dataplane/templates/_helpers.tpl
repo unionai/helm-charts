@@ -2149,3 +2149,16 @@ true
 false
 {{- end -}}
 {{- end -}}
+
+{{/*
+workloadIdentity.appsEnabled: apps' pods authenticate as the app (workload identity on, apps on, and
+config.operator.apps.controller.workloadIdentity.enabled not set to false). Gates the apps controller's
+setting and the operator's ReplicaSet/Deployment informer rules.
+*/}}
+{{- define "workloadIdentity.appsEnabled" -}}
+{{- if and .Values.workloadIdentity.enabled (include "apps.enabled" .) -}}
+{{- $controller := get (.Values.config.operator.apps | default dict) "controller" | default dict -}}
+{{- $wi := get $controller "workloadIdentity" | default dict -}}
+{{- if or (not (hasKey $wi "enabled")) $wi.enabled -}}true{{- end -}}
+{{- end -}}
+{{- end -}}
