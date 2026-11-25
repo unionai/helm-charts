@@ -41,9 +41,13 @@ data:
     {{- $_ = set $leaseworkerConfig "limit-namespace" $.Release.Namespace }}
     {{- end }}
     {{- if .Values.workloadIdentity.enabled }}
-    {{- $_ = set $leaseworkerConfig "workloadIdentity" (dict
-          "enabled" true
-          "tokenFile" (printf "%s/token" .Values.workloadIdentity.tokenMountPath)) }}
+    {{- /* Keep the rest of leaseworker.config.workloadIdentity (plugins, reusableEnvironments,
+         requireVerified); the chart owns enabled and the token file, which must match the
+         task-template mount. */}}
+    {{- $wi := deepCopy (index $leaseworkerConfig "workloadIdentity" | default dict) }}
+    {{- $_ = set $wi "enabled" true }}
+    {{- $_ = set $wi "tokenFile" (printf "%s/token" .Values.workloadIdentity.tokenMountPath) }}
+    {{- $_ = set $leaseworkerConfig "workloadIdentity" $wi }}
     {{- end }}
     {{- with .Values.leaseworker.raw_config }}
     {{- $_ = mustMergeOverwrite $leaseworkerConfig (deepCopy .) }}

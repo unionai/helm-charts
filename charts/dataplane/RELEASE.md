@@ -4,10 +4,11 @@
 
 ### Workload identity (opt-in): task pods without EAGER_API_KEY
 
-`workloadIdentity.enabled: true` lets task pods authenticate to the control
-plane with their own projected service-account token, acting as the run's
-creator and held to the run's project and domain, in place of the long-lived
-EAGER_API_KEY. Off by default; nothing renders differently while it is off.
+`workloadIdentity.enabled: true` lets task and app pods authenticate to the
+control plane with their own projected service-account token in place of the
+long-lived EAGER_API_KEY: a task pod acts as its run's creator, held to the
+run's project and domain, and an app's pod as the app. Off by default; nothing
+renders differently while it is off.
 
 With it on:
 
@@ -15,16 +16,24 @@ With it on:
   keys on every status report. It reads them from the API server's OIDC
   discovery, which every service account may read by default. With apps
   enabled it also gets read-only access to ReplicaSets and Deployments, to tell
-  an app's pods by their Knative controller chain;
-- the leaseworker tells each task pod which attempt it runs, and reports the
-  UID of the pod it created on its lease heartbeats;
+  an app's pods by their Knative controller chain, and the apps controller's
+  `workloadIdentity` is turned on with the same token path (an explicit
+  `config.operator.apps.controller.workloadIdentity` wins);
+- the leaseworker tells each covered task pod which attempt it runs, and
+  reports the UID of the pod it created on its lease heartbeats. Settings under
+  `leaseworker.config.workloadIdentity` (plugins, reusable environments) are
+  kept; the chart sets only `enabled` and the token file;
 - the `task-template` PodTemplate gives task pods a projected service-account
-  token (audience `union-control-plane`) at `workloadIdentity.tokenMountPath`.
-- the chart creates the `union-workload-identity` ConfigMap, and the operator
-  may update it (that object only). The operator records there whether the
-  control plane verifies this cluster's pods' own tokens; until it says so,
-  and whenever it says it does not, task and app pods keep EAGER_API_KEY and
-  are not told to authenticate as themselves.
+  token (audience `union-control-plane`) at `workloadIdentity.tokenMountPath`;
+- the chart creates the `union-workload-identity` ConfigMap; the operator may
+  update it and the leaseworker read it (that object only). The operator
+  records there whether the control plane verifies this cluster's pods' own
+  tokens. Until it says so, task and app pods keep EAGER_API_KEY; the answer
+  decides how new pods are built, and pods already running keep theirs.
+
+Covered pods: single-pod tasks, reusable environment workers and apps whose
+task or app was serialized by flyte-sdk 2.15.0 or later. Ray, Spark and Dask
+pods use their token but keep EAGER_API_KEY as a fallback, as do older SDKs.
 
 **Turn on the control plane side first** (the cluster service's
 `workloadIdentity.enabled` and the edge's `workloadTokenVerifyURL`). A task pod
