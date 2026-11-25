@@ -29,9 +29,36 @@ With it on:
 **Turn on the control plane side first** (the cluster service's
 `workloadIdentity.enabled` and the edge's `workloadTokenVerifyURL`). A task pod
 told to authenticate as itself stops using EAGER_API_KEY, so its control-plane
-calls fail if the control plane does not accept them yet. Needs Union images
-with workload identity (unionai/cloud `haytham/dataplane-sts`) and an SDK with
-the `WorkloadToken` authenticator.
+calls fail if the control plane does not accept them yet (the control plane's
+handshake keeps pods on the key until it does). Needs Union images with workload
+identity (unionai/cloud#19529) and tasks built with flyte-sdk 2.15.0 or later;
+pods of older SDKs keep EAGER_API_KEY.
+
+## 2026.11.15
+
+`version` and `appVersion` move `2026.11.14` → `2026.11.15`; lockstep release with
+the `controlplane` chart. No template changes (task pod security defaults are now
+documented, [#697](https://github.com/unionai/helm-charts/pull/697)). The
+`controlplane` notes list the image changes.
+
+## 2026.11.14
+
+`version` and `appVersion` move `2026.11.12` → `2026.11.14`; lockstep release with
+the `controlplane` chart. No dataplane template changes. The `controlplane` notes
+list the image changes.
+
+## 2026.11.12
+
+`version` and `appVersion` move `2026.11.11` → `2026.11.12`; lockstep release with
+the `controlplane` chart.
+
+### Chart: executor overlay shims removed ([#700](https://github.com/unionai/helm-charts/pull/700))
+
+The images no longer run the executor, so the chart no longer adjusts overlays that
+still set executor keys. **Overlays must drop `config.operator.dependenciesHeartbeat.executor`
+and move any `executor.task_logs` to `leaseworker.task_logs`.**
+
+The `controlplane` notes list the image changes.
 
 ## 2026.11.11
 
