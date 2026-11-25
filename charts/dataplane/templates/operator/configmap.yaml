@@ -87,17 +87,17 @@ data:
       disableClusterPermissions: {{ tpl (toYaml .Values.config.operator.disableClusterPermissions) $ }}
       {{- end }}
     {{- $apps := deepCopy (.Values.config.operator.apps | default dict) }}
-    {{- if and .Values.workloadIdentity.enabled (include "apps.enabled" .) }}
-    {{- /* Apps' pods authenticate as the app too, with the token at the chart's path. An explicit
-         config.operator.apps.controller.workloadIdentity setting wins. */}}
+    {{- if include "workloadIdentity.appsEnabled" . }}
+    {{- /* Apps' pods authenticate as the app too, with the token the task-template PodTemplate
+         mounts. An explicit enabled: false turns that off; a token path must match the mount, or an
+         app would look for its token where there is none. */}}
     {{- $controller := get $apps "controller" | default dict }}
     {{- $appWI := get $controller "workloadIdentity" | default dict }}
-    {{- if not (hasKey $appWI "enabled") }}
+    {{- if and (hasKey $appWI "tokenMountPath") (ne (get $appWI "tokenMountPath") .Values.workloadIdentity.tokenMountPath) }}
+    {{- fail (printf "config.operator.apps.controller.workloadIdentity.tokenMountPath (%s) must equal workloadIdentity.tokenMountPath (%s): apps' pods get the token at the task-template mount" (get $appWI "tokenMountPath") .Values.workloadIdentity.tokenMountPath) }}
+    {{- end }}
     {{- $_ := set $appWI "enabled" true }}
-    {{- end }}
-    {{- if not (hasKey $appWI "tokenMountPath") }}
     {{- $_ := set $appWI "tokenMountPath" .Values.workloadIdentity.tokenMountPath }}
-    {{- end }}
     {{- $_ := set $controller "workloadIdentity" $appWI }}
     {{- $_ := set $apps "controller" $controller }}
     {{- end }}

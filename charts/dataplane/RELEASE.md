@@ -17,8 +17,9 @@ With it on:
   discovery, which every service account may read by default. With apps
   enabled it also gets read-only access to ReplicaSets and Deployments, to tell
   an app's pods by their Knative controller chain, and the apps controller's
-  `workloadIdentity` is turned on with the same token path (an explicit
-  `config.operator.apps.controller.workloadIdentity` wins);
+  `workloadIdentity` is turned on with the same token path (set its `enabled:
+  false` to keep apps on the key; a different `tokenMountPath` fails the
+  render);
 - the leaseworker tells each covered task pod which attempt it runs, and
   reports the UID of the pod it created on its lease heartbeats. Settings under
   `leaseworker.config.workloadIdentity` (plugins, reusable environments) are
